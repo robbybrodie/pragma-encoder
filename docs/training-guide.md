@@ -92,15 +92,14 @@ Training metrics to watch:
 PRAGMA uses three masking strategies (Section 2.3.5):
 
 ```python
-from src.masking import TokenMasker, FieldMasker, EventMasker
+from src.masking import MaskingStrategy
 
-# Use a mix during training
-token_masker = TokenMasker(mask_prob=0.15)
-field_masker  = FieldMasker(n_fields_to_mask=1)
-event_masker  = EventMasker(mask_prob=0.15)
+masker = MaskingStrategy(config)
+masked_ids, target_ids, mask = masker.forward(token_ids, key_ids)
 ```
 
-Recommended mixture: 60% token, 25% field, 15% event.
+`MaskingStrategy` applies all three strategies (token, field, event masking) according
+to the probabilities in `config`. The strategy mixture is controlled by `PRAGMAConfig`.
 
 ---
 

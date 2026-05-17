@@ -52,14 +52,14 @@ Processes a single transaction. Outputs [EVT] token.
 
 ## Section 2.3.4 — History Encoder
 
-Processes the sequence of [EVT] vectors. Conditioned on [USR].
+Processes the concatenated sequence `z = [USR : EVT₁ : EVT₂ : ...]` with bidirectional
+self-attention. `[USR]` at position 0 conditions all event representations naturally —
+there is no cross-attention sublayer and no separate HIST summary token.
 
 | Paper element | This repo |
 |---|---|
-| Bidirectional Transformer | `src/encoders/history_encoder.py::HistoryEncoder` |
-| Cross-attention to [USR] | `HistoryEncoderLayer.cross_attn` |
+| Bidirectional self-attention on [USR:EVT] | `src/encoders/history_encoder.py::HistoryEncoder` |
 | RoPE on event sequence | `HistoryEncoder.rope` |
-| [HIST] summary token | `HistoryEncoder.hist_token` |
 | [MASK] embedding for MLM | `HistoryEncoder.mask_embedding` |
 
 ---
@@ -68,9 +68,7 @@ Processes the sequence of [EVT] vectors. Conditioned on [USR].
 
 | Paper element | This repo |
 |---|---|
-| Strategy 1: Token masking | `src/masking/strategy.py::TokenMasker` |
-| Strategy 2: Field masking | `src/masking/strategy.py::FieldMasker` |
-| Strategy 3: Event masking | `src/masking/strategy.py::EventMasker` |
+| All three masking strategies | `src/masking/strategy.py::MaskingStrategy` |
 | MLM prediction head | `src/model/mlm_head.py::MLMHead` |
 | MLM loss with label smoothing | `src/training/objective.py::MaskedEventModellingLoss` |
 
@@ -92,7 +90,7 @@ Processes the sequence of [EVT] vectors. Conditioned on [USR].
 
 | Paper element | This repo |
 |---|---|
-| Frozen encoder + linear head | `src/adaptation/probe.py::LinearProbe` |
+| Frozen encoder + linear head | `src/adaptation/probe.py::EmbeddingProbe` |
 | sklearn logistic regression | `src/evaluation/downstream.py::evaluate_linear_probe` |
 | Interactive notebook | `notebooks/03_pragma_embedding_probe.ipynb` |
 
@@ -102,8 +100,7 @@ Processes the sequence of [EVT] vectors. Conditioned on [USR].
 
 | Paper element | This repo |
 |---|---|
-| LoRA adapters | `src/adaptation/lora.py::apply_lora_to_pragma` |
-| LoRA config | `src/adaptation/lora.py::PRAGMALoRAConfig` |
+| LoRA adapters | `src/adaptation/lora.py::LoRAAdapter` |
 | Interactive notebook | `notebooks/04_pragma_lora_finetuning.ipynb` |
 
 ---
