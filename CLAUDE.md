@@ -17,22 +17,39 @@ No pretrained weights or proprietary data from Revolut are included or reference
 
 ---
 
-## MANDATORY: Read DEVELOPMENT_PROCESS.md
+## MANDATORY — Read Before Any Implementation
 
-Before implementing ANY component in this repository,
-read DEVELOPMENT_PROCESS.md in full.
+### DEVELOPMENT_PROCESS.md
+Read DEVELOPMENT_PROCESS.md in full before implementing
+any component. It contains:
+  - The five-step TDD process (tests before implementation)
+  - Interface contracts (Protocols before code)
+  - Naming conventions (fixed, from the paper)
+  - Configuration rules (no hardcoded values)
+  - Dependency graph (one direction, no circular imports)
+  - Type hint requirements (complete, with shape comments)
+  - Pre-implementation checklist (eight items, all required)
+  - Lessons from prior projects (hard-won, not theoretical)
 
-The short version:
-1. Read the paper section
-2. Write tests first (4 types: shape, math, gradient, spec)
-3. Show tests for review — STOP and wait for approval
-4. Implement to pass the tests
-5. Never fix tests to match implementation
+### docs/decisions/
+Read docs/decisions/ before making any architectural decision.
+Every major design choice is documented with:
+  - The paper section that supports it
+  - The context and reasoning
+  - What future sessions must not contradict
 
-The full process with examples and templates is in
-DEVELOPMENT_PROCESS.md.
+If you are about to do something that contradicts a decision:
+STOP. Raise it with the human. Do not proceed silently.
 
-No exceptions. No shortcuts.
+### The non-negotiables
+  1. Encoder-only. Never decoder-only.
+  2. Bidirectional attention. Never causal mask.
+  3. Three separate encoders. Never one combined encoder.
+  4. Tests before implementation. Always.
+  5. Names from naming conventions. Always.
+  6. Parameters from PRAGMAConfig. Always.
+  7. Dependency graph respected. Always.
+  8. Interface Protocol defined before implementation. Always.
 
 ---
 

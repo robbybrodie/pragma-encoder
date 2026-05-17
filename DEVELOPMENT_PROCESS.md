@@ -411,3 +411,306 @@ The tests protect against silent implementation errors
 that would only be discovered when the model fails
 to outperform the NVIDIA blueprint at evaluation time —
 weeks of wasted training compute.
+
+---
+
+## Interface Contracts — Before Any Implementation
+
+Before implementing ANY component, define its interface
+as a Python Protocol in the relevant src/ __init__.py.
+
+The Protocol defines:
+  - Exact method signatures
+  - Tensor shapes as comments on every argument
+  - Return type and shape
+
+Example for ProfileStateEncoder:
+
+  from typing import Protocol
+  import torch
+
+  class ProfileStateEncoderProtocol(Protocol):
+      def forward(
+          self,
+          x: torch.Tensor,  # (batch, n_profile_tokens, d_model)
+          t: torch.Tensor,  # (batch, n_profile_tokens) log-seconds
+      ) -> torch.Tensor:    # (batch, 1, d_model) — [USR] token only
+          ...
+
+Rules:
+  - Define the Protocol BEFORE writing the implementation
+  - Review the Protocol BEFORE writing the implementation
+  - The Protocol is fixed unless there is a paper-derived
+    reason to change it
+  - The test file imports the Protocol and validates against it
+  - Changing an interface after implementation causes refactors
+    Define it right once. Do not change it.
+
+---
+
+## Naming Conventions — Fixed, Not Negotiable
+
+These names match the PRAGMA paper notation exactly.
+When the paper uses za, we use za.
+Never invent alternative names.
+
+### Tensor variables (match paper equations exactly)
+  x       input token embeddings
+  t       temporal coordinates
+  z       encoder output embeddings
+  za      profile state encoder output — the [USR] token
+  ze      event encoder output — the [EVT] tokens
+  zh      history encoder final output
+  zbe     event encoder token-level output (pre-[EVT] pooling)
+  mask    attention mask
+  k       key embedding
+  v       value embedding
+
+### Dimension variables
+  batch           batch size
+  n_events        number of events in the history sequence
+  n_tokens        number of tokens per event
+  na              number of profile state tokens
+  ne              number of events
+  d_model         model hidden dimension
+  d_ffn           feed-forward layer dimension
+  n_heads         number of attention heads
+
+### Class names (match paper section names exactly)
+  PRAGMAConfig              configuration dataclass
+  PRAGMA                    full model (Section 2.3)
+  ProfileStateEncoder       paper Section 2.3.2
+  EventEncoder              paper Section 2.3.3
+  HistoryEncoder            paper Section 2.3.4
+  PRAGMATokenizer           paper Section 2.2
+  MaskingStrategy           paper Section 2.3.5
+  MLMHead                   masked modelling head
+  LoRAAdapter               paper Section 3.1.2
+  EmbeddingProbe            paper Section 3.1.1
+
+### File names (match class names exactly)
+  src/model/config.py                   → PRAGMAConfig
+  src/model/pragma.py                   → PRAGMA
+  src/model/mlm_head.py                 → MLMHead
+  src/encoders/profile_state_encoder.py → ProfileStateEncoder
+  src/encoders/event_encoder.py         → EventEncoder
+  src/encoders/history_encoder.py       → HistoryEncoder
+  src/encoders/rope.py                  → RoPEEncoding
+  src/tokenizer/pipeline.py             → TokenizerPipeline
+  src/tokenizer/financial_pipeline.py   → FinancialTokenizerPipeline
+  src/masking/strategy.py               → MaskingStrategy
+  src/adaptation/lora.py                → LoRAAdapter
+  src/adaptation/probe.py               → EmbeddingProbe
+
+### Enforcement
+  If Claude Code generates a different name: reject it.
+  Ask for the correct name from this list.
+  Do not accept "it means the same thing."
+  Inconsistent naming is the first step toward refactors.
+
+---
+
+## Configuration — Single Source of Truth
+
+ALL architectural parameters live in PRAGMAConfig.
+Nothing is hardcoded anywhere in src/.
+
+### The rule
+  Bad:
+    class ProfileStateEncoder(nn.Module):
+        def __init__(self):
+            self.d_model = 192  ← hardcoded, causes refactors
+
+  Good:
+    class ProfileStateEncoder(nn.Module):
+        def __init__(self, config: PRAGMAConfig):
+            self.d_model = config.d_model  ← always correct
+
+### Every class takes config as its first argument
+  ProfileStateEncoder(config: PRAGMAConfig)
+  EventEncoder(config: PRAGMAConfig)
+  HistoryEncoder(config: PRAGMAConfig)
+  PRAGMA(config: PRAGMAConfig)
+  MaskingStrategy(config: PRAGMAConfig)
+  MLMHead(config: PRAGMAConfig)
+
+### Three variants defined upfront from Table 1
+  PRAGMAConfig.pragma_s()  → 10M params
+    d_model=192, d_ffn=768
+    profile_layers=1, event_layers=5, history_layers=2
+    n_heads=3
+
+  PRAGMAConfig.pragma_m()  → 100M params
+    d_model=512, d_ffn=2048
+    profile_layers=3, event_layers=16, history_layers=6
+    n_heads=8
+
+  PRAGMAConfig.pragma_l()  → 1B params
+    d_model=1024, d_ffn=4096
+    profile_layers=9, event_layers=45, history_layers=18
+    n_heads=16
+
+### Scaling test
+  Scaling from PRAGMA-S to PRAGMA-M must require changing
+  exactly ONE line in training code:
+    config = PRAGMAConfig.pragma_s()
+    → config = PRAGMAConfig.pragma_m()
+  Nothing else changes.
+  If anything else needs to change: the code has hardcoded values.
+  Find them. Remove them.
+
+### Every hardcoded number is a bug
+  If Claude Code generates a hardcoded architectural number:
+  reject it. Ask for the config-driven equivalent.
+
+---
+
+## Dependency Rules — Enforced by Directory Structure
+
+Dependencies flow in ONE direction only.
+No exceptions. No circular imports.
+
+### The dependency graph
+  src/model/config.py      → no dependencies
+  src/tokenizer/           → depends on config only
+  src/encoders/rope.py     → depends on config only
+  src/encoders/            → depends on config, rope
+  src/masking/             → depends on config, tokenizer
+  src/model/pragma.py      → depends on config, encoders, masking
+  src/model/mlm_head.py    → depends on config, encoders
+  src/adaptation/          → depends on config, model
+  src/training/            → depends on config, model, masking
+  src/evaluation/          → depends on config, model, adaptation
+  pipeline/                → depends on src/ only
+  scripts/                 → depends on src/ only
+  notebooks/               → depends on src/ only
+
+### Absolutely forbidden
+  src/encoders/ importing from src/model/
+  src/tokenizer/ importing from src/encoders/
+  src/model/config.py importing from anywhere in src/
+  Any circular import of any kind
+
+### Enforcement
+  tests/test_imports.py verifies this graph automatically.
+  If Claude Code generates a circular import: reject it.
+  Restructure to respect the dependency graph above.
+  The graph is fixed. The code bends to fit it.
+
+---
+
+## Type Hints — Complete, Always
+
+Every function signature must have complete type hints.
+Every tensor argument must have a shape comment.
+No exceptions.
+
+### The standard
+  Bad:
+    def forward(self, x, t):
+
+  Good:
+    def forward(
+        self,
+        x: torch.Tensor,  # (batch, n_profile_tokens, d_model)
+        t: torch.Tensor,  # (batch, n_profile_tokens) log-seconds
+    ) -> torch.Tensor:    # (batch, 1, d_model) — [USR] token
+
+### mypy runs in CI
+  mypy src/ --strict --ignore-missing-imports
+
+  If mypy fails: fix the types. Not the mypy config.
+  The only allowed mypy config change is adding a new
+  ignore_missing_imports for a third-party library
+  that does not ship type stubs.
+
+### Tensor shape comments
+  Every tensor argument must have a shape comment.
+  Format: # (dim1, dim2, ...) — description
+  Example: # (batch, n_events, d_model) — event embeddings
+
+---
+
+## Pre-Implementation Checklist
+
+Claude Code must confirm each item before generating
+implementation code for any component.
+
+Present this checklist to the human. Wait for confirmation.
+Do not proceed with implementation until all items are checked.
+
+  [ ] 1. Paper section identified and read
+         State the section number and quote the key passage.
+
+  [ ] 2. Interface Protocol defined
+         Show the Protocol in src/<module>/__init__.py
+         with all method signatures and shape comments.
+
+  [ ] 3. All variable names match the naming conventions
+         List the variables this component will use.
+         Confirm each is in the naming conventions table.
+
+  [ ] 4. All parameters come from PRAGMAConfig
+         Confirm no hardcoded architectural values.
+         Show how config is threaded through.
+
+  [ ] 5. No circular imports introduced
+         Show the import chain for this component.
+         Confirm it respects the dependency graph.
+
+  [ ] 6. All function signatures have complete type hints
+         with shape comments on every tensor argument.
+
+  [ ] 7. Test file written and shown for review
+         Four test types: shape, math, gradient, spec.
+         STOP here. Wait for explicit "Tests approved."
+
+  [ ] 8. Dependency graph respected
+         This component's position in the graph stated.
+
+All eight items must be checked before implementation.
+No exceptions. No shortcuts.
+
+---
+
+## Lessons from Prior Projects
+
+These rules exist because they were learned the hard way.
+They are not theoretical. They prevented real refactors.
+
+1. Build the config first, everything else second.
+   Components built without a shared config inevitably
+   have hardcoded values that conflict with each other.
+   The config is the contract between all components.
+
+2. Name things after the paper, not after what feels natural.
+   Natural names drift. Paper names are anchored.
+   When you read Section 2.3.2 and the variable is za
+   not profile_output or encoder_result — you can follow
+   the math directly. That matters at 2am.
+
+3. The interface between components is more important
+   than the implementation of either component.
+   Get the interface wrong and both components need rewriting.
+   Get it right and either can be rewritten independently.
+
+4. An AI will generate plausible code faster than you can
+   review it. That is the trap. The review is the work.
+   The generation is just typing.
+
+5. When something feels wrong — it probably is.
+   Stop. Write a test that captures what feels wrong.
+   If the test fails: you were right.
+   If the test passes: you learned something.
+   Either way you did not waste days building on it.
+
+6. Hardcoded numbers are time bombs.
+   They work fine until the second component that needs
+   the same number uses a slightly different value.
+   Then you spend a day finding the inconsistency.
+   Every number comes from config. Always.
+
+7. Circular imports announce themselves at import time.
+   That is actually a gift. They tell you immediately
+   that the dependency graph is wrong.
+   Fix the graph. Do not work around the import error.
