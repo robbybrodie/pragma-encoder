@@ -1,191 +1,198 @@
-"""Full PRAGMA model — three-encoder assembly.
+"""PRAGMA — full three-encoder foundation model (Section 2.3).
 
-Implements the complete PRAGMA foundation model described in Section 2.3
-of the PRAGMA paper, composing the three encoder branches:
+Implements the complete PRAGMA model described in PRAGMA paper Section 2.3,
+assembling the three-encoder architecture and MLM head into a single nn.Module.
 
-    1. Profile State Encoder (Section 2.3.2) — static customer attributes.
-    2. Event Encoder        (Section 2.3.3) — per-transaction encoding.
-    3. History Encoder      (Section 2.3.4) — sequential history modelling.
+Architecture (Equations 4–8):
+    ProfileStateEncoder  (§2.3.2) — static customer profile + RoPE on ta
+    EventEncoder         (§2.3.3) — per-event token encoding + calendar MLP
+    HistoryEncoder       (§2.3.4) — [USR:EVT] sequence + RoPE on te
+    MLMHead              (§2.3.5) — 3×d → d → value_vocab_size prediction head
 
-Forward pass:
-    Given a batch of (profile, events) inputs:
-    1. Profile State Encoder → [USR] representation per customer.
-    2. Event Encoder applied to each event independently → [EVT] vectors.
-    3. History Encoder conditions on [USR] and processes [EVT] sequence
-       → contextualised history representations + [HIST] summary.
+Forward pass — exact six-step sequence:
 
-During pretraining, the MLMHead is applied to the History Encoder
-output to predict masked event tokens.
+    Step 1: za     = ProfileStateEncoder(xa, ta)          (batch, na, d_model)
+            za_usr = za[:,0:1,:]                          (batch, 1, d_model)
+            [Only [USR] at position 0 passes to History Encoder — Equation 4]
 
-During fine-tuning (Section 3.1.2), the History Encoder output is
-passed to a LoRA-adapted classification head.
+    Step 2: z_hat_e, ze = EventEncoder(xe, xt)
+            z_hat_e: (batch, ne, ni, d_model) — token-level output for MLM
+            ze:      (batch, ne, d_model)     — calendar-augmented [EVT] tokens
 
-Reference: Ostroukhov et al. (2026), Section 2.3
+    Step 3: z = cat([za_usr, ze], dim=1)                  (batch, 1+ne, d_model)
+            [Equation 6: z = [za : ze]]
+
+    Step 4: zh = HistoryEncoder(z, te)                    (batch, 1+ne, d_model)
+            [Equation 7: zh with [USR] at 0, [EVT] at 1..ne]
+
+    Step 5: Gather masked positions (when mask is not None):
+            b_idx, i_idx, j_idx = mask.nonzero(as_tuple=True)
+            z_hat_e_ij = z_hat_e[b_idx, i_idx, j_idx, :]   (n_masked, d_model)
+            zh_i       = zh[b_idx, i_idx + 1, :]            (n_masked, d_model)
+              ↑ event i is at position i+1 in zh ([USR] occupies position 0)
+            zh_0       = zh[b_idx, 0, :]                    (n_masked, d_model)
+
+    Step 6: logits = MLMHead(z_hat_e_ij, zh_i, zh_0)     (n_masked, value_vocab_size)
+            [Equation 8: input = [z_hat_e_ij : zh_i : zh_0] ∈ R^(3d)]
+
+Contract with callers:
+    INPUT — all pre-embedded float tensors (Equation 1 applied OUTSIDE this class):
+        xa:        (batch, na, d_model)     — profile state embeddings
+        ta:        (batch, na)              — profile temporal coords (log-seconds)
+        xe:        (batch, ne, ni, d_model) — event token embeddings ([EVT] at pos 0)
+        xt:        (batch, ne, 3)           — calendar features (integer: h, dow, dom)
+        te:        (batch, 1+ne)            — history temporal coords (0.0 for [USR])
+        token_ids: (batch, ne, ni)          — original integer token IDs (optional;
+                                              reserved for target gathering; not
+                                              used in the current forward pass)
+        mask:      (batch, ne, ni) bool     — True at positions in MLM loss
+
+    OUTPUT:
+        {"zh": zh}                   — always (embedding extraction path)
+        {"zh": zh, "logits": logits} — when mask is not None (pre-training path)
+        zh:     (batch, 1+ne, d_model)        — full history encoder output
+        logits: (n_masked, value_vocab_size)  — MLM logits at masked positions
+
+Key design decisions:
+    - No embedding table in PRAGMA — Equation 1 (embedding) is done externally
+      by the tokenizer pipeline; all inputs are pre-embedded float tensors
+    - No causal masking anywhere — PRAGMA is encoder-only (§2.3)
+    - No weight sharing between encoders (ADR 002)
+    - token_ids is accepted but not used internally; it is reserved for callers
+      that need it for loss computation (targets = token_ids at masked positions)
+    - Gathering uses i+1 (not i) because [USR] occupies position 0 of zh
+
+Reference: Ostroukhov et al. (2026), Section 2.3, Equations 4–8
 """
+
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 
-from ..encoders import EventEncoder, HistoryEncoder, ProfileStateEncoder
-from .config import PRAGMAConfig
-from .mlm_head import MLMHead
+from src.encoders import EventEncoder, HistoryEncoder, ProfileStateEncoder
+from src.model.config import PRAGMAConfig
+from src.model.mlm_head import MLMHead
 
 
 class PRAGMA(nn.Module):
-    """Full PRAGMA foundation model.
+    """Full PRAGMA foundation model — three-encoder assembly (§2.3).
 
-    Composes ProfileStateEncoder, EventEncoder, and HistoryEncoder
-    into the complete three-encoder architecture from Section 2.3.
+    Composes ProfileStateEncoder, EventEncoder, HistoryEncoder, and MLMHead
+    into the complete architecture from Section 2.3. Accepts pre-embedded
+    float tensors — embedding (Equation 1) is done externally.
 
     Args:
-        config: PRAGMAConfig instance specifying architecture hyperparameters.
+        config: PRAGMAConfig — single source of truth for all hyperparameters.
+                All four sub-modules are constructed from config only.
+
+    Attributes:
+        config:           PRAGMAConfig — stored for callers (e.g. config.d_model)
+        profile_encoder:  ProfileStateEncoder — §2.3.2
+        event_encoder:    EventEncoder        — §2.3.3
+        history_encoder:  HistoryEncoder      — §2.3.4
+        mlm_head:         MLMHead             — §2.3.5
     """
 
-    def __init__(self, config: PRAGMAConfig):
+    def __init__(self, config: PRAGMAConfig) -> None:
         super().__init__()
         self.config = config
 
-        # Profile State Encoder — static customer profile (Section 2.3.2)
-        self.profile_encoder = ProfileStateEncoder(
-            vocab_size=config.profile_vocab_size,
-            d_model=config.d_model,
-            n_heads=config.profile_n_heads,
-            n_layers=config.profile_n_layers,
-            d_ff=config.profile_d_ff,
-            dropout=config.dropout,
-            max_seq_len=config.profile_max_seq_len,
-        )
+        # Three independent encoders — no shared weights (ADR 002)
+        self.profile_encoder = ProfileStateEncoder(config)  # §2.3.2
+        self.event_encoder   = EventEncoder(config)         # §2.3.3
+        self.history_encoder = HistoryEncoder(config)       # §2.3.4
 
-        # Event Encoder — per-transaction encoding (Section 2.3.3)
-        self.event_encoder = EventEncoder(
-            vocab_size=config.vocab_size,
-            d_model=config.d_model,
-            n_heads=config.event_n_heads,
-            n_layers=config.event_n_layers,
-            d_ff=config.event_d_ff,
-            dropout=config.dropout,
-            max_seq_len=config.event_max_seq_len,
-        )
-
-        # History Encoder — sequential history modelling (Section 2.3.4)
-        self.history_encoder = HistoryEncoder(
-            d_model=config.d_model,
-            n_heads=config.history_n_heads,
-            n_layers=config.history_n_layers,
-            d_ff=config.history_d_ff,
-            dropout=config.dropout,
-            max_history_len=config.history_max_seq_len,
-        )
-
-        # MLM head for pretraining (Section 2.3.5)
-        self.mlm_head = MLMHead(
-            d_model=config.d_model,
-            vocab_size=config.vocab_size,
-        )
+        # MLM prediction head for pre-training (§2.3.5, Equation 8)
+        self.mlm_head = MLMHead(config)
 
     def forward(
         self,
-        profile_token_ids: torch.Tensor,
-        event_token_ids: torch.Tensor,
-        calendar_tokens: torch.Tensor | None = None,
-        profile_attention_mask: torch.Tensor | None = None,
-        event_attention_mask: torch.Tensor | None = None,
-        history_key_padding_mask: torch.Tensor | None = None,
-        event_mask: torch.Tensor | None = None,
-    ) -> dict[str, torch.Tensor]:
-        """Full PRAGMA forward pass.
+        xa:        torch.Tensor,            # (batch, na, d_model)     — profile embeddings
+        ta:        torch.Tensor,            # (batch, na)              — profile temporal
+        xe:        torch.Tensor,            # (batch, ne, ni, d_model) — event embeddings
+        xt:        torch.Tensor,            # (batch, ne, 3)           — calendar features
+        te:        torch.Tensor,            # (batch, 1+ne)            — history temporal
+        token_ids: Optional[torch.Tensor] = None,  # (batch, ne, ni)  — original IDs
+        mask:      Optional[torch.Tensor] = None,  # (batch, ne, ni) bool — MLM mask
+    ) -> Dict[str, torch.Tensor]:
+        """Six-step PRAGMA forward pass (Equations 4–8).
 
         Args:
-            profile_token_ids: (batch, profile_seq_len) — profile tokens.
-            event_token_ids: (batch, n_events, event_seq_len) — event tokens.
-            calendar_tokens: (batch, n_events, 5) — calendar tokens per event.
-            profile_attention_mask: (batch, profile_seq_len) — profile padding.
-            event_attention_mask: (batch, n_events, event_seq_len) — event padding.
-            history_key_padding_mask: (batch, n_events) — history padding.
-            event_mask: (batch, n_events) — True for masked events (MLM).
+            xa:        Profile state token embeddings. Shape: (batch, na, d_model).
+                       Float tensor. [USR] token is at position 0 (prepended by caller).
+            ta:        Profile temporal coordinates (log-seconds). Shape: (batch, na).
+                       Used by ProfileStateEncoder for RoPE. 0.0 for non-life-long tokens.
+            xe:        Event token embeddings. Shape: (batch, ne, ni, d_model).
+                       Float tensor. [EVT] token is at position 0 of each event.
+            xt:        Calendar features. Shape: (batch, ne, 3). Integer tensor.
+                       Values: [hour_of_day, day_of_week, day_of_month] (§2.2).
+            te:        History temporal coordinates (log-seconds). Shape: (batch, 1+ne).
+                       te[:,0] = 0.0 for [USR]; te[:,1:] = log-seconds per event.
+            token_ids: Original integer token IDs. Shape: (batch, ne, ni). Optional.
+                       Reserved for callers that compute loss externally using
+                       token_ids at masked positions as targets.
+            mask:      Token-level MLM mask. Shape: (batch, ne, ni). Bool. Optional.
+                       True = position is in MLM loss (replaced with [MASK] by caller).
+                       When None, MLM head is not called (embedding extraction mode).
 
         Returns:
             Dict with keys:
-                'history_reprs':  (batch, n_events, d_model)
-                'hist_repr':      (batch, d_model)
-                'usr_repr':       (batch, d_model)
-                'mlm_logits':     (batch, n_events, vocab_size) — if event_mask given
+                "zh":     (batch, 1+ne, d_model) — History Encoder output. Always present.
+                          zh[:,0,:]  = [USR] embedding (user-level representation)
+                          zh[:,1:,:] = [EVT] embeddings (per-event representations)
+                "logits": (n_masked, value_vocab_size) — MLM logits. Present only when
+                          mask is not None. n_masked = mask.sum().
         """
-        batch_size, n_events, event_seq_len = event_token_ids.shape
+        # ------------------------------------------------------------------
+        # Step 1: Profile State Encoder → za → za_usr (Equation 4)
+        # ------------------------------------------------------------------
+        za     = self.profile_encoder(xa, ta)   # (batch, na, d_model)
+        za_usr = za[:, 0:1, :]                  # (batch, 1, d_model) — [USR] only
 
-        # Step 1: Profile State Encoder → [USR]
-        usr_repr = self.profile_encoder(
-            profile_token_ids,
-            attention_mask=profile_attention_mask,
-        )  # (B, D)
+        # ------------------------------------------------------------------
+        # Step 2: Event Encoder → z_hat_e (token-level) + ze (EVT tokens)
+        #         (Equations 3 and 5)
+        # ------------------------------------------------------------------
+        z_hat_e, ze = self.event_encoder(xe, xt)
+        # z_hat_e: (batch, ne, ni, d_model) — token-level output for MLM gathering
+        # ze:      (batch, ne, d_model)      — calendar-augmented [EVT] tokens
 
-        # Step 2: Event Encoder → [EVT] for each event independently
-        # Flatten events into batch dimension for parallel processing
-        event_ids_flat = event_token_ids.view(batch_size * n_events, event_seq_len)
+        # ------------------------------------------------------------------
+        # Step 3: Assemble [USR:EVT] sequence for History Encoder (Equation 6)
+        # ------------------------------------------------------------------
+        z = torch.cat([za_usr, ze], dim=1)   # (batch, 1+ne, d_model)
 
-        cal_flat = None
-        if calendar_tokens is not None:
-            cal_flat = calendar_tokens.view(batch_size * n_events, 5)
+        # ------------------------------------------------------------------
+        # Step 4: History Encoder → zh (Equation 7)
+        # ------------------------------------------------------------------
+        zh = self.history_encoder(z, te)     # (batch, 1+ne, d_model)
+        # zh[:,0,:]   = [USR] token representation
+        # zh[:,1:,:]  = [EVT] token representations (event i is at position i+1)
 
-        attn_flat = None
-        if event_attention_mask is not None:
-            attn_flat = event_attention_mask.view(batch_size * n_events, event_seq_len)
+        output: Dict[str, torch.Tensor] = {"zh": zh}
 
-        evt_reprs_flat = self.event_encoder(
-            event_ids_flat, calendar_tokens=cal_flat, attention_mask=attn_flat
-        )  # (B * N, D)
+        # ------------------------------------------------------------------
+        # Steps 5–6: Gather masked positions + MLM head (Equation 8)
+        #            Only executed during pre-training when mask is provided.
+        # ------------------------------------------------------------------
+        if mask is not None:
+            # Gather the three context vectors for each masked token position.
+            # b_idx, i_idx, j_idx index (batch, event, token_within_event).
+            b_idx, i_idx, j_idx = mask.nonzero(as_tuple=True)
 
-        evt_reprs = evt_reprs_flat.view(batch_size, n_events, -1)  # (B, N, D)
+            # Local context: Event Encoder token output at masked position j in event i
+            z_hat_e_ij = z_hat_e[b_idx, i_idx, j_idx, :]   # (n_masked, d_model)
 
-        # Step 3: History Encoder → contextualised history
-        history_reprs, hist_repr = self.history_encoder(
-            event_reprs=evt_reprs,
-            usr_repr=usr_repr,
-            event_mask=event_mask,
-            key_padding_mask=history_key_padding_mask,
-        )  # (B, N, D), (B, D)
+            # Cross-event context: History Encoder output for event i.
+            # Event i is at position i+1 in zh because [USR] occupies position 0.
+            zh_i = zh[b_idx, i_idx + 1, :]                  # (n_masked, d_model)
 
-        output = {
-            "history_reprs": history_reprs,
-            "hist_repr": hist_repr,
-            "usr_repr": usr_repr,
-        }
+            # User-level context: History Encoder [USR] token (position 0 in zh).
+            zh_0 = zh[b_idx, 0, :]                          # (n_masked, d_model)
 
-        # MLM logits — only computed when event_mask is provided (pretraining)
-        if event_mask is not None:
-            # Apply MLM head to masked event positions only
-            masked_reprs = history_reprs[event_mask]  # (n_masked, D)
-            if masked_reprs.numel() > 0:
-                output["mlm_logits"] = self.mlm_head(masked_reprs)
+            # MLM head: cat([z_hat_e_ij, zh_i, zh_0]) → logits (Equation 8)
+            logits = self.mlm_head.forward(z_hat_e_ij, zh_i, zh_0)
+            output["logits"] = logits                        # (n_masked, value_vocab_size)
 
         return output
-
-    def get_event_embeddings(
-        self,
-        profile_token_ids: torch.Tensor,
-        event_token_ids: torch.Tensor,
-        calendar_tokens: torch.Tensor | None = None,
-        history_key_padding_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Extract contextualised event embeddings for downstream use.
-
-        Convenience method for embedding extraction at inference time.
-        No masking is applied.
-
-        Args:
-            profile_token_ids: (batch, profile_seq_len)
-            event_token_ids: (batch, n_events, event_seq_len)
-            calendar_tokens: (batch, n_events, 5)
-            history_key_padding_mask: (batch, n_events)
-
-        Returns:
-            (batch, n_events, d_model) — contextualised event embeddings.
-        """
-        with torch.no_grad():
-            output = self.forward(
-                profile_token_ids=profile_token_ids,
-                event_token_ids=event_token_ids,
-                calendar_tokens=calendar_tokens,
-                history_key_padding_mask=history_key_padding_mask,
-            )
-        return output["history_reprs"]
