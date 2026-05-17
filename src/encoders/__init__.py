@@ -69,6 +69,35 @@ class ProfileStateEncoderProtocol(Protocol):
         ...
 
 
+class EventEncoderProtocol(Protocol):
+    """Interface contract for EventEncoder (§2.3.3, Equations 3 and 5).
+
+    Bidirectional Transformer encoder for event token sequences.
+    Each event processed independently (no cross-event attention).
+    Accepts pre-embedded float tensors (NOT integer token IDs).
+    The [EVT] token is already at position 0 of each event (prepended by caller).
+    Returns TWO tensors: z_hat_e (token-level) and ze (calendar-augmented [EVT]).
+
+    Key constraints:
+        - No RoPE — calendar features handle temporal encoding (CLAUDE.md §3)
+        - Calendar (Eq 3): sincos → 2-layer MLP → zt; added AFTER encoder
+        - ze = z'e + zt (addition, NOT concatenation)
+        - No nn.Embedding — embedding done externally (Equation 1)
+        - No self.evt_token — [EVT] prepended by the caller
+        - Independence: events processed separately (reshape to batch*ne)
+    """
+
+    def forward(
+        self,
+        xe: torch.Tensor,  # (batch, ne, ni, d_model) — pre-embedded; [EVT] at pos 0
+        xt: torch.Tensor,  # (batch, ne, 3) — calendar features (integers)
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # z_hat_e: (batch, ne, ni, d_model) — token-level encoder output
+        # ze:      (batch, ne, d_model)      — calendar-augmented [EVT] tokens
+        """Encode event sequences independently with calendar augmentation (Eq 3, 5)."""
+        ...
+
+
 __all__ = [
     "ProfileStateEncoder",
     "EventEncoder",
@@ -76,4 +105,5 @@ __all__ = [
     "RoPEEncoding",
     "RoPEEncodingProtocol",
     "ProfileStateEncoderProtocol",
+    "EventEncoderProtocol",
 ]
