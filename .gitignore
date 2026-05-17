@@ -114,6 +114,14 @@ ngc_api_key*
 !docs/**
 !openshift/
 !openshift/**
+# Re-exclude populated credential files under openshift/secrets/ — must never be committed
+openshift/secrets/*.yaml
+openshift/secrets/*.env
+# Keep template files tracked (safe placeholders with no real values)
+!openshift/secrets/*.template.yaml
+!openshift/secrets/*.template.yml
+!openshift/secrets/*.template.env
+!openshift/secrets/*.template.json
 !.githooks/
 !.githooks/**
 !.github/
