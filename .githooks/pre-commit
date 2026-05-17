@@ -26,15 +26,33 @@ ERRORS=0
 # ==============================================================================
 
 FORBIDDEN_FILENAME_PATTERNS=(
-    '\.env$'
-    '\.env\.'
+    '\.env\.'           # .env.local, .env.production, etc. (full-path match OK)
     'kubeconfig$'
     '\.kubeconfig$'
-    'secret'
     'credential'
-    'token'
     'apikey'
     'openshift-login\.sh'
+)
+
+# Patterns checked against the BASENAME only (not the full path).
+# This prevents directory components from triggering the check:
+#   "openshift/secrets/ai-platform.env"  → basename "ai-platform.env"   → \.env$ matches  ✓
+#   "openshift/secrets/ai-platform.py"   → basename "ai-platform.py"    → \.env$ no match ✓
+#   "notebooks/01_pragma_tokenization.ipynb" → no token pattern matches  ✓
+#
+# Patterns removed from FORBIDDEN_FILENAME_PATTERNS and placed here:
+#   'secret' — "openshift/secrets/" directory would match the full path
+#   '\.env$' — ".template.env" also ends in ".env"; exclusion handled in loop below
+#   'token'  — too broad; matched "tokenization" in notebook filenames
+FORBIDDEN_BASENAME_PATTERNS=(
+    # Bare .env credential files. .template.env excluded in loop (safe placeholders).
+    '\.env$'
+    # Secret files — matched against filename only, not directory name.
+    'secret'
+    # Token credential files only.
+    # Matches: api_token.env  auth-token.yaml  access_token.json  foo_token.yaml
+    # No match: tokenization.ipynb  tokenizer.py  01_pragma_tokenization.ipynb
+    '(api[._-]?token|auth[._-]?token|access[._-]?token|[._-]token\.(env|yaml|yml|json)$)'
 )
 
 # Paths that are always safe to commit (source code, documentation, templates)
@@ -93,8 +111,26 @@ if [ -n "$STAGED_FILES" ]; then
         if is_safe_path "$file"; then
             continue
         fi
+
+        basename_file=$(basename "$file")
+
+        # Full-path pattern checks (directory components are intentionally included)
         for pattern in "${FORBIDDEN_FILENAME_PATTERNS[@]}"; do
             if echo "$file" | grep -qiE "$pattern"; then
+                echo -e "${RED}[SECURITY] Blocked: sensitive filename staged:${NC}"
+                echo -e "  ${YELLOW}$file${NC} (matched pattern: $pattern)"
+                echo ""
+                ERRORS=$((ERRORS + 1))
+            fi
+        done
+
+        # Basename-only pattern checks (avoids false positives from directory names)
+        for pattern in "${FORBIDDEN_BASENAME_PATTERNS[@]}"; do
+            # .env$ pattern: skip .template.env files — they are safe committed placeholders
+            if [[ "$pattern" == '\.env$' ]] && [[ "$basename_file" =~ \.template\.env$ ]]; then
+                continue
+            fi
+            if echo "$basename_file" | grep -qiE "$pattern"; then
                 echo -e "${RED}[SECURITY] Blocked: sensitive filename staged:${NC}"
                 echo -e "  ${YELLOW}$file${NC} (matched pattern: $pattern)"
                 echo ""

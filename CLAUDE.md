@@ -17,6 +17,42 @@ No pretrained weights or proprietary data from Revolut are included or reference
 
 ---
 
+## MANDATORY — Read Before Any Implementation
+
+### DEVELOPMENT_PROCESS.md
+Read DEVELOPMENT_PROCESS.md in full before implementing
+any component. It contains:
+  - The five-step TDD process (tests before implementation)
+  - Interface contracts (Protocols before code)
+  - Naming conventions (fixed, from the paper)
+  - Configuration rules (no hardcoded values)
+  - Dependency graph (one direction, no circular imports)
+  - Type hint requirements (complete, with shape comments)
+  - Pre-implementation checklist (eight items, all required)
+  - Lessons from prior projects (hard-won, not theoretical)
+
+### docs/decisions/
+Read docs/decisions/ before making any architectural decision.
+Every major design choice is documented with:
+  - The paper section that supports it
+  - The context and reasoning
+  - What future sessions must not contradict
+
+If you are about to do something that contradicts a decision:
+STOP. Raise it with the human. Do not proceed silently.
+
+### The non-negotiables
+  1. Encoder-only. Never decoder-only.
+  2. Bidirectional attention. Never causal mask.
+  3. Three separate encoders. Never one combined encoder.
+  4. Tests before implementation. Always.
+  5. Names from naming conventions. Always.
+  6. Parameters from PRAGMAConfig. Always.
+  7. Dependency graph respected. Always.
+  8. Interface Protocol defined before implementation. Always.
+
+---
+
 ## Adjacent repo
 
 ```
@@ -169,6 +205,25 @@ See existing files for the pattern.
 - Hook is active: `git config core.hooksPath .githooks`
 - Never commit API keys, tokens, kubeconfig, or `.env` files
 - Use `git commit --no-verify` only for confirmed false positives
+
+---
+
+## Development Process — Non-Negotiable
+
+Every component implementation in this repo follows
+Test-Driven Development (TDD) derived from the PRAGMA paper.
+
+This is not optional. It is the process.
+
+The full process is documented in DEVELOPMENT_PROCESS.md.
+Read it before implementing anything.
+
+The short version:
+  Tests come from the paper. Always.
+  Tests come before implementation. Always.
+  Never fix a test to match implementation. Ever.
+  The comparison test (PRAGMA vs NVIDIA blueprint AUC)
+  is the final arbiter of correctness.
 
 ---
 
