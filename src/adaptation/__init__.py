@@ -19,9 +19,9 @@ LoRA reference: Hu et al. (2022), arXiv:2106.09685
 """
 
 from .lora import LoRAAdapter
-from .probe import LinearProbe
+from .probe import EmbeddingProbe
 
 __all__ = [
     "LoRAAdapter",
-    "LinearProbe",
+    "EmbeddingProbe",
 ]
