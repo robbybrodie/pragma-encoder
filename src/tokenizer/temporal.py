@@ -1,71 +1,79 @@
-"""Temporal field tokeniser — log-seconds + calendar encoding.
+"""Temporal field tokeniser — log-seconds coordinate + calendar features.
 
-Implements the temporal tokenisation strategy from PRAGMA paper Section 2.2.
+Implements the temporal encoding scheme from PRAGMA paper Section 2.2.
 
-PRAGMA uses a two-part encoding for timestamp fields:
-    1. Log-seconds offset: the log of elapsed seconds since a reference
-       epoch, discretised into buckets. Captures relative timing at
-       multiple time scales (minutes to years) without arithmetic blowup.
-    2. Calendar tokens: discrete tokens for hour-of-day, day-of-week,
-       day-of-month, month, and quarter. These capture periodic patterns
-       (lunch-hour spending, weekend behaviour, month-end salary credits).
+PRAGMA uses two separate temporal encodings:
 
-The calendar tokens are passed through the Event Encoder's calendar
-embedding table (Section 2.3.3) where they receive dedicated embeddings.
+1. Temporal coordinate (Equation 2) — a continuous float for RoPE:
+       t' = 8 · ln(1 + t/8)
+   where t = elapsed seconds since most recent event.
+   Scale constant 8 controls the linear-to-log crossover.
+   key-numbers.md: temporal_transform = 8·ln(1+t/8), §2.2
+
+2. Calendar features (§2.2) — three discrete values per event for the
+   EventEncoder calendar MLP:
+       [hour_of_day, day_of_week, day_of_month]
+   Exactly 3 features. Month and quarter are NOT included.
+   key-numbers.md: calendar_feature_dims = 3, §2.2
+
+These are separate outputs. The temporal coordinate feeds RoPE in the
+Profile State Encoder and History Encoder. The calendar features feed
+the 2-layer calendar MLP in the Event Encoder (Equation 3).
 
 Reference: Ostroukhov et al. (2026), Section 2.2 and Section 2.3.3
 """
 
 import math
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Union
+from typing import Any, List, Union
 
 from .base import BaseTokenizer
 
-# Calendar field ranges (for discrete token offset computation)
-_CALENDAR_RANGES: Dict[str, int] = {
-    "hour": 24,       # 0–23
-    "dow": 7,         # 0 Monday … 6 Sunday
-    "dom": 31,        # 1–31
-    "month": 12,      # 1–12
-    "quarter": 4,     # 1–4
-}
+# Paper constant — Equation 2, key-numbers.md: temporal_transform_scale = 8
+_TEMPORAL_SCALE: float = 8.0
+
+# Calendar feature indices (§2.2: exactly 3)
+_CALENDAR_DIMS = 3  # key-numbers.md: calendar_feature_dims = 3, §2.2
 
 
 class TemporalTokenizer(BaseTokenizer):
-    """Log-seconds + calendar tokeniser for timestamp fields.
+    """Log-seconds temporal coordinate + calendar feature extractor.
 
-    Encodes a datetime as:
-        [log_seconds_bucket, hour, day_of_week, day_of_month, month, quarter]
+    Two public methods beyond the BaseTokenizer interface:
 
-    The log-seconds bucket captures time delta from a reference epoch.
-    Calendar tokens capture periodic behavioural patterns.
+      compute_temporal_coordinate(t_seconds) -> float
+          Equation 2: t' = 8·ln(1 + t/8)
+
+      extract_calendar_features(timestamp) -> List[float]
+          §2.2: [hour_of_day, day_of_week, day_of_month] — exactly 3 values.
+
+    The encode() method returns the 3 calendar feature integers as discrete
+    token IDs for embedding table lookup (0-indexed).
 
     Args:
-        n_log_buckets: Number of log-seconds buckets. Default: 128.
-        reference_epoch: Unix timestamp (seconds) of the reference epoch.
-                         Defaults to 2020-01-01 00:00:00 UTC.
-        max_log_seconds: Upper bound for log-seconds bucketing (seconds).
-                         Default: 3 years in seconds.
+        n_log_buckets: Retained for backward compatibility. Not used in the
+                       paper-derived temporal coordinate (which is continuous).
     """
 
-    def __init__(
-        self,
-        n_log_buckets: int = 128,
-        reference_epoch: float = 1577836800.0,  # 2020-01-01 UTC
-        max_log_seconds: float = 3 * 365 * 24 * 3600,
-    ):
+    # key-numbers.md: calendar_feature_dims = 3, §2.2
+    N_CALENDAR_DIMS: int = _CALENDAR_DIMS
+
+    def __init__(self, n_log_buckets: int = 128) -> None:
+        # n_log_buckets kept for backward compatibility with existing
+        # callers (e.g. build_financial_pipeline). Not used in vocab_size
+        # or the paper-derived temporal coordinate.
         self.n_log_buckets = n_log_buckets
-        self.reference_epoch = reference_epoch
-        self.max_log_seconds = max_log_seconds
-        self._log_max = math.log1p(max_log_seconds)
         self._fitted = True  # no training data required
 
+    # ------------------------------------------------------------------
+    # BaseTokenizer interface
+    # ------------------------------------------------------------------
+
     def fit(self, data: List[Any]) -> "TemporalTokenizer":
-        """No-op for temporal tokeniser (boundaries are fixed, not learned).
+        """No-op — temporal boundaries are fixed, not learned.
 
         Args:
-            data: Unused. Included for API compatibility.
+            data: Unused. Included for API compatibility with BaseTokenizer.
 
         Returns:
             Self.
@@ -73,56 +81,105 @@ class TemporalTokenizer(BaseTokenizer):
         return self
 
     def encode(self, value: Any) -> List[int]:
-        """Encode a datetime to [log_bucket, hour, dow, dom, month, quarter].
+        """Encode a timestamp to calendar feature token IDs.
+
+        Returns exactly 3 integer token IDs:
+            [hour (0-23), day_of_week (0-6), day_of_month (0-30)]
+
+        §2.2: calendar_feature_dims = 3 (hour, day_of_week, day_of_month).
+        Month and quarter are NOT included — not in the paper.
 
         Args:
-            value: A datetime object, Unix timestamp (float/int), or
-                   ISO 8601 string. None/NaN yields all-zero tokens.
+            value: datetime, Unix timestamp (float/int), ISO 8601 string,
+                   or None (yields [0, 0, 0]).
 
         Returns:
-            List of 6 token IDs.
+            List of exactly 3 integer token IDs (0-indexed).
         """
         if value is None:
-            return [0] * 6
+            return [0, 0, 0]
 
         dt = self._to_datetime(value)
-
-        # Log-seconds bucket
-        delta = max(0.0, dt.timestamp() - self.reference_epoch)
-        log_val = math.log1p(delta)
-        log_bucket = min(
-            int(log_val / self._log_max * (self.n_log_buckets - 1)),
-            self.n_log_buckets - 1,
-        )
-
-        # Calendar tokens (1-indexed fields adjusted to 0-indexed tokens)
-        hour = dt.hour                         # 0–23
-        dow = dt.weekday()                     # 0 Mon … 6 Sun
-        dom = dt.day - 1                       # 0–30
-        month = dt.month - 1                   # 0–11
-        quarter = (dt.month - 1) // 3         # 0–3
-
-        return [log_bucket, hour, dow, dom, month, quarter]
+        return [
+            dt.hour,           # 0–23
+            dt.weekday(),      # 0 Mon … 6 Sun
+            dt.day - 1,        # 0–30 (0-indexed for embedding table)
+        ]
 
     def decode(self, token_ids: Union[int, List[int]]) -> str:
-        """Return a human-readable description of the encoded time.
+        """Return a human-readable description of calendar token IDs.
 
         Args:
-            token_ids: List of 6 token IDs from encode().
+            token_ids: List of 3 token IDs from encode().
 
         Returns:
             Descriptive string (not a reconstructed datetime).
         """
         ids = list(token_ids) if not isinstance(token_ids, list) else token_ids
-        return (
-            f"log_bucket={ids[0]}, hour={ids[1]}, "
-            f"dow={ids[2]}, dom={ids[3]+1}, month={ids[4]+1}, quarter={ids[5]+1}"
-        )
+        return f"hour={ids[0]}, dow={ids[1]}, dom={ids[2] + 1}"
 
     @property
     def vocab_size(self) -> int:
-        """Total tokens: log buckets + sum of calendar ranges."""
-        return self.n_log_buckets + sum(_CALENDAR_RANGES.values())
+        """Token vocabulary size: 3 calendar ranges.
+
+        §2.2: calendar_feature_dims = 3.
+        hour (24) + day_of_week (7) + day_of_month (31) = 62 tokens.
+        """
+        return 24 + 7 + 31  # = 62
+
+    # ------------------------------------------------------------------
+    # Paper-derived methods (beyond BaseTokenizer interface)
+    # ------------------------------------------------------------------
+
+    def compute_temporal_coordinate(self, t_seconds: float) -> float:
+        """Equation 2: t' = 8·ln(1 + t/8).
+
+        Transforms elapsed seconds into a log-compressed coordinate for
+        RoPE positional encoding. The scale constant 8 preserves linear
+        granularity for recent events (t < 8 s) while compressing large
+        temporal gaps logarithmically.
+
+        key-numbers.md: temporal_transform = 8·ln(1+t/8), §2.2
+        key-numbers.md: temporal_transform_scale = 8, §2.2
+
+        Args:
+            t_seconds: Elapsed time since most recent event, in seconds.
+                       Must be non-negative. Negative values are clamped to 0.
+
+        Returns:
+            t' — log-seconds temporal coordinate (continuous float).
+        """
+        t = max(0.0, float(t_seconds))
+        return _TEMPORAL_SCALE * math.log(1.0 + t / _TEMPORAL_SCALE)
+
+    def extract_calendar_features(self, timestamp: Any) -> List[float]:
+        """Extract calendar features: [hour, day_of_week, day_of_month].
+
+        §2.2: exactly 3 calendar features used by EventEncoder calendar MLP.
+        Month and quarter are NOT included — not in the paper.
+        key-numbers.md: calendar_feature_dims = 3, §2.2
+
+        Features:
+            hour        ∈ [0, 23]
+            day_of_week ∈ [0, 6]   (0=Monday, 6=Sunday)
+            day_of_month ∈ [1, 31]
+
+        Args:
+            timestamp: datetime, Unix timestamp (float/int), or ISO 8601 string.
+
+        Returns:
+            [hour, day_of_week, day_of_month] — exactly 3 floats.
+        """
+        dt = self._to_datetime(timestamp)
+        return [
+            float(dt.hour),       # 0–23
+            float(dt.weekday()),  # 0 Mon … 6 Sun
+            float(dt.day),        # 1–31
+        ]
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _to_datetime(value: Any) -> datetime:
