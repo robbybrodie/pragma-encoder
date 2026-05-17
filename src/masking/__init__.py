@@ -1,30 +1,56 @@
-"""Masking package — three-strategy MLM masking objective.
+"""Masking package — three-strategy masked event modelling (§2.3.5).
 
-Implements the three masking strategies described in PRAGMA paper
-Section 2.3.5. PRAGMA extends the standard BERT masked language
-modelling objective with domain-specific masking strategies that
-reflect the structure of financial event sequences.
+Implements the unified MaskingStrategy described in PRAGMA paper Section 2.3.5.
+PRAGMA extends the standard MLM objective with three masking granularities:
 
-Three masking strategies:
-    1. Token masking:   Mask individual tokens within events (standard MLM).
-    2. Field masking:   Mask all tokens belonging to a specific field type
-                        across the entire sequence (e.g. mask all amounts).
-    3. Event masking:   Mask all tokens belonging to entire events
-                        (forces the model to impute missing transactions).
+    1. Token masking:    Mask individual token positions (Bernoulli per position).
+    2. Event masking:    Mask all tokens of entire events atomically.
+    3. Key-type masking: Mask all tokens sharing the same semantic key type.
 
-The three strategies are applied with tunable probabilities during
-pretraining. The paper uses a mixture to ensure the model learns at
-multiple granularities: token-level semantics, field-level statistics,
-and event-level temporal patterns.
+The three strategies are applied jointly in a single forward() call and ORed
+(union) to produce the final selected positions.
+
+MaskingStrategy is NOT an nn.Module — it is a plain Python utility class with
+no learnable parameters. It is constructed with a PRAGMAConfig and can be
+used in any training or evaluation context.
 
 Reference: Ostroukhov et al. (2026), Section 2.3.5
 """
 
-from .strategy import MaskingStrategy, TokenMasker, FieldMasker, EventMasker
+from typing import Tuple
+
+import torch
+
+from .strategy import MaskingStrategy
+
+
+class MaskingStrategyProtocol:
+    """Interface contract for MaskingStrategy (§2.3.5).
+
+    Describes the forward() signature for three-strategy masked event
+    modelling. MaskingStrategy is NOT an nn.Module — this protocol documents
+    the expected API for callers and type checkers.
+
+    Input:
+        token_ids: (batch, ne, ni) — integer token IDs
+        key_ids:   (batch, ne, ni) — integer semantic type IDs
+
+    Output:
+        masked_ids:  (batch, ne, ni) — token IDs with [MASK] or [UNK] applied
+        target_ids:  (batch, ne, ni) — original token IDs (for MLM loss)
+        mask:        (batch, ne, ni) bool — True at [MASK] positions (in loss)
+    """
+
+    def forward(
+        self,
+        token_ids: torch.Tensor,  # (batch, ne, ni)
+        key_ids:   torch.Tensor,  # (batch, ne, ni)
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Apply three-strategy masking in a single forward pass (§2.3.5)."""
+        ...
+
 
 __all__ = [
     "MaskingStrategy",
-    "TokenMasker",
-    "FieldMasker",
-    "EventMasker",
+    "MaskingStrategyProtocol",
 ]
