@@ -35,7 +35,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.model import PRAGMA, PRAGMAConfig
-from src.masking import TokenMasker
+from src.masking import MaskingStrategy
 from src.training import MaskedEventModellingLoss
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -80,7 +80,6 @@ def main() -> None:
     # Load config — use PRAGMA-S for now
     # TODO: parse YAML config file
     config = PRAGMAConfig.pragma_s()
-    config.mask_prob = args.mask_prob
 
     # Build model
     model = PRAGMA(config).to(device)
@@ -89,12 +88,12 @@ def main() -> None:
 
     # Training objective
     criterion = MaskedEventModellingLoss(
-        vocab_size=config.vocab_size,
-        label_smoothing=config.label_smoothing,
+        vocab_size=config.value_vocab_size,
     )
 
-    # Masker
-    masker = TokenMasker(mask_prob=config.mask_prob, vocab_size=config.vocab_size)
+    # Masker — MaskingStrategy(config) uses config.token_mask_prob internally.
+    # Call masker.forward(token_ids, key_ids) to obtain masked inputs and targets.
+    masker = MaskingStrategy(config)
 
     # Optimiser
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)

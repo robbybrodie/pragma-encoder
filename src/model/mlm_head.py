@@ -33,9 +33,19 @@ Key design decisions:
     - No separate bias parameter (BERT pattern not needed — standard nn.Linear
       bias is sufficient)
     - No dropout in the MLM head (paper does not specify dropout here)
-    - value_vocab_size = config.value_vocab_size (~28k) — not key_vocab_size
     - Intermediate dimension = d_model (key-numbers.md: mlm_head_output_dim = d_model)
     - Input dimension = 3*d_model (key-numbers.md: mlm_head_input_dim = 3×d_model)
+
+VOCABULARY DESIGN DECISION:
+    The MLM head predicts over the VALUE vocabulary only
+    (config.value_vocab_size ≈ 28k tokens).
+    Target IDs passed as labels must be value-vocab-local IDs
+    in range [0, config.value_vocab_size).
+    The EmbeddingAssembler (to be implemented) is responsible
+    for converting global token IDs to value-vocab-local IDs
+    before passing them as MLM targets.
+    Global IDs (including key vocab offsets) must NOT be
+    used as targets — this would cause out-of-range errors.
 
 Reference: Ostroukhov et al. (2026), Section 2.3.5, Equation 8
 """
