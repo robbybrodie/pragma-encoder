@@ -1,0 +1,63 @@
+# PRAGMA-L Configuration — ~1B parameters (aspirational)
+# Full-scale training variant matching Revolut's research scale.
+# Requires multi-node GPU training via KFTO PyTorchJob.
+#
+# Reference: Ostroukhov et al. (2026), Section 2.3.1
+# Deployment: openshift/gitops/training/pytorchjob-pragma-m.yaml
+# Usage: Deploy via OpenShift AI pipeline, not run directly.
+
+model_name: pragma-l
+description: "PRAGMA Large — ~1B parameters, aspirational open implementation"
+
+# Vocabulary
+vocab_size: 50000
+profile_vocab_size: 10000
+
+# Shared hidden dimension
+d_model: 2048
+
+# Profile State Encoder (Section 2.3.2)
+profile_encoder:
+  n_heads: 16
+  n_layers: 8
+  d_ff: 8192
+  max_seq_len: 1024
+  dropout: 0.1
+
+# Event Encoder (Section 2.3.3)
+event_encoder:
+  n_heads: 16
+  n_layers: 8
+  d_ff: 8192
+  max_seq_len: 256
+  dropout: 0.1
+
+# History Encoder (Section 2.3.4)
+history_encoder:
+  n_heads: 16
+  n_layers: 24
+  d_ff: 8192
+  max_seq_len: 1024
+  dropout: 0.1
+
+# Training objective (Section 2.3.5)
+training:
+  mask_prob: 0.15
+  label_smoothing: 0.1
+  optimizer: adamw
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  warmup_steps: 10000
+  max_steps: 1000000
+  batch_size: 512
+  gradient_clip: 1.0
+  gradient_accumulation_steps: 8
+  num_nodes: 8          # Multi-node training
+  gpus_per_node: 8
+
+# Tokenisation (Section 2.2)
+tokenizer:
+  n_amount_buckets: 100
+  bpe_vocab_size: 8000
+  bpe_max_length: 16
+  n_log_buckets: 128

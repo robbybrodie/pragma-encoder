@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pragma-encoder
+  namespace: openshift-gitops
+  labels:
+    app: pragma-encoder
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/pragma-encoder.git
+    targetRevision: main
+    path: openshift/gitops
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pragma-encoder
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground

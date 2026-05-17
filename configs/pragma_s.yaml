@@ -1,0 +1,58 @@
+# PRAGMA-S Configuration — ~10M parameters
+# Suitable for research, development, and proof-of-concept training.
+#
+# Reference: Ostroukhov et al. (2026), Section 2.3.1
+# Usage: python scripts/train_pragma.py --config configs/pragma_s.yaml
+
+model_name: pragma-s
+description: "PRAGMA Small — ~10M parameters, for research and development"
+
+# Vocabulary
+vocab_size: 50000
+profile_vocab_size: 10000
+
+# Shared hidden dimension
+d_model: 256
+
+# Profile State Encoder (Section 2.3.2)
+profile_encoder:
+  n_heads: 8
+  n_layers: 4
+  d_ff: 1024
+  max_seq_len: 512
+  dropout: 0.1
+
+# Event Encoder (Section 2.3.3)
+event_encoder:
+  n_heads: 8
+  n_layers: 4
+  d_ff: 1024
+  max_seq_len: 128
+  dropout: 0.1
+
+# History Encoder (Section 2.3.4)
+history_encoder:
+  n_heads: 8
+  n_layers: 6
+  d_ff: 1024
+  max_seq_len: 512
+  dropout: 0.1
+
+# Training objective (Section 2.3.5)
+training:
+  mask_prob: 0.15
+  label_smoothing: 0.1
+  optimizer: adamw
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1000
+  max_steps: 100000
+  batch_size: 32
+  gradient_clip: 1.0
+
+# Tokenisation (Section 2.2)
+tokenizer:
+  n_amount_buckets: 100
+  bpe_vocab_size: 8000
+  bpe_max_length: 16
+  n_log_buckets: 128

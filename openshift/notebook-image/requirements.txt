@@ -1,0 +1,19 @@
+# Requirements for the PRAGMA OpenShift AI notebook image.
+# Subset of the main requirements.txt, pinned for reproducible builds.
+# Keep in sync with the main requirements.txt.
+
+torch==2.3.0
+transformers==4.41.0
+peft==0.11.0
+einops==0.8.0
+sentencepiece==0.2.0
+tokenizers==0.19.1
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.4.2
+kfp==2.7.0
+kfp-kubernetes==1.2.0
+jupyter==1.0.0
+ipywidgets==8.1.2
+matplotlib==3.8.4
+seaborn==0.13.2

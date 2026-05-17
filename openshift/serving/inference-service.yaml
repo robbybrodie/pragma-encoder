@@ -1,0 +1,17 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: pragma-encoder
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+    app.kubernetes.io/managed-by: argocd
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: pytorch
+      runtime: pragma-encoder-runtime
+      storageUri: s3://pragma-models/pragma-s/

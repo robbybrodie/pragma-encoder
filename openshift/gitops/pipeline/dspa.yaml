@@ -1,0 +1,32 @@
+apiVersion: datasciencepipelinesapplications.opendatahub.io/v1alpha1
+kind: DataSciencePipelinesApplication
+metadata:
+  name: pragma-pipelines
+  namespace: pragma-encoder
+  labels:
+    app.kubernetes.io/managed-by: argocd
+spec:
+  apiServer:
+    deploy: true
+    enableSamplePipeline: false
+  database:
+    disableHealthCheck: false
+    mariaDB:
+      deploy: true
+      pipelineDBName: pragma
+      username: mlpipeline
+  objectStorage:
+    minio:
+      deploy: false
+    externalStorage:
+      host: s3.openshift-storage.svc.cluster.local
+      bucket: pragma-pipelines
+      region: us-east-1
+      s3CredentialsSecret:
+        accessKey: AWS_ACCESS_KEY_ID
+        secretKey: AWS_SECRET_ACCESS_KEY
+        secretName: pragma-s3-credentials
+  persistenceAgent:
+    deploy: true
+  scheduledWorkflow:
+    deploy: true

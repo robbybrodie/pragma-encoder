@@ -1,0 +1,27 @@
+# Core dependencies for the PRAGMA encoder implementation
+# Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1
+
+# Deep learning
+torch>=2.0.0
+transformers>=4.40.0
+peft>=0.10.0                    # LoRA via Hugging Face PEFT (Section 3.1.2)
+
+# Tensor utilities
+einops>=0.7.0                   # Tensor operations (rearrange, reduce)
+rotary-embedding-torch>=0.6.0  # RoPE positional encoding (Section 2.3.4)
+
+# Tokenisation (Section 2.2)
+sentencepiece>=0.2.0            # BPE tokeniser for textual fields
+tokenizers>=0.19.0              # Hugging Face tokenizers library
+
+# Data processing
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+
+# Downstream evaluation (Section 3)
+xgboost>=2.0.0                  # Downstream task evaluation baseline
+
+# Pipeline orchestration (OpenShift AI / KFP SDK v2)
+kfp>=2.0.0                      # KFP SDK v2 for pipeline definition
+kfp-kubernetes>=1.0.0           # OpenShift AI extensions for KFP

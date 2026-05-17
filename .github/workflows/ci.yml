@@ -1,0 +1,33 @@
+# CI placeholder — to be filled in during implementation phase.
+#
+# Intended checks:
+#   - pytest (unit + integration tests)
+#   - ruff (linting)
+#   - mypy (type checking)
+#   - black (formatting check)
+#   - Security scan (no secrets in diff)
+
+name: CI
+
+on:
+  push:
+    branches: [main, pragma-implementation]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Lint with ruff
+        run: ruff check src/ tests/
+      - name: Type check with mypy
+        run: mypy src/ --ignore-missing-imports
+      - name: Run tests
+        run: pytest tests/ -v --cov=src --cov-report=xml

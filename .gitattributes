@@ -1,0 +1,37 @@
+# ==============================================================================
+# Line endings — normalise to LF in repository
+# ==============================================================================
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.ipynb text eol=lf
+
+# ==============================================================================
+# Large binary files — tracked via Git LFS
+# Model weights must NEVER be committed directly to git history.
+# Install Git LFS: https://git-lfs.github.com/
+# ==============================================================================
+*.safetensors filter=lfs diff=lfs merge=lfs -text
+*.pt          filter=lfs diff=lfs merge=lfs -text
+*.pth         filter=lfs diff=lfs merge=lfs -text
+*.ckpt        filter=lfs diff=lfs merge=lfs -text
+*.bin         filter=lfs diff=lfs merge=lfs -text
+*.pkl         filter=lfs diff=lfs merge=lfs -text
+*.parquet     filter=lfs diff=lfs merge=lfs -text
+*.arrow       filter=lfs diff=lfs merge=lfs -text
+*.h5          filter=lfs diff=lfs merge=lfs -text
+*.hdf5        filter=lfs diff=lfs merge=lfs -text
+
+# ==============================================================================
+# Export ignore — strip sensitive paths from git archive exports
+# ==============================================================================
+secrets/            export-ignore
+.env*               export-ignore
+*secret*            export-ignore
+*credential*        export-ignore
+*token*             export-ignore
+*.kubeconfig        export-ignore
+kubeconfig          export-ignore

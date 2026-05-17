@@ -1,0 +1,25 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: pragma-encoder
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+    app.kubernetes.io/managed-by: argocd
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/your-org/pragma-encoder.git
+      ref: main
+    contextDir: openshift/notebook-image
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: pragma-encoder:latest
+  triggers:
+    - type: ConfigChange
