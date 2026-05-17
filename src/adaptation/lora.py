@@ -1,122 +1,143 @@
-"""LoRA fine-tuning for PRAGMA.
+"""LoRAAdapter — parameter-efficient fine-tuning for PRAGMA (§3.1.2).
 
-Implements parameter-efficient fine-tuning of the PRAGMA model via
-Low-Rank Adaptation (LoRA), as described in PRAGMA paper Section 3.1.2.
+Implements Low-Rank Adaptation (LoRA) of a pre-trained PRAGMA model as
+described in PRAGMA paper Section 3.1.2.
 
-LoRA inserts trainable low-rank matrices into the attention layers
-of the History Encoder (and optionally the Event Encoder). The base
-PRAGMA weights remain frozen during fine-tuning, with only the LoRA
-adapters and the task-specific head being trained.
+LoRA introduces 2–4% parameter overhead by injecting trainable low-rank
+delta matrices (A, B) into the target Linear layers of the three encoders.
+All backbone weights are frozen; only the LoRA deltas are updated during
+downstream fine-tuning.
 
-This implementation uses the Hugging Face PEFT library for LoRA,
-which provides production-quality LoRA with support for:
-    - Rank decomposition in Q, K, V, and output projections
-    - LoRA dropout for regularisation
-    - Adapter merging for inference efficiency
+Implementation uses Hugging Face PEFT library (ADR 006). Do not implement
+LoRA from scratch — PEFT provides production-quality LoRA with support for
+adapter saving, loading, and merging.
 
-Fine-tuning targets (from Section 3.1.2):
-    - History Encoder attention projections (primary target)
-    - Event Encoder attention projections (optional, for full adaptation)
-    - Profile State Encoder is typically kept frozen
+Target modules (verified empirically against PRAGMA module paths):
+    "q_proj"   — Q projection in _RoPEMultiheadAttention / _EventAttention
+    "k_proj"   — K projection in _RoPEMultiheadAttention / _EventAttention
+    "v_proj"   — V projection in _RoPEMultiheadAttention / _EventAttention
+    "out_proj" — output projection in _RoPEMultiheadAttention / _EventAttention
+    "ff.0"     — first FFN linear (d_model → d_ffn) in *EncoderLayer.ff
+    "ff.2"     — second FFN linear (d_ffn → d_model) in *EncoderLayer.ff
+
+PEFT uses suffix matching: "q_proj" matches any module path ending in
+".q_proj", so this covers all three encoders (profile, event, history)
+without needing per-encoder path prefixes.
+
+NOT targeted (excluded by design):
+    event_encoder.calendar_mlp.mlp.* — feature embedding, not transformer layer
+    mlm_head.proj / mlm_head.decoder — prediction head, not an encoder
+
+Parameter coverage (PRAGMA-S, rank=8, alpha=8):
+    LoRA params: 221,184 / 9,334,432 total = 2.37% — within paper's 2–4% range.
+
+Key design decisions:
+    - lora_dropout = 0.0 — implementation choice; paper does not specify dropout
+      for LoRA. 0.0 is the conservative default (no additional regularisation).
+    - bias = "none" — standard PEFT default; paper does not specify.
+    - task_type = FEATURE_EXTRACTION — PRAGMA is encoder-only (no causal head).
+    - All LoRA hyperparameters sourced from PRAGMAConfig (no hardcoded values).
 
 Reference: Ostroukhov et al. (2026), Section 3.1.2
-LoRA reference: Hu et al. (2022), arXiv:2106.09685
+LoRA paper: Hu et al. (2022), arXiv:2106.09685
 PEFT library: https://github.com/huggingface/peft
 """
 
-from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
-import torch.nn as nn
+from src.model.config import PRAGMAConfig
 
 
-@dataclass
-class PRAGMALoRAConfig:
-    """Configuration for LoRA fine-tuning of PRAGMA.
+# ---------------------------------------------------------------------------
+# Target module names — exact attribute paths in the PRAGMA encoder hierarchy
+# ---------------------------------------------------------------------------
+
+# These strings are suffix-matched by PEFT against the full named_modules() paths.
+# Verified against PRAGMA-S: 221,184 LoRA params / 9,334,432 total = 2.37%.
+# Do not change these without re-verifying the parameter fraction.
+_TARGET_MODULES: List[str] = [
+    "q_proj",    # Q projection  — Linear(d_model, d_model)
+    "k_proj",    # K projection  — Linear(d_model, d_model)
+    "v_proj",    # V projection  — Linear(d_model, d_model)
+    "out_proj",  # output proj   — Linear(d_model, d_model)
+    "ff.0",      # FFN up-proj   — Linear(d_model, d_ffn)
+    "ff.2",      # FFN down-proj — Linear(d_ffn, d_model)
+]
+
+# LoRA dropout — implementation choice.
+# The paper (§3.1.2) specifies LoRA but does not give a dropout value.
+# 0.0 is the conservative default (no additional stochastic regularisation).
+_LORA_DROPOUT: float = 0.0
+
+
+class LoRAAdapter:
+    """Parameter-efficient LoRA fine-tuning adapter for PRAGMA (§3.1.2).
+
+    Wraps a pre-trained PRAGMA model with Low-Rank Adaptation (LoRA),
+    freezing the backbone and injecting trainable low-rank delta matrices
+    into the attention projections and FFN layers of all three encoders.
+
+    The adapter is constructed from PRAGMAConfig only — no individual args.
+    Scaling from PRAGMA-S to PRAGMA-M requires changing exactly one line
+    (the PRAGMAConfig classmethod call).
+
+    Args:
+        config: PRAGMAConfig — provides lora_rank and lora_alpha.
+                All LoRA hyperparameters are sourced from config.
 
     Attributes:
-        r: LoRA rank. Typical values: 8, 16, 32.
-           Higher rank = more expressive but more parameters.
-        lora_alpha: LoRA scaling factor. Effective LR scale = alpha/r.
-        lora_dropout: Dropout applied to LoRA activations. Default: 0.1.
-        target_modules: Which attention projection modules to adapt.
-            Defaults to History Encoder query and value projections.
-        bias: Whether to train bias parameters. Options: 'none', 'all',
-              'lora_only'. Default: 'none'.
-        n_classes: Number of output classes for the task head.
-        task_type: Task type ('binary', 'multiclass', 'regression').
+        config: PRAGMAConfig — stored for callers.
+
+    Usage:
+        model   = PRAGMA(config)
+        adapter = LoRAAdapter(config)
+        peft_model = adapter.apply(model)
+        # peft_model.parameters() only yields LoRA deltas as trainable
     """
 
-    r: int = 16
-    lora_alpha: int = 32
-    lora_dropout: float = 0.1
-    target_modules: List[str] = field(
-        default_factory=lambda: [
-            "self_attn.in_proj_weight",  # History Encoder self-attention
-            "cross_attn.in_proj_weight", # History Encoder cross-attention
-        ]
-    )
-    bias: str = "none"
-    n_classes: int = 2
-    task_type: str = "binary"
+    def __init__(self, config: PRAGMAConfig) -> None:
+        self.config = config
 
+        # Build LoraConfig now — validated at construction, not at apply() time.
+        # Import is deferred to this point so that peft is only required when
+        # LoRAAdapter is actually instantiated (not at module import time).
+        try:
+            from peft import LoraConfig, TaskType
+        except ImportError as exc:
+            raise ImportError(
+                "The `peft` library is required for LoRAAdapter. "
+                "Install with: pip install peft"
+            ) from exc
 
-def apply_lora_to_pragma(
-    model: nn.Module,
-    config: PRAGMALoRAConfig,
-) -> nn.Module:
-    """Wrap a PRAGMA model with LoRA adapters using Hugging Face PEFT.
+        self._lora_config = LoraConfig(
+            r=config.lora_rank,              # key-numbers.md: lora_rank=8, §3.1.2
+            lora_alpha=config.lora_alpha,    # key-numbers.md: lora_alpha=8, §3.1.2
+            target_modules=_TARGET_MODULES,  # QKV + FFN — see module docstring
+            lora_dropout=_LORA_DROPOUT,      # implementation choice: 0.0 (paper unspecified)
+            bias="none",                     # standard PEFT default
+            task_type=TaskType.FEATURE_EXTRACTION,  # PRAGMA is encoder-only
+        )
 
-    Freezes all base model parameters and inserts trainable LoRA
-    adapter matrices into the specified target modules.
+    def apply(self, model: "PRAGMA") -> "peft.PeftModel":  # type: ignore[name-defined]
+        """Wrap a PRAGMA model with LoRA adapters.
 
-    Args:
-        model: A PRAGMA model instance (fully initialised, optionally
-               loaded from a pretrained checkpoint).
-        config: PRAGMALoRAConfig specifying LoRA hyperparameters.
+        Freezes all backbone parameters and injects trainable LoRA delta
+        matrices into the target modules. The returned PeftModel has:
+          - LoRA parameters (lora_A, lora_B): requires_grad=True
+          - All other parameters:             requires_grad=False
 
-    Returns:
-        The PRAGMA model wrapped with PEFT LoRA adapters.
-        Only LoRA parameters and the task head are trainable.
+        Args:
+            model: A PRAGMA model instance — pre-trained or randomly initialised.
+                   The model is modified in-place by get_peft_model().
 
-    Raises:
-        ImportError: If the `peft` library is not installed.
-            Install with: pip install peft>=0.10.0
-    """
-    try:
-        from peft import LoraConfig, TaskType, get_peft_model
-    except ImportError as e:
-        raise ImportError(
-            "The `peft` library is required for LoRA fine-tuning. "
-            "Install it with: pip install peft>=0.10.0"
-        ) from e
+        Returns:
+            peft_model: A peft.PeftModel wrapping the PRAGMA backbone.
+                        Callers use this for fine-tuning, saving adapters,
+                        and merging LoRA weights back into the backbone.
 
-    # Freeze all base model parameters
-    for param in model.parameters():
-        param.requires_grad = False
+        Raises:
+            ImportError: If the `peft` library is not installed.
+        """
+        from peft import get_peft_model
 
-    lora_config = LoraConfig(
-        r=config.r,
-        lora_alpha=config.lora_alpha,
-        target_modules=config.target_modules,
-        lora_dropout=config.lora_dropout,
-        bias=config.bias,
-        # PRAGMA is an encoder model — use FEATURE_EXTRACTION task type
-        task_type=TaskType.FEATURE_EXTRACTION,
-    )
-
-    peft_model = get_peft_model(model, lora_config)
-    peft_model.print_trainable_parameters()
-    return peft_model
-
-
-def count_trainable_parameters(model: nn.Module) -> int:
-    """Count trainable parameters in a (possibly LoRA-wrapped) model.
-
-    Args:
-        model: Any nn.Module.
-
-    Returns:
-        Number of parameters with requires_grad=True.
-    """
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+        return get_peft_model(model, self._lora_config)

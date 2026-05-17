@@ -18,11 +18,10 @@ Reference: Ostroukhov et al. (2026), Section 3.1
 LoRA reference: Hu et al. (2022), arXiv:2106.09685
 """
 
-from .lora import apply_lora_to_pragma, PRAGMALoRAConfig
+from .lora import LoRAAdapter
 from .probe import LinearProbe
 
 __all__ = [
-    "apply_lora_to_pragma",
-    "PRAGMALoRAConfig",
+    "LoRAAdapter",
     "LinearProbe",
 ]
