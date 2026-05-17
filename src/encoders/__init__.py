@@ -45,10 +45,35 @@ class RoPEEncodingProtocol(Protocol):
         ...
 
 
+class ProfileStateEncoderProtocol(Protocol):
+    """Interface contract for ProfileStateEncoder (§2.3.2, Equation 4).
+
+    Bidirectional Transformer encoder for static customer profile state.
+    Accepts pre-embedded float tensors (NOT integer token IDs).
+    The [USR] token is already at position 0 of xa (prepended by caller).
+    Returns the full output sequence za — caller extracts za[:,0:1,:].
+
+    Key constraints:
+        - Bidirectional attention (is_causal=False) — NEVER causal
+        - RoPE applied to Q and K using temporal coordinates ta
+        - No nn.Embedding — embedding is done externally (Equation 1)
+        - No self.usr_token — [USR] is prepended by the caller
+    """
+
+    def forward(
+        self,
+        xa: torch.Tensor,  # (batch, na, d_model) — pre-embedded; [USR] at pos 0
+        ta: torch.Tensor,  # (batch, na) — temporal coordinates (log-seconds, Eq 2)
+    ) -> torch.Tensor:     # (batch, na, d_model) — full encoder output za
+        """Encode profile state token embeddings with temporal RoPE (Eq 4)."""
+        ...
+
+
 __all__ = [
     "ProfileStateEncoder",
     "EventEncoder",
     "HistoryEncoder",
     "RoPEEncoding",
     "RoPEEncodingProtocol",
+    "ProfileStateEncoderProtocol",
 ]
