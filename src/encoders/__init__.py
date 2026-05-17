@@ -98,6 +98,33 @@ class EventEncoderProtocol(Protocol):
         ...
 
 
+class HistoryEncoderProtocol(Protocol):
+    """Interface contract for HistoryEncoder (§2.3.4, Equations 6 and 7).
+
+    Bidirectional Transformer encoder for the full transaction history.
+    Receives the concatenated [USR:EVT] sequence z (Equation 6) assembled by
+    the caller. Produces full contextualised output zh (Equation 7).
+
+    Key constraints:
+        - z is assembled by caller: z[:,0:1,:] = za, z[:,1:,:] = ze (Eq 6)
+        - te[:,0] = 0.0 for [USR]; te[:,1:] = log-seconds for [EVT] (Eq 2)
+        - Bidirectional self-attention (is_causal=False) — NEVER causal
+        - RoPE applied to Q and K using te in every attention layer (Eq 9)
+        - Pure self-attention — NO cross-attention sublayer
+        - No self.hist_token — no [HIST] token in the PRAGMA paper
+        - No self.mask_embedding — masking done externally by MaskingStrategy
+        - Returns full zh — caller slices zh[:,0,:] or zh[:,1:,:]
+    """
+
+    def forward(
+        self,
+        z:  torch.Tensor,  # (batch, 1+ne, d_model) — [USR:EVT] concatenated (Eq 6)
+        te: torch.Tensor,  # (batch, 1+ne) — temporal coordinates (log-seconds, Eq 2)
+    ) -> torch.Tensor:     # (batch, 1+ne, d_model) — zh, full encoder output (Eq 7)
+        """Encode the [USR:EVT] history sequence with temporal RoPE (Eq 7)."""
+        ...
+
+
 __all__ = [
     "ProfileStateEncoder",
     "EventEncoder",
@@ -106,4 +133,5 @@ __all__ = [
     "RoPEEncodingProtocol",
     "ProfileStateEncoderProtocol",
     "EventEncoderProtocol",
+    "HistoryEncoderProtocol",
 ]

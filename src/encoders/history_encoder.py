@@ -1,237 +1,246 @@
-"""History Encoder.
+"""History Encoder — bidirectional Transformer with RoPE on event timestamps.
 
 Implements the History Encoder described in PRAGMA paper Section 2.3.4.
 
-The History Encoder is a bidirectional Transformer that processes the
-sequence of per-event [EVT] vectors produced by the Event Encoder.
-It models the customer's transaction history as a sequence and produces
-contextualised event representations.
+The History Encoder processes the concatenated sequence z = [za : ze] (Equation 6)
+assembled by the caller and produces a full contextualised output zh (Equation 7).
 
-Architecture:
-    Input:  Sequence of [EVT] vectors (one per transaction) from the
-            Event Encoder, conditioned on the [USR] vector from the
-            Profile State Encoder via cross-attention.
-    Output: Contextualised representations for every position in the
-            history sequence, plus a [HIST] summary token.
+Contract with callers:
+    INPUT:
+        z:  (batch, 1+ne, d_model) — concatenated [USR:EVT] sequence.
+            Assembled by the caller BEFORE calling forward():
+              z[:,0:1,:]  = za — the [USR] token from ProfileStateEncoder
+              z[:,1:,:]   = ze — [EVT] tokens from EventEncoder
+            The HistoryEncoder receives z already assembled.
+            It does NOT concatenate za and ze itself.
 
-Key design choices from the paper:
-    - Bidirectional — the full history window is visible (MLM training).
-    - RoPE positional encoding on the event sequence positions.
-    - Cross-attention from history positions to the [USR] profile vector.
-      This allows the model to modulate history interpretation based on
-      static customer attributes (e.g. plan tier, region).
-    - The MASK token replaces event representations during MLM training.
+        te: (batch, 1+ne) — temporal coordinates in log-seconds.
+            te[:,0]   = 0.0 — [USR] position (no timestamp; RoPE identity)
+            te[:,1:]  = log-seconds to most recent event per §2.3.4
+            Computed via Equation 2: t' = 8·ln(1 + t/8).
+            Fed into RoPEEncoding for every attention layer.
 
-The History Encoder produces the final contextualised event embeddings
-that are used for downstream task probing (Section 3.1.1) and fine-tuning
-(Section 3.1.2).
+    OUTPUT:
+        zh: (batch, 1+ne, d_model) — full history encoder output sequence.
+            zh[:,0,:]  = [USR] representation (user level)
+            zh[:,1:,:] = [EVT] representations (per-event level)
+            The caller slices as needed — this encoder does NOT slice.
 
-Reference: Ostroukhov et al. (2026), Section 2.3.4
+Key design decisions from Section 2.3.4:
+    - Bidirectional self-attention (is_causal=False) — NEVER causal
+    - RoPE applied to Q and K in EVERY attention layer, using te
+    - Pure self-attention — NO cross-attention sublayer
+    - [USR] at position 0 conditions [EVT] tokens through self-attention naturally
+    - Pre-norm LayerNorm (Xiong et al., 2020) — norm_first pattern
+    - GELU activation (Hendrycks et al., 2016)
+    - Dropout = 0.1 (§2.3)
+    - config.history_encoder_layers layers (2 / 6 / 18 for S / M / L)
+
+Separation of concerns (CLAUDE.md, ADR 003):
+    - Concatenation z=[za:ze] is done OUTSIDE by the caller (Equation 6)
+    - No [HIST] token — there is no such token in the PRAGMA paper
+    - No mask_embedding — masking is done OUTSIDE by MaskingStrategy
+    - RoPE (temporal on te) is SEPARATE from within-field PosEmb (Equation 1)
+
+Profile conditioning mechanism:
+    The stub used cross-attention from [EVT] positions to the [USR] vector.
+    The paper specifies NO separate cross-attention sublayer.
+    Instead, [USR] is prepended at position 0 of z. Bidirectional self-attention
+    then allows every [EVT] position to attend to [USR] directly — profile
+    information conditions history encoding through the standard attention
+    mechanism without any extra architectural components.
+
+Reference: Ostroukhov et al. (2026), Section 2.3.4, Equations 6 and 7
+RoPE: Su et al. (2024), arXiv:2104.09864
 """
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from .rope import RotaryPositionalEmbedding
+from src.model.config import PRAGMAConfig
+from src.encoders.rope import RoPEEncoding
 
 
-class HistoryEncoderLayer(nn.Module):
-    """Single History Encoder layer with self-attention + cross-attention.
+class _RoPEMultiheadAttention(nn.Module):
+    """Multi-head self-attention with RoPE applied to Q and K.
 
-    Implements pre-norm transformer layer with:
-        1. Bidirectional self-attention over the event sequence (with RoPE).
-        2. Cross-attention to the [USR] profile representation.
-        3. Feed-forward network.
+    Applies temporal coordinate rotations (Equation 9) to query and key
+    vectors before computing bidirectional scaled dot-product attention.
+    RoPE is applied once per attention layer using the temporal coordinates
+    te passed from HistoryEncoder.forward().
+
+    Identical pattern to ProfileStateEncoder._RoPEMultiheadAttention —
+    the two encoders share the same attention mechanism, but have independent
+    weights and use different temporal coordinates (ta vs te).
 
     Args:
-        d_model: Hidden dimension.
-        n_heads: Number of attention heads.
-        d_ff: Feed-forward intermediate dimension.
-        dropout: Dropout probability.
-        rope: Shared RoPE instance.
+        config: PRAGMAConfig — provides d_model, n_heads, dropout.
+        rope:   Shared RoPEEncoding instance (no trainable parameters).
     """
 
-    def __init__(
-        self,
-        d_model: int,
-        n_heads: int,
-        d_ff: int,
-        dropout: float,
-        rope: RotaryPositionalEmbedding,
-    ):
+    def __init__(self, config: PRAGMAConfig, rope: RoPEEncoding) -> None:
         super().__init__()
-        self.d_model = d_model
-        self.n_heads = n_heads
-        self.rope = rope
+        self.n_heads: int = config.n_heads
+        self.head_dim: int = config.d_model // config.n_heads  # 64 — key-numbers.md
+        self.d_model: int = config.d_model
+        self.rope: RoPEEncoding = rope
+        self._dropout: float = config.dropout
 
-        # Self-attention (bidirectional)
-        self.self_attn = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True
-        )
-
-        # Cross-attention to [USR] profile vector
-        self.cross_attn = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True
-        )
-
-        # Feed-forward
-        self.ff = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model),
-        )
-
-        # Pre-norm layer norms
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
-        self.drop = nn.Dropout(dropout)
+        # QKV and output projections — bias=True (standard)
+        self.q_proj = nn.Linear(config.d_model, config.d_model)
+        self.k_proj = nn.Linear(config.d_model, config.d_model)
+        self.v_proj = nn.Linear(config.d_model, config.d_model)
+        self.out_proj = nn.Linear(config.d_model, config.d_model)
 
     def forward(
         self,
-        x: torch.Tensor,
-        usr_repr: torch.Tensor,
-        key_padding_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Forward pass for a single history encoder layer.
+        x: torch.Tensor,   # (batch, 1+ne, d_model)
+        te: torch.Tensor,  # (batch, 1+ne) — temporal coordinates (log-seconds)
+    ) -> torch.Tensor:     # (batch, 1+ne, d_model)
+        batch, seq_len, _ = x.shape
 
-        Args:
-            x: (batch, seq_len, d_model) — event sequence.
-            usr_repr: (batch, d_model) — [USR] profile vector.
-            key_padding_mask: (batch, seq_len) — True for padding positions.
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
 
-        Returns:
-            (batch, seq_len, d_model) — updated event sequence.
-        """
-        # Self-attention with pre-norm (bidirectional — no causal mask)
-        residual = x
-        x = self.norm1(x)
-        x, _ = self.self_attn(x, x, x, key_padding_mask=key_padding_mask)
-        x = self.drop(x) + residual
+        def _to_heads(t: torch.Tensor) -> torch.Tensor:
+            return t.view(batch, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
 
-        # Cross-attention to [USR] profile representation
-        residual = x
-        x = self.norm2(x)
-        usr_kv = usr_repr.unsqueeze(1)  # (B, 1, D) — single key/value
-        x, _ = self.cross_attn(x, usr_kv, usr_kv)
-        x = self.drop(x) + residual
+        q = _to_heads(q)  # (batch, n_heads, 1+ne, head_dim)
+        k = _to_heads(k)
+        v = _to_heads(v)
 
-        # Feed-forward
-        residual = x
-        x = self.norm3(x)
-        x = self.drop(self.ff(x)) + residual
+        # Apply RoPE rotation to Q and K using temporal coordinates.
+        # te[:,0] = 0 → identity rotation for [USR] position (RoPE at t=0 is I).
+        # te[:,1:] = log-seconds → relative temporal distance for [EVT] positions.
+        # Equation 9: dot(q_rot[m], k_rot[n]) = q^T R(tn - tm) k.
+        q, k = self.rope(q, k, te)
 
-        return x
+        # Bidirectional scaled dot-product attention — is_causal=False.
+        # PRAGMA is encoder-only. NEVER use causal masking here. (CLAUDE.md)
+        attn_out = F.scaled_dot_product_attention(
+            q, k, v,
+            dropout_p=self._dropout if self.training else 0.0,
+            is_causal=False,
+        )  # (batch, n_heads, 1+ne, head_dim)
+
+        attn_out = attn_out.transpose(1, 2).contiguous().view(batch, seq_len, self.d_model)
+        return self.out_proj(attn_out)
+
+
+class _HistoryEncoderLayer(nn.Module):
+    """One pre-norm Transformer encoder layer with RoPE attention.
+
+    Implements the standard pre-norm (Xiong et al., 2020) pattern:
+        z = z + dropout(attn(norm1(z), te))   # attention sub-layer
+        z = z + dropout(ff(norm2(z)))          # feed-forward sub-layer
+
+    No cross-attention sub-layer — pure self-attention only (§2.3.4).
+    [USR] at position 0 of z conditions [EVT] tokens through self-attention.
+    Activation: GELU (§2.3, key-numbers.md).
+
+    Args:
+        config: PRAGMAConfig — provides all hyperparameters.
+        rope:   Shared RoPEEncoding instance passed in from HistoryEncoder.
+    """
+
+    def __init__(self, config: PRAGMAConfig, rope: RoPEEncoding) -> None:
+        super().__init__()
+        self.norm1 = nn.LayerNorm(config.d_model)
+        self.norm2 = nn.LayerNorm(config.d_model)
+        self.attn = _RoPEMultiheadAttention(config, rope)
+        self.ff = nn.Sequential(
+            nn.Linear(config.d_model, config.d_ffn),
+            nn.GELU(),
+            nn.Linear(config.d_ffn, config.d_model),
+        )
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(
+        self,
+        z: torch.Tensor,   # (batch, 1+ne, d_model)
+        te: torch.Tensor,  # (batch, 1+ne) — temporal coordinates
+    ) -> torch.Tensor:     # (batch, 1+ne, d_model)
+        # Pre-norm attention + residual (§2.3: pre-norm LayerNorm)
+        z = z + self.dropout(self.attn(self.norm1(z), te))
+        # Pre-norm feed-forward + residual (§2.3: GELU activation)
+        z = z + self.dropout(self.ff(self.norm2(z)))
+        return z
 
 
 class HistoryEncoder(nn.Module):
     """Bidirectional Transformer encoder for the full transaction history.
 
-    Processes a sequence of per-event [EVT] vectors from the Event Encoder,
-    conditioned on the [USR] vector from the Profile State Encoder.
+    Processes the concatenated [USR:EVT] sequence z (Equation 6) with temporal
+    RoPE on te, producing a full contextualised output zh (Equation 7).
+
+    The caller assembles z = [za : ze] before calling forward():
+      - z[:,0:1,:] = za — [USR] token from ProfileStateEncoder
+      - z[:,1:,:]  = ze — [EVT] tokens from EventEncoder
+
+    This encoder does NOT concatenate za and ze — that is the caller's job.
+    This encoder does NOT slice zh — the caller extracts what it needs:
+      - zh[:,0,:]  → [USR] representation → embedding probe / fine-tuning head
+      - zh[:,1:,:] → [EVT] representations → MLM head
+
+    Profile conditioning: [USR] at position 0 naturally conditions all [EVT]
+    positions through bidirectional self-attention. No cross-attention is needed.
 
     Args:
-        d_model: Hidden dimension (must match Event Encoder). Default: 256.
-        n_heads: Number of attention heads. Default: 8.
-        n_layers: Number of History Encoder layers. Default: 6.
-        d_ff: Feed-forward intermediate dimension. Default: 1024.
-        dropout: Dropout probability. Default: 0.1.
-        max_history_len: Maximum events in a history sequence. Default: 512.
+        config: PRAGMAConfig — single source of truth for all hyperparameters.
+                config.history_encoder_layers controls the stack depth
+                (2 for PRAGMA-S, 6 for PRAGMA-M, 18 for PRAGMA-L — Table 1).
     """
 
-    def __init__(
-        self,
-        d_model: int = 256,
-        n_heads: int = 8,
-        n_layers: int = 6,
-        d_ff: int = 1024,
-        dropout: float = 0.1,
-        max_history_len: int = 512,
-    ):
+    def __init__(self, config: PRAGMAConfig) -> None:
         super().__init__()
+        self.d_model: int = config.d_model  # exposed for callers and tests
 
-        self.d_model = d_model
+        # Shared RoPEEncoding — no trainable parameters; inv_freq is a buffer.
+        # Uses te (event temporal coordinates), not ta (profile temporal coordinates).
+        self.rope = RoPEEncoding(config)
 
-        # RoPE for event sequence positions
-        self.rope = RotaryPositionalEmbedding(
-            dim=d_model // n_heads, max_seq_len=max_history_len
-        )
-
-        # Stack of HistoryEncoderLayers
+        # Stack of encoder layers — depth from config (Table 1)
         self.layers = nn.ModuleList([
-            HistoryEncoderLayer(
-                d_model=d_model,
-                n_heads=n_heads,
-                d_ff=d_ff,
-                dropout=dropout,
-                rope=self.rope,
-            )
-            for _ in range(n_layers)
+            _HistoryEncoderLayer(config, self.rope)
+            for _ in range(config.history_encoder_layers)
         ])
 
-        # [HIST] summary token — prepended to the event sequence
-        self.hist_token = nn.Parameter(torch.zeros(1, 1, d_model))
-        nn.init.normal_(self.hist_token, std=0.02)
+        # Final layer norm applied to the full output sequence
+        self.norm = nn.LayerNorm(config.d_model)
 
-        # Mask token for MLM — replaces masked event representations
-        self.mask_embedding = nn.Parameter(torch.zeros(1, 1, d_model))
-        nn.init.normal_(self.mask_embedding, std=0.02)
-
-        self.dropout = nn.Dropout(dropout)
-        self.layer_norm = nn.LayerNorm(d_model)
+        # Input dropout applied to z before the encoder stack
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(
         self,
-        event_reprs: torch.Tensor,
-        usr_repr: torch.Tensor,
-        event_mask: torch.Tensor | None = None,
-        key_padding_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Encode the full transaction history.
+        z: torch.Tensor,   # (batch, 1+ne, d_model) — [USR:EVT] assembled by caller (Eq 6)
+        te: torch.Tensor,  # (batch, 1+ne) — temporal coordinates (log-seconds, Eq 2)
+    ) -> torch.Tensor:     # (batch, 1+ne, d_model) — zh, full encoder output (Eq 7)
+        """Encode the concatenated [USR:EVT] history sequence with temporal RoPE.
 
         Args:
-            event_reprs: (batch, n_events, d_model) — [EVT] vectors from
-                         the Event Encoder. May contain masked positions.
-            usr_repr: (batch, d_model) — [USR] vector from the Profile
-                      State Encoder.
-            event_mask: (batch, n_events) — True for positions to replace
-                        with the [MASK] embedding (MLM training).
-            key_padding_mask: (batch, n_events) — True for padding positions.
+            z:  Concatenated input sequence. Shape: (batch, 1+ne, d_model).
+                Assembled by caller as z = [za : ze] per Equation 6.
+                z[:,0:1,:] = za — [USR] token from ProfileStateEncoder.
+                z[:,1:,:]  = ze — [EVT] tokens from EventEncoder.
+            te: Temporal coordinates in log-seconds. Shape: (batch, 1+ne).
+                te[:,0]  = 0.0 — [USR] position (no timestamp per §2.3.4).
+                te[:,1:] = log-seconds to most recent event (Equation 2).
 
         Returns:
-            Tuple of:
-                history_reprs: (batch, n_events, d_model) — contextualised
-                               event representations at all positions.
-                hist_repr: (batch, d_model) — the [HIST] summary token output.
+            zh: Full history encoder output. Shape: (batch, 1+ne, d_model).
+                zh[:,0,:]  = [USR] representation (user-level).
+                zh[:,1:,:] = [EVT] representations (per-event level).
+                Caller slices as needed — this encoder returns the full zh.
         """
-        batch_size, n_events, _ = event_reprs.shape
+        # Apply input dropout to embeddings
+        zh = self.dropout(z)
 
-        # Replace masked events with the [MASK] embedding
-        if event_mask is not None:
-            mask_emb = self.mask_embedding.expand(batch_size, n_events, -1)
-            event_reprs = torch.where(
-                event_mask.unsqueeze(-1), mask_emb, event_reprs
-            )
-
-        # Prepend [HIST] token
-        hist = self.hist_token.expand(batch_size, -1, -1)  # (B, 1, D)
-        x = torch.cat([hist, event_reprs], dim=1)           # (B, N+1, D)
-
-        # Extend padding mask for [HIST] token
-        if key_padding_mask is not None:
-            hist_pad = torch.zeros(
-                batch_size, 1, dtype=torch.bool, device=key_padding_mask.device
-            )
-            key_padding_mask = torch.cat([hist_pad, key_padding_mask], dim=1)
-
-        # Apply History Encoder layers
+        # Pass through each encoder layer — RoPE applied at every layer
         for layer in self.layers:
-            x = layer(x, usr_repr, key_padding_mask=key_padding_mask)
+            zh = layer(zh, te)
 
-        x = self.layer_norm(x)
-
-        hist_repr = x[:, 0, :]       # (B, D) — [HIST] summary
-        history_reprs = x[:, 1:, :]  # (B, N, D) — contextualised events
-
-        return history_reprs, hist_repr
+        # Final layer norm over the full sequence
+        return self.norm(zh)
