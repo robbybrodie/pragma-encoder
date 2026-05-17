@@ -28,10 +28,35 @@
 # ==============================================================================
 # Export ignore — strip sensitive paths from git archive exports
 # ==============================================================================
+
+# Credential files — scoped to file extensions only
+# Prevents false matches on source directories and Python files
+*secret*.env        export-ignore
+*secret*.yaml       export-ignore
+*secret*.yml        export-ignore
+*secret*.json       export-ignore
+*secret*.key        export-ignore
+*credential*.env    export-ignore
+*credential*.yaml   export-ignore
+*credential*.yml    export-ignore
+*credential*.json   export-ignore
+*token*.env         export-ignore
+*token*.yaml        export-ignore
+*token*.yml         export-ignore
+*token*.json        export-ignore
+*token*.key         export-ignore
+*apikey*.env        export-ignore
+*apikey*.yaml       export-ignore
+*apikey*.yml        export-ignore
+*apikey*.json       export-ignore
+
+# .env files — exclude populated ones, keep templates
+# Note: git archive honours export-ignore on exact patterns
+# .template.env files are safe to export (placeholder values only)
+*.env               export-ignore
+
+# Keep these broad — they are intentional directory excludes
 secrets/            export-ignore
-.env*               export-ignore
-*secret*            export-ignore
-*credential*        export-ignore
-*token*             export-ignore
 *.kubeconfig        export-ignore
 kubeconfig          export-ignore
+openshift-login.sh  export-ignore
