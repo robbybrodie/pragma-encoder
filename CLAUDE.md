@@ -17,6 +17,25 @@ No pretrained weights or proprietary data from Revolut are included or reference
 
 ---
 
+## MANDATORY: Read DEVELOPMENT_PROCESS.md
+
+Before implementing ANY component in this repository,
+read DEVELOPMENT_PROCESS.md in full.
+
+The short version:
+1. Read the paper section
+2. Write tests first (4 types: shape, math, gradient, spec)
+3. Show tests for review — STOP and wait for approval
+4. Implement to pass the tests
+5. Never fix tests to match implementation
+
+The full process with examples and templates is in
+DEVELOPMENT_PROCESS.md.
+
+No exceptions. No shortcuts.
+
+---
+
 ## Adjacent repo
 
 ```
@@ -169,6 +188,25 @@ See existing files for the pattern.
 - Hook is active: `git config core.hooksPath .githooks`
 - Never commit API keys, tokens, kubeconfig, or `.env` files
 - Use `git commit --no-verify` only for confirmed false positives
+
+---
+
+## Development Process — Non-Negotiable
+
+Every component implementation in this repo follows
+Test-Driven Development (TDD) derived from the PRAGMA paper.
+
+This is not optional. It is the process.
+
+The full process is documented in DEVELOPMENT_PROCESS.md.
+Read it before implementing anything.
+
+The short version:
+  Tests come from the paper. Always.
+  Tests come before implementation. Always.
+  Never fix a test to match implementation. Ever.
+  The comparison test (PRAGMA vs NVIDIA blueprint AUC)
+  is the final arbiter of correctness.
 
 ---
 
