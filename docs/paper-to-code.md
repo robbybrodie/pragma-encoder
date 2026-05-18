@@ -34,7 +34,7 @@ Processes static customer attributes. Outputs [USR] token.
 |---|---|
 | Bidirectional Transformer | `src/encoders/profile_state_encoder.py::ProfileStateEncoder` |
 | [USR] token | `ProfileStateEncoder.usr_token` parameter |
-| RoPE on timestamp positions | `src/encoders/rope.py::RotaryPositionalEmbedding` |
+| RoPE on timestamp positions | `src/encoders/rope.py::RoPEEncoding` |
 
 ---
 
