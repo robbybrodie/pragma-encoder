@@ -97,3 +97,41 @@ Implement src/tokenizer/profile_pipeline.py:
   Paper: Section 2.1.2 (profile state definition)
   Paper: Section 2.3.2 (ProfileStateEncoder inputs)
   EmbeddingAssembler: src/model/assembler.py
+
+---
+
+## TD-004: RHOAI native pipeline-config injection bypassed
+
+**Date:** 2026-05-18
+**Severity:** Low (demo environment)
+**Status:** Accepted for GitOps deployment; operator path not viable without dashboard
+
+### Description
+The RHOAI notebook-controller webhook injects `KFP_API_HOST` into workbench
+pods by reading a namespace Secret named `ds-pipeline-config`. In a healthy
+RHOAI cluster, this secret is created by the RHOAI dashboard when a user
+connects a pipelines server to a workbench through the UI.
+
+In a GitOps/bootstrap deployment (workbench declared via ArgoCD, not the
+dashboard), no dashboard interaction occurs and the secret is never created.
+Manually creating `ds-pipeline-config` does not work: the webhook rejects it
+with "Skipping mounting secret not managed by workbenches" regardless of
+labels or ownerReferences, because it was not created through the dashboard's
+ownership chain.
+
+### Workaround
+`openshift/gitops/workbench/notebook.yaml` declares `KFP_API_HOST` and
+`KF_PIPELINES_ENDPOINT` explicitly as env vars pointing to the
+namespace-local DSPA service (port 8888, direct HTTPS, no OAuth proxy):
+
+  https://ds-pipeline-pipelines-definition.pragma-encoder.svc.cluster.local:8888
+
+This is equivalent to the operator-injected value and survives pod restarts.
+The cluster CA bundle (`/etc/pki/tls/custom-certs/ca-bundle.crt`, injected
+by the Notebook Controller) covers the DSPA TLS certificate.
+
+### Resolution
+If a dashboard-created workbench is ever needed, delete the GitOps-managed
+Notebook CR, recreate the workbench through the RHOAI dashboard (connecting
+the pipelines server), export the resulting Notebook CR, and replace the
+manifest in openshift/gitops/workbench/notebook.yaml.

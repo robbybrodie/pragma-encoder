@@ -92,6 +92,16 @@ spec:
             # will present a token page even after the OAuth proxy authenticates.
             - name: NOTEBOOK_ARGS
               value: "--ServerApp.token= --ServerApp.password="
+            # KFP pipeline API endpoint — namespace-local service, port 8888 HTTPS
+            # (direct path, no OAuth proxy hop). The RHOAI notebook-controller cannot
+            # inject KFP_API_HOST via ds-pipeline-config when the secret is declared
+            # outside the workbench controller's ownership chain. Explicit env vars
+            # make the GitOps deployment self-contained and survive pod restarts.
+            # See docs/tech-debt.md TD-004.
+            - name: KFP_API_HOST
+              value: "https://ds-pipeline-pipelines-definition.pragma-encoder.svc.cluster.local:8888"
+            - name: KF_PIPELINES_ENDPOINT
+              value: "https://ds-pipeline-pipelines-definition.pragma-encoder.svc.cluster.local:8888"
           envFrom:
             - secretRef:
                 name: pragma-workbench-env
