@@ -54,13 +54,12 @@ Processes a single transaction. Outputs [EVT] token.
 
 Processes the concatenated sequence `z = [USR : EVT₁ : EVT₂ : ...]` with bidirectional
 self-attention. `[USR]` at position 0 conditions all event representations naturally —
-there is no cross-attention sublayer and no separate HIST summary token.
+there is no cross-attention sublayer and no dedicated history summary token.
 
 | Paper element | This repo |
 |---|---|
 | Bidirectional self-attention on [USR:EVT] | `src/encoders/history_encoder.py::HistoryEncoder` |
 | RoPE on event sequence | `HistoryEncoder.rope` |
-| [MASK] embedding for MLM | `HistoryEncoder.mask_embedding` |
 
 ---
 

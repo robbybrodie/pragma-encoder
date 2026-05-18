@@ -11,12 +11,12 @@ Usage:
         --checkpoint outputs/pragma-s/checkpoint-final.pt \\
         --data-dir /data/transactions \\
         --output-dir /data/embeddings \\
-        --pooling hist
+        --pooling usr
 
 Pooling strategies:
-    hist  — Use the [HIST] summary token (recommended for sequence tasks)
-    mean  — Mean-pool over all event representations
-    last  — Use the last event representation
+    usr  — zh[:,0,:]              — [USR] token (user-level representation)
+    last — zh[:,-1,:]             — final [EVT] token (most recent event)
+    mean — zh[:,1:,:].mean(dim=1) — mean of all [EVT] tokens
 
 Reference: Ostroukhov et al. (2026), Section 3.1
 """
@@ -42,8 +42,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--data-dir", type=str, required=True)
     parser.add_argument("--output-dir", type=str, default="data/embeddings")
-    parser.add_argument("--pooling", type=str, default="hist",
-                        choices=["hist", "mean", "last"])
+    parser.add_argument("--pooling", type=str, default="usr",
+                        choices=["usr", "mean", "last"],
+                        help="usr=zh[:,0,:] | last=zh[:,-1,:] | mean=mean of [EVT] tokens")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--format", type=str, default="numpy",

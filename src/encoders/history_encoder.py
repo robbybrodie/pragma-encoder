@@ -38,8 +38,8 @@ Key design decisions from Section 2.3.4:
 
 Separation of concerns (CLAUDE.md, ADR 003):
     - Concatenation z=[za:ze] is done OUTSIDE by the caller (Equation 6)
-    - No [HIST] token — there is no such token in the PRAGMA paper
-    - No mask_embedding — masking is done OUTSIDE by MaskingStrategy
+    - No dedicated summary token — [USR] at position 0 is the user-level representation
+    - No inline mask embedding — masking is done OUTSIDE by MaskingStrategy
     - RoPE (temporal on te) is SEPARATE from within-field PosEmb (Equation 1)
 
 Profile conditioning mechanism:

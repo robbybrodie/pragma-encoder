@@ -111,8 +111,8 @@ class HistoryEncoderProtocol(Protocol):
         - Bidirectional self-attention (is_causal=False) — NEVER causal
         - RoPE applied to Q and K using te in every attention layer (Eq 9)
         - Pure self-attention — NO cross-attention sublayer
-        - No self.hist_token — no [HIST] token in the PRAGMA paper
-        - No self.mask_embedding — masking done externally by MaskingStrategy
+        - No self.summary_token — [USR] at position 0 is the user-level representation
+        - No self.inline_mask_emb — masking done externally by MaskingStrategy
         - Returns full zh — caller slices zh[:,0,:] or zh[:,1:,:]
     """
 
