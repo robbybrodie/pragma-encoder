@@ -86,6 +86,12 @@ spec:
             # returns 404 for all requests under /notebook/pragma-encoder/...
             - name: NOTEBOOK_BASE_URL
               value: /notebook/pragma-encoder/pragma-encoder-workbench
+            # Disable JupyterLab token/password auth. The OAuth proxy sidecar
+            # (injected by inject-oauth: 'true') handles authentication via
+            # OpenShift OAuth. JupyterLab must run without its own auth or it
+            # will present a token page even after the OAuth proxy authenticates.
+            - name: NOTEBOOK_ARGS
+              value: "--ServerApp.token= --ServerApp.password="
           envFrom:
             - secretRef:
                 name: pragma-workbench-env
