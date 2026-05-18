@@ -53,6 +53,46 @@ STOP. Raise it with the human. Do not proceed silently.
 
 ---
 
+## Paper Knowledge Base
+
+The PRAGMA paper is extracted into `docs/paper/`.
+Before implementing any component, read the relevant file.
+
+| Component | Primary reference |
+|-----------|-------------------|
+| `PRAGMAConfig` | `docs/paper/table-1-model-sizes.md` |
+| `PRAGMATokenizer` | `docs/paper/02-02-tokenisation.md` |
+| `RoPEEncoding` | `docs/paper/02-03-architecture.md` |
+| `ProfileStateEncoder` | `docs/paper/02-03-architecture.md` |
+| `EventEncoder` | `docs/paper/02-03-architecture.md` |
+| `HistoryEncoder` | `docs/paper/02-03-architecture.md` |
+| `MaskingStrategy` | `docs/paper/02-03-architecture.md` |
+| `MLMHead` | `docs/paper/02-03-architecture.md` |
+| `LoRAAdapter` | `docs/paper/03-01-protocol.md` |
+| `EmbeddingProbe` | `docs/paper/03-01-protocol.md` |
+| All numbers | `docs/paper/key-numbers.md` |
+| All equations | `docs/paper/equations.md` |
+
+### The rule for test values
+
+When writing tests, every expected value must appear in
+`docs/paper/key-numbers.md` with its source section.
+
+**If a value is not in `key-numbers.md` it is not from the paper.
+Do not use it.**
+
+Example — correct:
+```python
+assert config.d_model == 192  # key-numbers.md: d_model (PRAGMA-S), Table 1
+```
+
+Example — wrong:
+```python
+assert config.d_model == 256  # not in key-numbers.md — where does 256 come from?
+```
+
+---
+
 ## Adjacent repo
 
 ```

@@ -1,134 +1,122 @@
 """PRAGMAConfig — architecture hyperparameters dataclass.
 
-Centralises all hyperparameters for the PRAGMA model variants described
-in PRAGMA paper Section 2.3.1.
+Single source of truth for all PRAGMA model variants.
 
-The paper describes three scale variants:
-    PRAGMA-S:  ~10M parameters (small — for research and development)
-    PRAGMA-M: ~100M parameters (medium — aspirational open implementation)
-    PRAGMA-L:   ~1B parameters (large  — aspirational open implementation)
+Three scale variants from Table 1 (Ostroukhov et al., 2026):
+    PRAGMA-S:  ~10M  parameters (d_model=192)
+    PRAGMA-M: ~100M  parameters (d_model=512)
+    PRAGMA-L:   ~1B  parameters (d_model=1024)
 
-This config covers all three scales. See configs/pragma_s.yaml,
-configs/pragma_m.yaml, and configs/pragma_l.yaml for concrete values.
+All values in this file appear in docs/paper/key-numbers.md
+with their paper source section.
 
-Key architectural constraints (non-negotiable, from the paper):
-    - Encoder-only (not decoder-only)
-    - Bidirectional attention (not causal)
-    - Three separate encoders (not one monolithic encoder)
-    - RoPE positional encoding (not sinusoidal or absolute)
-
-Reference: Ostroukhov et al. (2026), Section 2.3.1
+Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 @dataclass
 class PRAGMAConfig:
     """Hyperparameter configuration for the full PRAGMA model.
 
-    Attributes:
-        # Vocabulary
-        vocab_size: Total token vocabulary size (from TokenizerPipeline).
-        profile_vocab_size: Profile field vocabulary size.
+    Fields derived from:
+      - Table 1 (p.6): width, depth, heads per variant
+      - §2.3: dropout
+      - §2.3.5: masking probabilities
+      - §2.4: truncation limits
+      - §2.2: vocabulary sizes
+      - §3.1.2: LoRA defaults
 
-        # Shared hidden dimension (all three encoders use the same d_model)
-        d_model: Hidden dimension. Must be divisible by n_heads.
-
-        # Profile State Encoder (Section 2.3.2)
-        profile_n_heads: Attention heads in profile encoder.
-        profile_n_layers: Transformer layers in profile encoder.
-        profile_d_ff: Feed-forward dimension in profile encoder.
-        profile_max_seq_len: Max profile sequence length.
-
-        # Event Encoder (Section 2.3.3)
-        event_n_heads: Attention heads in event encoder.
-        event_n_layers: Transformer layers in event encoder.
-        event_d_ff: Feed-forward dimension in event encoder.
-        event_max_seq_len: Max tokens per event.
-
-        # History Encoder (Section 2.3.4)
-        history_n_heads: Attention heads in history encoder.
-        history_n_layers: Transformer layers in history encoder.
-        history_d_ff: Feed-forward dimension in history encoder.
-        history_max_seq_len: Max events in history.
-
-        # Regularisation
-        dropout: Dropout probability.
-
-        # Training objective
-        mask_prob: Token/event masking probability for MLM. Default: 0.15.
-        label_smoothing: Label smoothing factor for MLM loss. Default: 0.1.
-
-        # Model name / variant identifier
-        model_name: Human-readable model identifier.
+    All three variants share the same field names; only values differ.
+    This means switching variants requires changing exactly one line
+    (the classmethod call site).
     """
 
-    # Vocabulary
-    vocab_size: int = 50_000
-    profile_vocab_size: int = 10_000
+    # Width — Table 1
+    d_model: int = 192          # key-numbers.md: Table 1
+    d_ffn: int = 768            # key-numbers.md: Table 1  (4 × d_model)
+    n_heads: int = 3            # key-numbers.md: Table 1
 
-    # Shared hidden dimension
-    d_model: int = 256
+    # Depth — Table 1
+    profile_encoder_layers: int = 1    # key-numbers.md: Table 1
+    event_encoder_layers: int = 5      # key-numbers.md: Table 1
+    history_encoder_layers: int = 2    # key-numbers.md: Table 1
 
-    # Profile State Encoder
-    profile_n_heads: int = 8
-    profile_n_layers: int = 4
-    profile_d_ff: int = 1024
-    profile_max_seq_len: int = 512
+    # Regularisation — §2.3
+    dropout: float = 0.1        # key-numbers.md: §2.3
 
-    # Event Encoder
-    event_n_heads: int = 8
-    event_n_layers: int = 4
-    event_d_ff: int = 1024
-    event_max_seq_len: int = 128
+    # Truncation — §2.4
+    max_event_tokens: int = 24       # key-numbers.md: §2.4
+    max_profile_tokens: int = 200    # key-numbers.md: §2.4
+    max_events: int = 6500           # key-numbers.md: §2.4
 
-    # History Encoder
-    history_n_heads: int = 8
-    history_n_layers: int = 6
-    history_d_ff: int = 1024
-    history_max_seq_len: int = 512
+    # Masking — §2.3.5
+    token_mask_prob: float = 0.15    # key-numbers.md: §2.3.5
+    event_mask_prob: float = 0.10    # key-numbers.md: §2.3.5
+    key_mask_prob: float = 0.10      # key-numbers.md: §2.3.5
 
-    # Regularisation
-    dropout: float = 0.1
+    # Vocabulary — §2.2
+    key_vocab_size: int = 60             # key-numbers.md: §2.2 (~60 field types)
+    value_vocab_size: int = 28_000       # key-numbers.md: §2.2 (~28,000 values)
 
-    # Training objective
-    mask_prob: float = 0.15
-    label_smoothing: float = 0.1
+    # LoRA — §3.1.2
+    lora_rank: int = 8           # key-numbers.md: §3.1.2
+    lora_alpha: int = 8          # key-numbers.md: §3.1.2
 
-    # Model variant name
+    # Identity
     model_name: str = "pragma-s"
 
     @classmethod
     def pragma_s(cls) -> "PRAGMAConfig":
-        """PRAGMA-S: ~10M parameters. Suitable for research and development."""
+        """PRAGMA-S: ~10M parameters. Table 1 (p.6).
+
+        key-numbers.md: d_model=192, d_ffn=768, n_heads=3,
+        profile_encoder_layers=1, event_encoder_layers=5,
+        history_encoder_layers=2
+        """
         return cls(
-            d_model=256,
-            profile_n_heads=8, profile_n_layers=4, profile_d_ff=1024,
-            event_n_heads=8, event_n_layers=4, event_d_ff=1024,
-            history_n_heads=8, history_n_layers=6, history_d_ff=1024,
             model_name="pragma-s",
+            d_model=192,
+            d_ffn=768,
+            n_heads=3,
+            profile_encoder_layers=1,
+            event_encoder_layers=5,
+            history_encoder_layers=2,
         )
 
     @classmethod
     def pragma_m(cls) -> "PRAGMAConfig":
-        """PRAGMA-M: ~100M parameters (aspirational)."""
+        """PRAGMA-M: ~100M parameters. Table 1 (p.6).
+
+        key-numbers.md: d_model=512, d_ffn=2048, n_heads=8,
+        profile_encoder_layers=3, event_encoder_layers=16,
+        history_encoder_layers=6
+        """
         return cls(
-            d_model=768,
-            profile_n_heads=12, profile_n_layers=6, profile_d_ff=3072,
-            event_n_heads=12, event_n_layers=6, event_d_ff=3072,
-            history_n_heads=12, history_n_layers=12, history_d_ff=3072,
             model_name="pragma-m",
+            d_model=512,
+            d_ffn=2048,
+            n_heads=8,
+            profile_encoder_layers=3,
+            event_encoder_layers=16,
+            history_encoder_layers=6,
         )
 
     @classmethod
     def pragma_l(cls) -> "PRAGMAConfig":
-        """PRAGMA-L: ~1B parameters (aspirational)."""
+        """PRAGMA-L: ~1B parameters. Table 1 (p.6).
+
+        key-numbers.md: d_model=1024, d_ffn=4096, n_heads=16,
+        profile_encoder_layers=9, event_encoder_layers=45,
+        history_encoder_layers=18
+        """
         return cls(
-            d_model=2048,
-            profile_n_heads=16, profile_n_layers=8, profile_d_ff=8192,
-            event_n_heads=16, event_n_layers=8, event_d_ff=8192,
-            history_n_heads=16, history_n_layers=24, history_d_ff=8192,
             model_name="pragma-l",
+            d_model=1024,
+            d_ffn=4096,
+            n_heads=16,
+            profile_encoder_layers=9,
+            event_encoder_layers=45,
+            history_encoder_layers=18,
         )

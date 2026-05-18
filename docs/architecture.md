@@ -15,17 +15,18 @@ It is NOT a decoder-only model. It uses **bidirectional attention** throughout.
 ```
 Input: Customer profile + transaction history
          │
-         ├─► Profile State Encoder ──► [USR] repr (Section 2.3.2)
-         │                                │
-         └─► Event Encoder (×N events) ──► [EVT] reprs (Section 2.3.3)
-                                           │        ↑
-                                    History Encoder │ cross-attn to [USR]
-                                           │
-                                    Contextualised history (Section 2.3.4)
-                                           │
-                              ┌────────────┴────────────┐
-                          Linear probe               LoRA fine-tuning
-                         (Section 3.1.1)           (Section 3.1.2)
+         ├─► Profile State Encoder ──► [USR] ──────────────────┐
+         │                                                       │ z = [USR : EVT₁ : EVT₂ : ...]
+         └─► Event Encoder (×N events) ──► [EVT] reprs ────────┘
+                                                                 │
+                                           History Encoder (bidirectional self-attention,
+                                                            [USR] at position 0)
+                                                                 │
+                                           Contextualised history (Section 2.3.4)
+                                                                 │
+                                       ┌─────────────────────────┴─────────────────────────┐
+                                   Linear probe                               LoRA fine-tuning
+                                  (Section 3.1.1)                           (Section 3.1.2)
 ```
 
 ---

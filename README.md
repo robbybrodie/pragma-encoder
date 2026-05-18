@@ -26,7 +26,7 @@ The three-encoder architecture from the paper:
 
 - **Event Encoder** (Section 2.3.3) — bidirectional Transformer processing a single financial event (transaction) as a flat `(key, value, time)` token sequence with calendar embeddings. Outputs the `[EVT]` representation.
 
-- **History Encoder** (Section 2.3.4) — bidirectional Transformer with cross-attention to `[USR]`, processing the sequence of `[EVT]` vectors. Outputs contextualised event embeddings and a `[HIST]` summary token.
+- **History Encoder** (Section 2.3.4) — bidirectional Transformer that processes the concatenated sequence `z = [USR : EVT₁ : EVT₂ : ...]` with RoPE temporal encoding. The `[USR]` token at position 0 conditions all event representations through bidirectional self-attention. No cross-attention sublayer. No `[HIST]` token.
 
 ### Tokenisation (Section 2.2)
 

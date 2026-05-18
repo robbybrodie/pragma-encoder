@@ -1,231 +1,209 @@
-"""Three-strategy masking for PRAGMA pretraining.
+"""MaskingStrategy — three-strategy masked event modelling (§2.3.5).
 
-Implements the three masking strategies from PRAGMA paper Section 2.3.5.
+Implements the unified masking strategy from PRAGMA paper Section 2.3.5.
 
-The PRAGMA pretraining objective is masked event modelling (MEM), which
-extends masked language modelling (MLM) with domain-specific masking
-granularities appropriate for structured financial sequences.
+PRAGMA extends the standard MLM objective with three masking granularities
+applied jointly in a single forward pass:
 
-Strategies:
-    TokenMasker:  Standard BERT-style masking of individual tokens.
-                  Applies mask_prob to each token independently.
-                  80% → [MASK], 10% → random token, 10% → unchanged.
+    Token masking   (token_mask_prob = 0.15): Bernoulli per position.
+    Event masking   (event_mask_prob = 0.10): Bernoulli per event, ALL ni
+                    tokens within a selected event are masked together.
+    Key-type masking (key_mask_prob  = 0.10): Bernoulli per unique key type;
+                    ALL positions across (batch, ne, ni) where key_ids == k
+                    are masked together when key type k is selected.
 
-    FieldMasker:  Masks all tokens belonging to a chosen field type
-                  across the entire sequence. For example, mask all
-                  'amount_local' tokens. Forces the model to learn
-                  inter-field relationships (e.g. infer amount from
-                  merchant category and channel).
+The three strategies are ORed (union) before applying corruption:
+    selected = token_selected | event_selected | key_selected
 
-    EventMasker:  Masks all tokens belonging to entire event positions.
-                  Forces the model to impute missing transactions from
-                  surrounding context. This is the most challenging
-                  strategy and is critical for the History Encoder.
+Corruption of selected positions:
+    (1 - _UNK_FRACTION) → [MASK] token (_MASK_TOKEN_ID = 1); mask=True
+    _UNK_FRACTION       → [UNK]  token (_UNK_TOKEN_ID  = 0); mask=False
+
+The mask output is a boolean tensor:
+    True  = position replaced with [MASK] — included in MLM loss
+    False = position unchanged OR replaced with [UNK] — excluded from loss
+
+Implementation notes:
+    - MaskingStrategy is NOT nn.Module. It is a plain Python class with no
+      learnable parameters. It can be constructed and called from any context
+      without PyTorch device management.
+    - _UNK_TOKEN_ID = TokenizerPipeline.PAD_ID = 0. There is no global [UNK]
+      token in TokenizerPipeline; PAD_ID is used as the corruption token.
+      This is an implementation decision (the paper specifies [UNK] corruption
+      but TokenizerPipeline only defines PAD, MASK, CLS, SEP as specials).
+    - _UNK_FRACTION = 0.10 is a module constant, not a PRAGMAConfig field.
+      The paper does not specify this fraction explicitly; 0.10 is adopted as
+      the implementation default consistent with the MLM literature.
+    - Overlap: positions selected by more than one strategy are masked once
+      (union). This is the simplest correct interpretation.
+    - Key-type selection: one Bernoulli sample PER UNIQUE KEY TYPE across the
+      entire (batch, ne, ni) tensor. All positions sharing that key type are
+      masked together regardless of batch or event index.
 
 Reference: Ostroukhov et al. (2026), Section 2.3.5
 """
 
-import random
-from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from typing import Tuple
 
 import torch
 
-
-MASK_TOKEN_ID = 1  # Must match TokenizerPipeline.MASK_ID
-
-
-class MaskingStrategy(ABC):
-    """Abstract base class for PRAGMA masking strategies."""
-
-    @abstractmethod
-    def apply(
-        self,
-        token_ids: torch.Tensor,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Apply masking to a token sequence.
-
-        Args:
-            token_ids: (batch, seq_len) input token IDs.
-            **kwargs:  Strategy-specific arguments.
-
-        Returns:
-            Tuple of:
-                masked_ids: (batch, seq_len) — token IDs with masks applied.
-                labels:     (batch, seq_len) — original token IDs at masked
-                            positions, -100 elsewhere (ignored in loss).
-        """
-        ...
+from src.model.config import PRAGMAConfig
+from src.tokenizer.pipeline import TokenizerPipeline
 
 
-class TokenMasker(MaskingStrategy):
-    """Standard BERT-style token masking (Section 2.3.5, Strategy 1).
+# Token IDs — sourced from TokenizerPipeline
+_MASK_TOKEN_ID: int = TokenizerPipeline.MASK_ID  # 1 — [MASK] replacement
+_UNK_TOKEN_ID:  int = TokenizerPipeline.PAD_ID   # 0 — [UNK] replacement (no global UNK)
 
-    Randomly selects mask_prob fraction of non-special tokens and applies:
-        80% → [MASK] token
-        10% → random token from vocabulary
-        10% → unchanged (but still predicted)
+# Fraction of selected positions replaced with [UNK] instead of [MASK].
+# These positions are excluded from the MLM loss (mask=False).
+# Implementation decision — not a PRAGMAConfig field.
+_UNK_FRACTION: float = 0.10
+
+
+class MaskingStrategy:
+    """Unified three-strategy masking for PRAGMA masked event modelling (§2.3.5).
+
+    Applies token-level, event-level, and semantic-type (key) masking in a
+    single forward pass. All three strategies are ORed (union) to produce the
+    final set of selected positions.
+
+    This class is NOT an nn.Module. It has no learnable parameters and no
+    parameters() method. It is a pure Python utility with stateless tensor
+    operations.
 
     Args:
-        mask_prob: Probability of masking each token. Default: 0.15.
-        vocab_size: Total vocabulary size (for random token replacement).
-        mask_token_id: ID of the [MASK] token. Default: 1.
-        special_token_ids: Set of special token IDs to never mask. Default: {0}.
+        config: PRAGMAConfig — provides token_mask_prob, event_mask_prob,
+                key_mask_prob. All three probabilities are read from config;
+                none are hardcoded in this class.
+
+    Attributes:
+        token_mask_prob: Probability of masking each token position (§2.3.5).
+        event_mask_prob: Probability of masking each event (§2.3.5).
+        key_mask_prob:   Probability of masking each unique key type (§2.3.5).
     """
 
-    def __init__(
-        self,
-        mask_prob: float = 0.15,
-        vocab_size: int = 50_000,
-        mask_token_id: int = MASK_TOKEN_ID,
-        special_token_ids: Optional[set] = None,
-    ):
-        self.mask_prob = mask_prob
-        self.vocab_size = vocab_size
-        self.mask_token_id = mask_token_id
-        self.special_token_ids = special_token_ids or {0}
+    def __init__(self, config: PRAGMAConfig) -> None:
+        self.token_mask_prob: float = config.token_mask_prob
+        self.event_mask_prob: float = config.event_mask_prob
+        self.key_mask_prob:   float = config.key_mask_prob
 
-    def apply(
-        self,
-        token_ids: torch.Tensor,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Apply token-level masking.
+    # ------------------------------------------------------------------
+    # Private strategy methods — each returns a bool (batch, ne, ni) mask
+    # ------------------------------------------------------------------
+
+    def _token_mask(self, token_ids: torch.Tensor) -> torch.Tensor:
+        """Bernoulli masking at each token position independently.
+
+        Selects each position with probability token_mask_prob.
 
         Args:
-            token_ids: (batch, seq_len)
+            token_ids: (batch, ne, ni) — integer token IDs (values not used).
 
         Returns:
-            (masked_ids, labels)
+            selected: (batch, ne, ni) bool — True at positions to mask.
         """
-        masked_ids = token_ids.clone()
-        labels = torch.full_like(token_ids, -100)
+        prob = torch.full(
+            token_ids.shape, self.token_mask_prob,
+            dtype=torch.float, device=token_ids.device,
+        )
+        return torch.bernoulli(prob).bool()
 
-        # Select tokens to predict
-        probability_matrix = torch.full(token_ids.shape, self.mask_prob)
-        for special_id in self.special_token_ids:
-            probability_matrix[token_ids == special_id] = 0.0
+    def _event_mask(self, token_ids: torch.Tensor) -> torch.Tensor:
+        """Event-level masking — whole events selected atomically.
 
-        selected = torch.bernoulli(probability_matrix).bool()
-        labels[selected] = token_ids[selected]
-
-        # 80% → [MASK]
-        mask_indices = selected & (torch.rand_like(probability_matrix) < 0.8)
-        masked_ids[mask_indices] = self.mask_token_id
-
-        # 10% → random token
-        random_indices = selected & ~mask_indices & (torch.rand_like(probability_matrix) < 0.5)
-        random_tokens = torch.randint(len(self.special_token_ids), self.vocab_size, token_ids.shape)
-        masked_ids[random_indices] = random_tokens[random_indices]
-
-        # Remaining 10% → unchanged (labels still set, so they are predicted)
-        return masked_ids, labels
-
-
-class FieldMasker(MaskingStrategy):
-    """Field-level masking — mask all tokens of a chosen field type (Strategy 2).
-
-    Selects one or more field types at random and masks all tokens belonging
-    to that field across the entire sequence. Requires field position metadata
-    from the TokenizerPipeline.
-
-    Args:
-        mask_token_id: ID of the [MASK] token. Default: 1.
-        n_fields_to_mask: Number of field types to mask per sample. Default: 1.
-    """
-
-    def __init__(
-        self,
-        mask_token_id: int = MASK_TOKEN_ID,
-        n_fields_to_mask: int = 1,
-    ):
-        self.mask_token_id = mask_token_id
-        self.n_fields_to_mask = n_fields_to_mask
-
-    def apply(
-        self,
-        token_ids: torch.Tensor,
-        field_positions: Optional[Dict[str, List[List[int]]]] = None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Apply field-level masking.
+        Each event (ne dimension) is selected independently with probability
+        event_mask_prob. When an event is selected, ALL ni token positions
+        within that event are masked.
 
         Args:
-            token_ids: (batch, seq_len)
-            field_positions: Dict mapping field_name → list of (per-sample)
-                             lists of token positions for that field.
-                             If None, falls back to TokenMasker behaviour.
+            token_ids: (batch, ne, ni) — shape used; values not used.
 
         Returns:
-            (masked_ids, labels)
+            selected: (batch, ne, ni) bool — True at all positions of
+                      selected events; False for unselected events.
         """
-        masked_ids = token_ids.clone()
-        labels = torch.full_like(token_ids, -100)
+        batch, ne, ni = token_ids.shape
+        prob = torch.full(
+            (batch, ne), self.event_mask_prob,
+            dtype=torch.float, device=token_ids.device,
+        )
+        event_selected = torch.bernoulli(prob).bool()  # (batch, ne)
+        # Expand: every token position in a selected event is True
+        return event_selected.unsqueeze(-1).expand(batch, ne, ni)
 
-        if field_positions is None:
-            return masked_ids, labels
+    def _key_mask(self, key_ids: torch.Tensor) -> torch.Tensor:
+        """Semantic-type (key) masking — all positions sharing a key type.
 
-        field_names = list(field_positions.keys())
-        chosen = random.sample(field_names, min(self.n_fields_to_mask, len(field_names)))
-
-        for field_name in chosen:
-            positions_per_sample = field_positions[field_name]
-            for batch_idx, positions in enumerate(positions_per_sample):
-                for pos in positions:
-                    labels[batch_idx, pos] = token_ids[batch_idx, pos]
-                    masked_ids[batch_idx, pos] = self.mask_token_id
-
-        return masked_ids, labels
-
-
-class EventMasker(MaskingStrategy):
-    """Event-level masking — mask all tokens of entire events (Strategy 3).
-
-    Selects mask_prob fraction of events and masks all their tokens.
-    Operates on the event representation level in the History Encoder
-    (replacing [EVT] vectors with the [MASK] embedding).
-
-    Args:
-        mask_prob: Probability of masking each event. Default: 0.15.
-        mask_token_id: ID of the [MASK] token. Default: 1.
-    """
-
-    def __init__(
-        self,
-        mask_prob: float = 0.15,
-        mask_token_id: int = MASK_TOKEN_ID,
-    ):
-        self.mask_prob = mask_prob
-        self.mask_token_id = mask_token_id
-
-    def apply(
-        self,
-        token_ids: torch.Tensor,
-        event_boundaries: Optional[List[List[Tuple[int, int]]]] = None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Apply event-level masking.
+        For each unique key type k in key_ids, a single Bernoulli sample
+        determines whether the entire key type is selected. When selected,
+        ALL positions across (batch, ne, ni) where key_ids == k are masked.
 
         Args:
-            token_ids: (batch, seq_len)
-            event_boundaries: Per-sample list of (start, end) token ranges
-                              for each event. If None, no masking is applied.
+            key_ids: (batch, ne, ni) — integer key type IDs.
 
         Returns:
-            (masked_ids, labels)
+            selected: (batch, ne, ni) bool — True at all positions whose
+                      key type was selected for masking.
         """
+        selected = torch.zeros_like(key_ids, dtype=torch.bool)
+        unique_keys = key_ids.unique()
+        for k in unique_keys:
+            if torch.bernoulli(torch.tensor(self.key_mask_prob)).item():
+                selected |= (key_ids == k)
+        return selected
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def forward(
+        self,
+        token_ids: torch.Tensor,  # (batch, ne, ni) — integer token IDs
+        key_ids:   torch.Tensor,  # (batch, ne, ni) — integer key type IDs
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Apply three-strategy masking in a single forward pass.
+
+        Combines token-level, event-level, and key-type masking via union.
+        A fraction (_UNK_FRACTION = 0.10) of selected positions are replaced
+        with [UNK] (PAD_ID = 0) as input dropout; the remainder are replaced
+        with [MASK] (MASK_ID = 1) and included in the MLM loss.
+
+        Args:
+            token_ids: Input token IDs. Shape: (batch, ne, ni). Integer dtype.
+            key_ids:   Semantic type IDs per token position. Shape: (batch, ne, ni).
+
+        Returns:
+            masked_ids:  (batch, ne, ni) — token_ids with [MASK] or [UNK] at
+                         selected positions; unchanged elsewhere. Same dtype as
+                         token_ids.
+            target_ids:  (batch, ne, ni) — original token_ids unchanged. Used
+                         as the label tensor for the MLM loss. Always equals
+                         token_ids.
+            mask:        (batch, ne, ni) bool — True at positions replaced with
+                         [MASK] (included in MLM loss). False at [UNK] positions
+                         and at unmasked positions (excluded from loss).
+        """
+        # target_ids = original token IDs, unmodified (MLM label tensor)
+        target_ids = token_ids.clone()
         masked_ids = token_ids.clone()
-        labels = torch.full_like(token_ids, -100)
 
-        if event_boundaries is None:
-            return masked_ids, labels
+        # Union of all three strategies → set of positions to corrupt
+        token_selected = self._token_mask(token_ids)
+        event_selected = self._event_mask(token_ids)
+        key_selected   = self._key_mask(key_ids)
+        selected = token_selected | event_selected | key_selected
 
-        for batch_idx, boundaries in enumerate(event_boundaries):
-            for start, end in boundaries:
-                if random.random() < self.mask_prob:
-                    for pos in range(start, end):
-                        labels[batch_idx, pos] = token_ids[batch_idx, pos]
-                        masked_ids[batch_idx, pos] = self.mask_token_id
+        # Split selected into [MASK] positions (in loss) and [UNK] positions (not in loss)
+        unk_gate = torch.rand(token_ids.shape, device=token_ids.device) < _UNK_FRACTION
+        unk_selected  = selected & unk_gate   # True → replace with UNK, exclude from loss
+        mask_selected = selected & ~unk_gate  # True → replace with MASK, include in loss
 
-        return masked_ids, labels
+        # Apply corruption
+        masked_ids[mask_selected] = _MASK_TOKEN_ID  # 1 — [MASK]
+        masked_ids[unk_selected]  = _UNK_TOKEN_ID   # 0 — [UNK] (PAD_ID)
+
+        # mask: True = in MLM loss ([MASK] positions only)
+        mask = mask_selected
+
+        return masked_ids, target_ids, mask

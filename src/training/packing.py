@@ -17,8 +17,6 @@ scale is not implemented here.
 Packing strategy:
     Given a target sequence length T, greedily bin-pack sequences
     into packs such that the total length of each pack ≤ T.
-    Position IDs are reset within each packed sequence to maintain
-    correct RoPE computation.
 
 Reference: Ostroukhov et al. (2026), Section 2.4
 """

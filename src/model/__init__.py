@@ -11,11 +11,22 @@ Reference: Ostroukhov et al. (2026), Section 2.3
 """
 
 from .config import PRAGMAConfig
-from .mlm_head import MLMHead
-from .pragma import PRAGMA
 
 __all__ = [
     "PRAGMAConfig",
     "PRAGMA",
     "MLMHead",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazy-import torch-dependent symbols to keep PRAGMAConfig importable
+    without torch installed (e.g. during config-only tests).
+    """
+    if name == "MLMHead":
+        from .mlm_head import MLMHead
+        return MLMHead
+    if name == "PRAGMA":
+        from .pragma import PRAGMA
+        return PRAGMA
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
