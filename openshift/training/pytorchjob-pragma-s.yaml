@@ -61,13 +61,15 @@ spec:
                 - --vocab-path
                 - /opt/app-root/src/pragma-encoder/data/tabformer/vocab.pkl
                 - --output-dir
-                - /opt/app-root/src/pragma-encoder/outputs/pragma-s
+                - /outputs/pragma-s
                 - --epochs
                 - "1"
                 - --batch-size
                 - "16"
                 - --log-every
                 - "10"
+                - --max-steps
+                - "20"
               envFrom:
                 - secretRef:
                     name: pragma-workbench-env

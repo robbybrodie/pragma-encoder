@@ -120,13 +120,14 @@ class PRAGMA(nn.Module):
 
     def forward(
         self,
-        xa:        torch.Tensor,            # (batch, na, d_model)     — profile embeddings
-        ta:        torch.Tensor,            # (batch, na)              — profile temporal
-        xe:        torch.Tensor,            # (batch, ne, ni, d_model) — event embeddings
-        xt:        torch.Tensor,            # (batch, ne, 3)           — calendar features
-        te:        torch.Tensor,            # (batch, 1+ne)            — history temporal
-        token_ids: Optional[torch.Tensor] = None,  # (batch, ne, ni)  — original IDs
-        mask:      Optional[torch.Tensor] = None,  # (batch, ne, ni) bool — MLM mask
+        xa:          torch.Tensor,            # (batch, na, d_model)     — profile embeddings
+        ta:          torch.Tensor,            # (batch, na)              — profile temporal
+        xe:          torch.Tensor,            # (batch, ne, ni, d_model) — event embeddings
+        xt:          torch.Tensor,            # (batch, ne, 3)           — calendar features
+        te:          torch.Tensor,            # (batch, 1+ne)            — history temporal
+        token_ids:   Optional[torch.Tensor] = None,  # (batch, ne, ni)  — original IDs
+        mask:        Optional[torch.Tensor] = None,  # (batch, ne, ni) bool — MLM mask
+        event_valid: Optional[torch.Tensor] = None,  # (batch, ne) bool — False = padding
     ) -> Dict[str, torch.Tensor]:
         """Six-step PRAGMA forward pass (Equations 4–8).
 
@@ -144,9 +145,15 @@ class PRAGMA(nn.Module):
             token_ids: Original integer token IDs. Shape: (batch, ne, ni). Optional.
                        Reserved for callers that compute loss externally using
                        token_ids at masked positions as targets.
-            mask:      Token-level MLM mask. Shape: (batch, ne, ni). Bool. Optional.
-                       True = position is in MLM loss (replaced with [MASK] by caller).
-                       When None, MLM head is not called (embedding extraction mode).
+            mask:        Token-level MLM mask. Shape: (batch, ne, ni). Bool. Optional.
+                         True = position is in MLM loss (replaced with [MASK] by caller).
+                         When None, MLM head is not called (embedding extraction mode).
+            event_valid: Event-level validity mask. Shape: (batch, ne). Bool. Optional.
+                         True = real event, False = padding. When provided, ze for
+                         False events is zeroed before entering HistoryEncoder so
+                         padding noise cannot leak into the history representation.
+                         Callers derive this as xe_valid.any(dim=-1) where xe_valid
+                         is the (batch, ne, ni) token-level validity tensor.
 
         Returns:
             Dict with keys:
@@ -169,6 +176,11 @@ class PRAGMA(nn.Module):
         z_hat_e, ze = self.event_encoder(xe, xt)
         # z_hat_e: (batch, ne, ni, d_model) — token-level output for MLM gathering
         # ze:      (batch, ne, d_model)      — calendar-augmented [EVT] tokens
+
+        # Zero out padded event slots so they cannot leak into HistoryEncoder.
+        # event_valid: (batch, ne) bool — broadcast over d_model dimension.
+        if event_valid is not None:
+            ze = ze * event_valid.unsqueeze(-1).to(ze.dtype)
 
         # ------------------------------------------------------------------
         # Step 3: Assemble [USR:EVT] sequence for History Encoder (Equation 6)

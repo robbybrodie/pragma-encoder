@@ -73,6 +73,8 @@ def parse_args() -> argparse.Namespace:
                         help="Log loss every N steps")
     parser.add_argument("--checkpoint-every", type=int, default=1,
                         help="Save checkpoint every N epochs")
+    parser.add_argument("--max-steps", type=int, default=0,
+                        help="Stop after this many global steps (0 = train all epochs)")
     return parser.parse_args()
 
 
@@ -90,7 +92,7 @@ def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     device = get_device(args.device)
-    logger.info(f"Training on device: {device}")
+    logger.info(f"Training on device: {device}  num_workers={args.num_workers}")
 
     csv_path = Path(args.csv_path)
     vocab_path = Path(args.vocab_path)
@@ -127,6 +129,13 @@ def main() -> None:
         ni_max=PRAGMAConfig.pragma_s().max_event_tokens,
     )
     logger.info(f"Train customers: {len(train_dataset)}, val customers: {len(val_dataset)}")
+
+    if len(train_dataset) == 0:
+        logger.error(
+            "train_dataset is empty — nothing to train on. "
+            "Check --csv-path and --vocab-path."
+        )
+        sys.exit(1)
 
     train_loader = DataLoader(
         train_dataset,
@@ -174,6 +183,7 @@ def main() -> None:
 
     logger.info("Starting training ...")
     global_step = 0
+    _first_batch = True
 
     for epoch in range(args.epochs):
         epoch_loss = 0.0
@@ -204,7 +214,14 @@ def main() -> None:
             mlm_mask = mlm_mask & xe_valid
 
             if not mlm_mask.any():
+                if _first_batch:
+                    logger.warning(
+                        "First batch: all MLM-mask positions are empty after "
+                        "masking + xe_valid filter — check masking strategy config."
+                    )
+                _first_batch = False
                 continue
+            _first_batch = False
 
             # Assemble embeddings — uses xe_val_ids (pre-mask) as targets
             assembled = assembler.forward(
@@ -222,6 +239,7 @@ def main() -> None:
             )
 
             # Forward pass through PRAGMA
+            # xe_valid.any(dim=-1): (B, ne) bool — True if event has ≥1 real token
             output = model.forward(
                 xa=assembled.xa,
                 ta=assembled.ta,
@@ -229,6 +247,7 @@ def main() -> None:
                 xt=assembled.xt,
                 te=assembled.te,
                 mask=assembled.mlm_mask,
+                event_valid=xe_valid.any(dim=-1),
             )
 
             if "logits" not in output:
@@ -250,6 +269,10 @@ def main() -> None:
             epoch_steps += 1
             global_step += 1
 
+            if args.max_steps > 0 and global_step >= args.max_steps:
+                logger.info(f"Reached --max-steps {args.max_steps}; stopping early.")
+                break
+
             if global_step % args.log_every == 0:
                 logger.info(
                     f"epoch={epoch + 1}/{args.epochs}  "
@@ -257,6 +280,9 @@ def main() -> None:
                 )
 
         scheduler.step()
+
+        if args.max_steps > 0 and global_step >= args.max_steps:
+            break
 
         if epoch_steps > 0:
             avg_loss = epoch_loss / epoch_steps

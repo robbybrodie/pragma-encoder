@@ -6,6 +6,12 @@ pretraining and evaluation pipeline on OpenShift AI.
 Components follow the KFP SDK v2 decorator pattern consistent with
 the adjacent transaction-foundation-model-openshiftai/ pipeline.
 
+SCAFFOLD STATUS: All four component bodies are structural scaffolds only.
+They define the correct KFP interface (inputs, outputs, types) but raise
+NotImplementedError when executed. The working training entrypoint is
+scripts/train_pragma.py; the PyTorchJob manifest is in
+openshift/training/pytorchjob-pragma-s.yaml.
+
 Components defined here:
     preprocess_transactions — Tokenise and pack raw transaction data
     pretrain_pragma         — Run PRAGMA pretraining (KFTO PyTorchJob)
@@ -26,7 +32,7 @@ from kfp.dsl import Dataset, Input, Model, Output
 
 
 @dsl.component(
-    base_image="pragma-encoder:latest",
+    base_image="image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest",
     packages_to_install=[],
 )
 def preprocess_transactions(
@@ -51,12 +57,15 @@ def preprocess_transactions(
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Preprocessing transactions from {raw_data_path}")
-    logger.info("Placeholder — implement tokenisation and packing.")
-    # TODO: Implement full preprocessing pipeline
+    raise NotImplementedError(
+        "Scaffold: preprocess_transactions body not yet implemented. "
+        "Fit FinancialTokenizerPipeline on raw_data_path and write "
+        "packed sequences to output_dataset."
+    )
 
 
 @dsl.component(
-    base_image="pragma-encoder:latest",
+    base_image="image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest",
 )
 def pretrain_pragma(
     train_dataset: Input[Dataset],
@@ -84,12 +93,15 @@ def pretrain_pragma(
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Pretraining PRAGMA ({config_name}) for {epochs} epochs")
-    logger.info("Placeholder — implement training loop with NeMo AutoModel.")
-    # TODO: Implement training with NeMo AutoModel and KFTO PyTorchJob
+    raise NotImplementedError(
+        "Scaffold: pretrain_pragma body not yet implemented. "
+        "Working training entrypoint: scripts/train_pragma.py. "
+        "For distributed training, apply openshift/training/pytorchjob-pragma-s.yaml."
+    )
 
 
 @dsl.component(
-    base_image="pragma-encoder:latest",
+    base_image="image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest",
 )
 def extract_embeddings(
     model: Input[Model],
@@ -110,12 +122,15 @@ def extract_embeddings(
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Extracting embeddings with pooling={pooling}")
-    logger.info("Placeholder — implement embedding extraction.")
-    # TODO: Implement embedding extraction
+    raise NotImplementedError(
+        "Scaffold: extract_embeddings body not yet implemented. "
+        "Load model checkpoint, run inference over dataset, write "
+        "numpy embedding arrays to output_embeddings."
+    )
 
 
 @dsl.component(
-    base_image="pragma-encoder:latest",
+    base_image="image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest",
 )
 def evaluate_downstream(
     model: Input[Model],
@@ -136,5 +151,8 @@ def evaluate_downstream(
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Evaluating downstream task: {task_name}")
-    logger.info("Placeholder — implement downstream evaluation.")
-    # TODO: Implement downstream evaluation with DownstreamEvaluator
+    raise NotImplementedError(
+        "Scaffold: evaluate_downstream body not yet implemented. "
+        "Run downstream task evaluation on embeddings/labelled_dataset "
+        "and write metrics JSON to output_metrics."
+    )
