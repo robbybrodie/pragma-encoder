@@ -1,12 +1,17 @@
 # PRAGMA-M multi-node PyTorchJob (production / aspirational)
 # Trains the PRAGMA-M (~100M parameter) model across multiple GPU nodes.
-# Requires a cluster with sufficient GPU capacity.
+# Requires a cluster with sufficient GPU capacity (4 nodes × 4 GPUs).
 #
-# Deployed via: oc apply -f openshift/gitops/training/pytorchjob-pragma-m.yaml
-# Follows the kubeflow.org/v1 PyTorchJob API (GA, not Tech Preview).
+# Apply manually (not auto-triggered by ArgoCD):
+#   oc apply -f openshift/gitops/training/pytorchjob-pragma-m.yaml -n pragma-encoder
 #
-# Reference: Ostroukhov et al. (2026) — training at scale
-
+# RHOAI 3.3 supports PyTorchJob (kubeflow.org/v1) only.
+#
+# Prerequisites:
+#   oc get crd pytorchjobs.kubeflow.org
+#   oc get pvc pragma-encoder-training-data -n pragma-encoder  # data PVC must exist
+#
+# Reference: Ostroukhov et al. (2026), PRAGMA-M (~100M parameter) configuration
 apiVersion: kubeflow.org/v1
 kind: PyTorchJob
 metadata:
@@ -21,71 +26,107 @@ spec:
       replicas: 1
       restartPolicy: OnFailure
       template:
+        metadata:
+          labels:
+            app: pragma-m-pretrain
         spec:
+          serviceAccountName: pragma-encoder-training
           containers:
             - name: pytorch
-              image: pragma-encoder:latest
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
               command:
                 - torchrun
                 - --nproc_per_node=4
-                - scripts/train_pragma.py
+                - /opt/app-root/src/pragma-encoder/scripts/train_pragma.py
                 - --config
-                - configs/pragma_m.yaml
+                - /opt/app-root/src/pragma-encoder/configs/pragma_m.yaml
                 - --data-dir
                 - /data/transactions
                 - --output-dir
                 - /outputs/pragma-m
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
               resources:
-                limits:
-                  nvidia.com/gpu: "4"
-                  memory: "128Gi"
                 requests:
-                  memory: "64Gi"
+                  cpu: "16"
+                  memory: 128Gi
+                  nvidia.com/gpu: "4"
+                limits:
+                  cpu: "16"
+                  memory: 128Gi
+                  nvidia.com/gpu: "4"
               volumeMounts:
-                - name: data
+                - name: workbench-data
+                  mountPath: /opt/app-root/src
+                - name: training-data
                   mountPath: /data
-                - name: outputs
+                - name: model-output
                   mountPath: /outputs
           volumes:
-            - name: data
+            - name: workbench-data
               persistentVolumeClaim:
-                claimName: pragma-data-pvc
-            - name: outputs
+                claimName: pragma-encoder-workbench-data
+            - name: training-data
               persistentVolumeClaim:
-                claimName: pragma-outputs-pvc
+                claimName: pragma-encoder-training-data
+            - name: model-output
+              persistentVolumeClaim:
+                claimName: pragma-encoder-model-output
+          imagePullSecrets:
+            - name: pragma-registry
     Worker:
       replicas: 3
       restartPolicy: OnFailure
       template:
+        metadata:
+          labels:
+            app: pragma-m-pretrain
         spec:
+          serviceAccountName: pragma-encoder-training
           containers:
             - name: pytorch
-              image: pragma-encoder:latest
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
               command:
                 - torchrun
                 - --nproc_per_node=4
-                - scripts/train_pragma.py
+                - /opt/app-root/src/pragma-encoder/scripts/train_pragma.py
                 - --config
-                - configs/pragma_m.yaml
+                - /opt/app-root/src/pragma-encoder/configs/pragma_m.yaml
                 - --data-dir
                 - /data/transactions
                 - --output-dir
                 - /outputs/pragma-m
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
               resources:
-                limits:
-                  nvidia.com/gpu: "4"
-                  memory: "128Gi"
                 requests:
-                  memory: "64Gi"
+                  cpu: "16"
+                  memory: 128Gi
+                  nvidia.com/gpu: "4"
+                limits:
+                  cpu: "16"
+                  memory: 128Gi
+                  nvidia.com/gpu: "4"
               volumeMounts:
-                - name: data
+                - name: workbench-data
+                  mountPath: /opt/app-root/src
+                - name: training-data
                   mountPath: /data
-                - name: outputs
+                - name: model-output
                   mountPath: /outputs
           volumes:
-            - name: data
+            - name: workbench-data
               persistentVolumeClaim:
-                claimName: pragma-data-pvc
-            - name: outputs
+                claimName: pragma-encoder-workbench-data
+            - name: training-data
               persistentVolumeClaim:
-                claimName: pragma-outputs-pvc
+                claimName: pragma-encoder-training-data
+            - name: model-output
+              persistentVolumeClaim:
+                claimName: pragma-encoder-model-output
+          imagePullSecrets:
+            - name: pragma-registry

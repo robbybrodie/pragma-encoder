@@ -1,12 +1,20 @@
 # PRAGMA-S single-node PyTorchJob
-# Trains the PRAGMA-S (~10M parameter) model on a single GPU node.
-# For development and proof-of-concept pretraining.
+# Wave 0 (manual trigger): the job is NOT auto-triggered by ArgoCD — apply manually:
+#   oc apply -f openshift/gitops/training/pytorchjob-pragma-s.yaml -n pragma-encoder
 #
-# Deployed via: oc apply -f openshift/gitops/training/pytorchjob-pragma-s.yaml
-# Follows the kubeflow.org/v1 PyTorchJob API (GA, not Tech Preview).
+# RHOAI 3.3 supports PyTorchJob (kubeflow.org/v1) only.
+# The KFTO v2 TrainJob (trainer.kubeflow.org/v1alpha1) is NOT supported in RHOAI 3.3.
 #
-# Reference: Ostroukhov et al. (2026) — training configuration
-
+# Prerequisites:
+#   oc get crd pytorchjobs.kubeflow.org    # verify KFTO is installed
+#   oc get pvc pragma-encoder-training-data -n pragma-encoder  # data PVC must exist
+#
+# Monitor:
+#   oc get pytorchjob pragma-s-pretrain -n pragma-encoder
+#   oc logs -f -l job-name=pragma-s-pretrain,replica-type=master -n pragma-encoder
+#
+# Reference: Ostroukhov et al. (2026), PRAGMA-S (~10M parameter) configuration
+---
 apiVersion: kubeflow.org/v1
 kind: PyTorchJob
 metadata:
@@ -17,40 +25,136 @@ metadata:
     variant: pragma-s
 spec:
   pytorchReplicaSpecs:
+
+    # Master: rank-0 process — always exactly 1 replica
     Master:
       replicas: 1
       restartPolicy: OnFailure
       template:
+        metadata:
+          labels:
+            app: pragma-s-pretrain
         spec:
+          # ServiceAccount with anyuid SCC grant — required because the training
+          # container may run as root (uid 0), which OpenShift's default
+          # restricted-v2 SCC does not permit.
+          # Created by openshift/gitops/rbac/service-accounts.yaml.
+          serviceAccountName: pragma-encoder-training
           containers:
             - name: pytorch
-              image: pragma-encoder:latest   # Build via openshift/notebook-image/
+              # Use the same workbench image (has PRAGMA Python dependencies installed)
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
               command:
                 - python
-                - scripts/train_pragma.py
+                - /opt/app-root/src/pragma-encoder/scripts/train_pragma.py
                 - --config
-                - configs/pragma_s.yaml
+                - /opt/app-root/src/pragma-encoder/configs/pragma_s.yaml
                 - --data-dir
                 - /data/transactions
                 - --output-dir
                 - /outputs/pragma-s
                 - --epochs
                 - "10"
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
               resources:
-                limits:
-                  nvidia.com/gpu: "1"
-                  memory: "32Gi"
                 requests:
-                  memory: "16Gi"
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
+                limits:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
               volumeMounts:
-                - name: data
+                - name: workbench-data
+                  mountPath: /opt/app-root/src
+                - name: training-data
                   mountPath: /data
-                - name: outputs
+                - name: model-output
                   mountPath: /outputs
           volumes:
-            - name: data
+            - name: workbench-data
               persistentVolumeClaim:
-                claimName: pragma-data-pvc
-            - name: outputs
+                claimName: pragma-encoder-workbench-data
+            - name: training-data
               persistentVolumeClaim:
-                claimName: pragma-outputs-pvc
+                claimName: pragma-encoder-training-data
+            - name: model-output
+              persistentVolumeClaim:
+                claimName: pragma-encoder-model-output
+          imagePullSecrets:
+            - name: pragma-registry
+
+    # Worker: additional GPU nodes — set replicas to (total_nodes - 1)
+    # For single-node training, keep replicas: 0
+    Worker:
+      replicas: 0
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          labels:
+            app: pragma-s-pretrain
+        spec:
+          serviceAccountName: pragma-encoder-training
+          containers:
+            - name: pytorch
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
+              command:
+                - python
+                - /opt/app-root/src/pragma-encoder/scripts/train_pragma.py
+                - --config
+                - /opt/app-root/src/pragma-encoder/configs/pragma_s.yaml
+                - --data-dir
+                - /data/transactions
+                - --output-dir
+                - /outputs/pragma-s
+                - --epochs
+                - "10"
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
+              resources:
+                requests:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
+                limits:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
+              volumeMounts:
+                - name: workbench-data
+                  mountPath: /opt/app-root/src
+                - name: training-data
+                  mountPath: /data
+                - name: model-output
+                  mountPath: /outputs
+          volumes:
+            - name: workbench-data
+              persistentVolumeClaim:
+                claimName: pragma-encoder-workbench-data
+            - name: training-data
+              persistentVolumeClaim:
+                claimName: pragma-encoder-training-data
+            - name: model-output
+              persistentVolumeClaim:
+                claimName: pragma-encoder-model-output
+          imagePullSecrets:
+            - name: pragma-registry
+---
+# PVC for model checkpoints and training outputs
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pragma-encoder-model-output
+  namespace: pragma-encoder
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi

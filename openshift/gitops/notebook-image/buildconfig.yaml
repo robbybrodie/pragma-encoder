@@ -1,25 +1,48 @@
+# Workbench Image Build — BuildConfig CR
+# Wave 2: fires after the ImageStream (wave 1) exists so the output tag is valid.
+#
+# The ConfigChange trigger means ArgoCD applying this BuildConfig automatically
+# kicks off the first build — no manual `oc start-build` needed.
+#
+# Strategy: Docker (not S2I) — the Dockerfile extends the RHOAI S2I base image
+# with PRAGMA-specific dependencies.
+#
+# The base image (FROM) is pulled from the cluster-internal registry — the
+# builder SA has pull rights automatically; no pullSecret is needed.
 apiVersion: build.openshift.io/v1
 kind: BuildConfig
 metadata:
-  name: pragma-encoder
+  name: pragma-encoder-workbench
   namespace: pragma-encoder
   labels:
-    app: pragma-encoder
-    app.kubernetes.io/managed-by: argocd
+    app: pragma-encoder-workbench
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
+  runPolicy: Serial
+
   source:
     type: Git
     git:
-      uri: https://github.com/your-org/pragma-encoder.git
-      ref: main
+      uri: https://github.com/robbybrodie/pragma-encoder
+      ref: pragma-implementation
+    # contextDir is relative to the repo root.
+    # Only files under this directory are sent to the build daemon.
     contextDir: openshift/notebook-image
+
   strategy:
     type: Docker
     dockerStrategy:
       dockerfilePath: Dockerfile
+
   output:
     to:
       kind: ImageStreamTag
-      name: pragma-encoder:latest
+      name: pragma-encoder-workbench:latest
+
   triggers:
+    # ConfigChange fires a build when ArgoCD applies this BuildConfig —
+    # no manual oc start-build needed after initial GitOps sync.
     - type: ConfigChange
+    - type: ImageChange
+      imageChange: {}

@@ -1,39 +1,33 @@
 # PRAGMA Encoder — OpenShift AI Notebook Image
 #
-# Extends the Red Hat OpenShift AI base notebook image with
-# PRAGMA-specific dependencies.
+# Based on the RHOAI S2I generic data-science notebook image.
+# The Kubeflow Notebook Controller (RHOAI) injects:
+#   - USER / runAsUser (from namespace SCC)
+#   - OAuth proxy sidecar container
+#   - Jupyter port and probe configuration
+#   - Service and Route
 #
-# Build: oc start-build pragma-encoder -n pragma-encoder
-# Or: docker build -t pragma-encoder:latest openshift/notebook-image/
+# Do NOT add USER, EXPOSE, or security context directives here.
+#
+# Source code is NOT baked into this image — the Notebook CR's initContainer
+# clones https://github.com/robbybrodie/pragma-encoder.git at pod start.
+# This image only provides the Python runtime environment.
 
-FROM registry.redhat.io/ubi9/python-311:latest
+FROM image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-generic-data-science-notebook:2024.2
 
-USER root
+# Copy and install PRAGMA-specific Python requirements.
+# PyTorch, JupyterLab, and common data-science libraries are already in the base image.
+COPY requirements.txt /opt/app-root/src/requirements.txt
+RUN pip install --no-cache-dir -r /opt/app-root/src/requirements.txt
 
-# Install system dependencies
-RUN dnf install -y git && dnf clean all
+# OpenShift runs containers as a random non-root UID in group 0.
+# Ensure /opt/app-root is group-writable so the injected UID can write to it.
+RUN chown -R 1001:0 /opt/app-root && chmod -R g=u /opt/app-root
 
-USER 1001
+# Point HOME at the PVC-backed mount so Jupyter can create its runtime dir.
+ENV HOME=/opt/app-root/src
 
-# Set working directory
-WORKDIR /opt/app-root/src
-
-# Copy requirements and install Python dependencies
-COPY requirements.txt requirements-dev.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the pragma-encoder source code
-COPY --chown=1001:0 src/ ./src/
-COPY --chown=1001:0 configs/ ./configs/
-COPY --chown=1001:0 scripts/ ./scripts/
-COPY --chown=1001:0 pipeline/ ./pipeline/
-COPY --chown=1001:0 notebooks/ ./notebooks/
-COPY --chown=1001:0 setup.py ./
-
-# Install pragma-encoder as a package
-RUN pip install --no-cache-dir -e .
-
-# Expose Jupyter port
-EXPOSE 8888
-
-CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser"]
+# The Kubeflow Notebook Controller (RHOAI) expects the container to start
+# JupyterLab on port 8888. Using sh -c so NB_PREFIX is expanded at runtime.
+# NB_PREFIX is injected by the Notebook Controller (e.g. /notebook/pragma-encoder/pragma-encoder-workbench).
+CMD ["sh", "-c", "exec jupyter lab --port=8888 --ip=0.0.0.0 --no-browser --allow-root --ServerApp.allow_remote_access=True --ServerApp.token= --ServerApp.password= --ServerApp.base_url=${NB_PREFIX:-/} --ServerApp.root_dir=/opt/app-root/src"]

@@ -1,3 +1,29 @@
+# ArgoCD Application — deploys the full pragma-encoder project from Git.
+#
+# Prerequisites (apply once as cluster-admin before this file):
+#   oc apply -f openshift/gitops/rbac/argocd-admin.yaml           # bootstrap ArgoCD namespace-admin
+#   oc apply -f openshift/gitops/rbac/argocd-sealedsecret-access.yaml  # bootstrap SealedSecret access
+#   # Wait ~3 min for ArgoCD pods to be Running in openshift-gitops:
+#   oc get pods -n openshift-gitops
+#
+# Then deploy:
+#   oc apply -f openshift/argocd/application.yaml
+#
+# Monitor sync:
+#   oc get application pragma-encoder -n openshift-gitops
+#   # Or open the ArgoCD UI:
+#   oc get route openshift-gitops-server -n openshift-gitops -o jsonpath='{.spec.host}'
+#
+# Teardown:
+#   oc delete application pragma-encoder -n openshift-gitops  # stops reconciliation
+#   oc delete project pragma-encoder                           # removes all resources
+#
+# Notes:
+# - path: openshift/gitops — infrastructure and workbench resources are auto-synced.
+# - CreateNamespace=false: namespace.yaml (wave -1) manages the Namespace CR.
+# - ServerSideApply=true: required for the SA imagePullSecrets patches in
+#   rbac/sa-imagepull-links.yaml to merge with platform-managed fields.
+# - prune+selfHeal: ArgoCD removes resources deleted from Git and corrects drift.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -7,17 +33,42 @@ metadata:
     app: pragma-encoder
 spec:
   project: default
+
   source:
-    repoURL: https://github.com/your-org/pragma-encoder.git
-    targetRevision: main
+    repoURL: https://github.com/robbybrodie/pragma-encoder.git
+    targetRevision: pragma-implementation
     path: openshift/gitops
+    directory:
+      recurse: true
+
   destination:
     server: https://kubernetes.default.svc
     namespace: pragma-encoder
+
+  # Suppress perpetual drift caused by OpenShift platform controllers
+  # adding fields ArgoCD doesn't own:
+  #   - ServiceAccount: OpenShift adds default-dockercfg-* to imagePullSecrets/secrets
+  #   - BuildConfig:    OpenShift build controller sets lastTriggeredImageID in triggers
+  # With ServerSideApply=true ArgoCD still writes (owns) its desired fields;
+  # ignoreDifferences only prevents it from flagging the extra platform fields as drift.
+  ignoreDifferences:
+    - kind: ServiceAccount
+      jsonPointers:
+        - /imagePullSecrets
+        - /secrets
+    - kind: BuildConfig
+      group: build.openshift.io
+      jsonPointers:
+        - /spec/triggers
+
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
-      - CreateNamespace=true
-      - PrunePropagationPolicy=foreground
+      # Do not create the namespace — namespace.yaml (wave -1) owns it
+      - CreateNamespace=false
+      # Required for SA imagePullSecrets patches to merge cleanly
+      - ServerSideApply=true
+      # Apply resources in sync-wave order
+      - RespectIgnoreDifferences=true

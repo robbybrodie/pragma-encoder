@@ -1,12 +1,21 @@
+# ImageStream — registers the custom PRAGMA workbench image with the RHOAI dashboard.
+# Wave 1: created before the BuildConfig so the output tag exists when the build fires.
+#
+# The opendatahub.io/notebook-image: "true" label causes the RHOAI dashboard to list
+# this image in the workbench launcher under "Custom notebook images".
 apiVersion: image.openshift.io/v1
 kind: ImageStream
 metadata:
-  name: pragma-encoder
+  name: pragma-encoder-workbench
   namespace: pragma-encoder
   labels:
-    app: pragma-encoder
-    app.kubernetes.io/managed-by: argocd
     opendatahub.io/notebook-image: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    opendatahub.io/notebook-image-name: "PRAGMA Encoder"
+    opendatahub.io/notebook-image-desc: "RHOAI S2I base with PRAGMA transaction encoder dependencies"
+    opendatahub.io/notebook-image-url: "https://github.com/robbybrodie/pragma-encoder"
+    opendatahub.io/notebook-image-order: "1"
 spec:
   lookupPolicy:
     local: true

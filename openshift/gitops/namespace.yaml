@@ -1,7 +1,15 @@
+# Namespace — declarative equivalent of: oc new-project pragma-encoder
+# Wave -1: created before everything else so subsequent resources have a namespace to land in.
+# ArgoCD Application uses CreateNamespace=false + ServerSideApply=true so this resource
+# owns the namespace definition and won't conflict with an existing project.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: pragma-encoder
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+    openshift.io/display-name: "PRAGMA Encoder"
+    openshift.io/description: "PRAGMA encoder foundation model — training, evaluation, and serving"
   labels:
-    app.kubernetes.io/managed-by: argocd
+    # Required for RHOAI dashboard to list this project
     opendatahub.io/dashboard: "true"
