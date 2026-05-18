@@ -78,6 +78,14 @@ spec:
         - name: pragma-encoder-workbench
           image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
           imagePullPolicy: Always
+          env:
+            # NOTEBOOK_BASE_URL is read by start-notebook.sh (the S2I entrypoint)
+            # to set --ServerApp.base_url. The Notebook Controller injects NB_PREFIX
+            # but start-notebook.sh only reads NOTEBOOK_BASE_URL — they are different
+            # env vars. Without this, JupyterLab serves at / and the OAuth proxy
+            # returns 404 for all requests under /notebook/pragma-encoder/...
+            - name: NOTEBOOK_BASE_URL
+              value: /notebook/pragma-encoder/pragma-encoder-workbench
           envFrom:
             - secretRef:
                 name: pragma-workbench-env
