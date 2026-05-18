@@ -43,6 +43,11 @@ spec:
           # restricted-v2 SCC does not permit.
           # Created by openshift/gitops/rbac/service-accounts.yaml.
           serviceAccountName: pragma-encoder-training
+          # Pin to GPU node — workbench PVC is ReadWriteOnce and already bound
+          # to this node. Without this selector the job may land on a different
+          # GPU node and fail to mount the PVC. Matches the workbench nodeSelector.
+          nodeSelector:
+            nvidia.com/gpu.present: "true"
           containers:
             - name: pytorch
               # Use the same workbench image (has PRAGMA Python dependencies installed)
