@@ -28,6 +28,8 @@ Exported components:
     TokenizerPipeline           — Orchestrates tokenisation across all field types
     FinancialTokenizerPipeline  — Financial-domain-specific pipeline
     PRAGMATokenizerProtocol     — Interface contract (typing.Protocol)
+    VocabularySpec              — Frozen vocabulary layout snapshot (ADR 002)
+    VocabularyMap               — Global ↔ local ID arithmetic (ADR 002)
 
 Reference: Ostroukhov et al. (2026), Section 2.2
 """
@@ -41,6 +43,7 @@ from .numerical import NumericalTokenizer
 from .pipeline import TokenizerOutput, TokenizerPipeline
 from .temporal import TemporalTokenizer
 from .textual import TextualTokenizer
+from .vocabulary import VocabularyMap, VocabularySpec
 
 
 class PRAGMATokenizerProtocol(Protocol):
@@ -86,4 +89,6 @@ __all__ = [
     "TokenizerPipeline",
     "FinancialTokenizerPipeline",
     "PRAGMATokenizerProtocol",
+    "VocabularySpec",
+    "VocabularyMap",
 ]
