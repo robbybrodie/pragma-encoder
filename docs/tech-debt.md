@@ -59,3 +59,41 @@ Generate a dedicated NGC API key for pragma-encoder:
   Generate a new API key scoped to pragma-encoder usage
   Re-seal registry-pull-secret.sealed.yaml with new key
   Rotate the nemo-tfm key independently
+
+---
+
+## TD-003: Profile tokenizer not implemented
+
+**Date:** 2026-05-18
+**Severity:** Medium (blocks real training on profile data)
+**Status:** Accepted for research prototype
+
+### Description
+EmbeddingAssembler accepts xa_key_ids, xa_val_ids, xa_pos_ids
+for the profile state path (static customer attributes).
+These are produced correctly by the assembler via Equation 1.
+
+However no ProfileTokenizerPipeline exists to produce these
+inputs from real static customer attributes (plan, region,
+balance quantile, life-long events).
+
+FinancialTokenizerPipeline handles event tokens only.
+
+### Impact
+In the smoke test and early training: synthetic integer
+tensors in valid ID ranges exercise the xa path correctly.
+In production: callers must supply xa inputs manually
+until ProfileTokenizerPipeline is implemented.
+
+### Resolution
+Implement src/tokenizer/profile_pipeline.py:
+  ProfileTokenizerPipeline that:
+  - Tokenises static customer attributes (plan, region etc)
+  - Tokenises life-long events with their timestamps (ta)
+  - Returns xa_key_ids, xa_val_ids, xa_pos_ids, ta
+  consistent with the same VocabularySpec used for events
+
+### References
+  Paper: Section 2.1.2 (profile state definition)
+  Paper: Section 2.3.2 (ProfileStateEncoder inputs)
+  EmbeddingAssembler: src/model/assembler.py

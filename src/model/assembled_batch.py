@@ -24,6 +24,7 @@ ID naming convention (ADR 002):
 
 Tensor shapes:
     xa:       (batch, na, d_model)     — profile state embeddings
+    ta:       (batch, na)              — profile temporal coords (log-seconds)
     xe:       (batch, ne, ni, d_model) — event token embeddings ([EVT] at pos 0)
     xt:       (batch, ne, 3)           — calendar features: [hour, dow, dom]
     te:       (batch, 1+ne)            — history temporal coords (0.0 for [USR])
@@ -53,6 +54,9 @@ class AssembledBatch:
 
     Attributes:
         xa:       Profile state token embeddings. Shape: (batch, na, d_model).
+        ta:       Profile temporal coordinates (log-seconds). Shape: (batch, na).
+                  Passed through to ProfileStateEncoder for RoPE.
+                  0.0 for static profile attributes; log-seconds for life-long events.
         xe:       Event token embeddings. Shape: (batch, ne, ni, d_model).
                   [EVT] token is at position 0 of each event.
         xt:       Calendar features (integer). Shape: (batch, ne, 3).
@@ -69,6 +73,7 @@ class AssembledBatch:
     """
 
     xa:       torch.Tensor  # (batch, na, d_model)
+    ta:       torch.Tensor  # (batch, na)              — profile temporal coords
     xe:       torch.Tensor  # (batch, ne, ni, d_model)
     xt:       torch.Tensor  # (batch, ne, 3)
     te:       torch.Tensor  # (batch, 1+ne)
@@ -94,6 +99,9 @@ class AssembledBatch:
         """
         assert self.xa.dim() == 3, (
             f"xa must be 3-dimensional (batch, na, d_model), got shape {tuple(self.xa.shape)}"
+        )
+        assert self.ta.dim() == 2, (
+            f"ta must be 2-dimensional (batch, na), got shape {tuple(self.ta.shape)}"
         )
         assert self.xe.dim() == 4, (
             f"xe must be 4-dimensional (batch, ne, ni, d_model), got shape {tuple(self.xe.shape)}"

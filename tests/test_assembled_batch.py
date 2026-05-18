@@ -55,6 +55,7 @@ def _make_valid_batch(
     If ignore_some: set some positions to IGNORE_INDEX (-100) — the normal case.
     """
     xa       = torch.randn(_B, _NA, _D)
+    ta       = torch.zeros(_B, _NA)
     xe       = torch.randn(_B, _NE, _NI, _D)
     xt       = torch.randint(0, 24, (_B, _NE, 3))
     te       = torch.zeros(_B, 1 + _NE)
@@ -70,7 +71,7 @@ def _make_valid_batch(
         targets[:] = target_value
 
     return AssembledBatch(
-        xa=xa, xe=xe, xt=xt, te=te, mlm_mask=mlm_mask, targets=targets,
+        xa=xa, ta=ta, xe=xe, xt=xt, te=te, mlm_mask=mlm_mask, targets=targets,
     )
 
 
@@ -99,9 +100,10 @@ class TestAssembledBatchSpec:
         assert AssembledBatch.IGNORE_INDEX == batch.IGNORE_INDEX == -100
 
     def test_assembled_batch_has_required_fields(self) -> None:
-        """AssembledBatch must expose xa, xe, xt, te, mlm_mask, targets."""
+        """AssembledBatch must expose xa, ta, xe, xt, te, mlm_mask, targets."""
         batch = _make_valid_batch()
         assert hasattr(batch, "xa")
+        assert hasattr(batch, "ta")
         assert hasattr(batch, "xe")
         assert hasattr(batch, "xt")
         assert hasattr(batch, "te")
@@ -125,13 +127,14 @@ class TestValidatePasses:
     def test_validate_passes_for_all_ignore_targets(self) -> None:
         """validate() must pass when all targets are IGNORE_INDEX (no masked tokens)."""
         xa       = torch.randn(_B, _NA, _D)
+        ta       = torch.zeros(_B, _NA)
         xe       = torch.randn(_B, _NE, _NI, _D)
         xt       = torch.randint(0, 24, (_B, _NE, 3))
         te       = torch.zeros(_B, 1 + _NE)
         mlm_mask = torch.zeros(_B, _NE, _NI, dtype=torch.bool)
         targets  = torch.full((_B, _NE, _NI), AssembledBatch.IGNORE_INDEX, dtype=torch.long)
 
-        batch = AssembledBatch(xa=xa, xe=xe, xt=xt, te=te,
+        batch = AssembledBatch(xa=xa, ta=ta, xe=xe, xt=xt, te=te,
                                mlm_mask=mlm_mask, targets=targets)
         batch.validate(_CONFIG)  # all-ignore is valid (no MLM positions)
 
