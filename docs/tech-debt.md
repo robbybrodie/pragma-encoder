@@ -66,7 +66,7 @@ Generate a dedicated NGC API key for pragma-encoder:
 
 **Date:** 2026-05-18
 **Severity:** Medium (blocks real training on profile data)
-**Status:** Accepted for research prototype
+**Status:** Partially resolved — xa zero-padded as shortcut
 
 ### Description
 EmbeddingAssembler accepts xa_key_ids, xa_val_ids, xa_pos_ids
@@ -85,13 +85,23 @@ tensors in valid ID ranges exercise the xa path correctly.
 In production: callers must supply xa inputs manually
 until ProfileTokenizerPipeline is implemented.
 
-### Resolution
+### Partial resolution (2026-05-18)
+PragmaDataset (src/data/pragma_dataset.py) implements the
+xa zero-padding shortcut:
+  - na = 1 (single minimal profile token)
+  - xa_key_ids: filled with vocab_spec.key_start
+  - xa_val_ids: filled with vocab_spec.value_start
+  - xa_pos_ids: filled with 0
+  - ta: filled with 0.0
+
+This allows real TabFormer training to proceed without
+a ProfileTokenizerPipeline.
+
+### Full resolution
 Implement src/tokenizer/profile_pipeline.py:
-  ProfileTokenizerPipeline that:
-  - Tokenises static customer attributes (plan, region etc)
-  - Tokenises life-long events with their timestamps (ta)
-  - Returns xa_key_ids, xa_val_ids, xa_pos_ids, ta
-  consistent with the same VocabularySpec used for events
+  ProfileTokenizerPipeline that tokenises static customer
+  attributes and life-long events, returning xa_key_ids,
+  xa_val_ids, xa_pos_ids, ta consistent with VocabularySpec.
 
 ### References
   Paper: Section 2.1.2 (profile state definition)
