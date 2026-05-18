@@ -54,8 +54,9 @@ Contract with callers:
         logits: (n_masked, value_vocab_size)  — MLM logits at masked positions
 
 Key design decisions:
-    - No embedding table in PRAGMA — Equation 1 (embedding) is done externally
-      by the tokenizer pipeline; all inputs are pre-embedded float tensors
+    - No embedding table in PRAGMA — Equation 1 is handled externally
+      by EmbeddingAssembler (src/model/assembler.py) using VocabularySpec
+      exported from TokenizerPipeline.
     - No causal masking anywhere — PRAGMA is encoder-only (§2.3)
     - No weight sharing between encoders (ADR 002)
     - token_ids is accepted but not used internally; it is reserved for callers
