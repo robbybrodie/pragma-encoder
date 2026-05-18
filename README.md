@@ -60,6 +60,8 @@ MLM loss with label smoothing (ε = 0.1).
 
 The full-scale training infrastructure from the paper (207B tokens, LMDB storage, dynamic batching at Revolut scale) is not implemented in this release. A simplified training loop suitable for research and smaller datasets is provided.
 
+The Profile State Encoder is implemented but the ProfileTokenizerPipeline for real static customer attributes (plan, region, balance quantile) is not — during training the profile path receives synthetic integer tensors in valid ID ranges rather than tokenised customer profiles.
+
 The pretrained weights from Revolut are not available and are not included. Train your own weights on your own transaction data.
 
 ---

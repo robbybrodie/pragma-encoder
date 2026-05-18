@@ -47,7 +47,7 @@ See `notebooks/01_pragma_tokenization.ipynb` for an interactive walkthrough.
 | `pragma_m.yaml` | ~100M | Aspirational, medium-scale datasets |
 | `pragma_l.yaml` | ~1B | Aspirational, Revolut-scale datasets |
 
-Start with PRAGMA-S for all initial experiments.
+Start with PRAGMA-S for all initial experiments. It fits on a single GPU node and trains in reasonable time on datasets of millions of transactions — a 90-day window across a retail customer base is well within scope; hundreds of billions of tokens is not.
 
 ---
 
