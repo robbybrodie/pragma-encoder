@@ -87,64 +87,8 @@ spec:
                 claimName: pragma-encoder-model-output
           imagePullSecrets:
             - name: pragma-registry
-
-    # Worker: additional GPU nodes — set replicas to (total_nodes - 1)
-    # For single-node training, keep replicas: 0
-    Worker:
-      replicas: 0
-      restartPolicy: OnFailure
-      template:
-        metadata:
-          labels:
-            app: pragma-s-pretrain
-        spec:
-          serviceAccountName: pragma-encoder-training
-          containers:
-            - name: pytorch
-              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
-              imagePullPolicy: IfNotPresent
-              command:
-                - python
-                - /opt/app-root/src/pragma-encoder/scripts/train_pragma.py
-                - --config
-                - /opt/app-root/src/pragma-encoder/configs/pragma_s.yaml
-                - --data-dir
-                - /data/transactions
-                - --output-dir
-                - /outputs/pragma-s
-                - --epochs
-                - "10"
-              envFrom:
-                - secretRef:
-                    name: pragma-workbench-env
-              resources:
-                requests:
-                  cpu: "8"
-                  memory: 64Gi
-                  nvidia.com/gpu: "1"
-                limits:
-                  cpu: "8"
-                  memory: 64Gi
-                  nvidia.com/gpu: "1"
-              volumeMounts:
-                - name: workbench-data
-                  mountPath: /opt/app-root/src
-                - name: training-data
-                  mountPath: /data
-                - name: model-output
-                  mountPath: /outputs
-          volumes:
-            - name: workbench-data
-              persistentVolumeClaim:
-                claimName: pragma-encoder-workbench-data
-            - name: training-data
-              persistentVolumeClaim:
-                claimName: pragma-encoder-training-data
-            - name: model-output
-              persistentVolumeClaim:
-                claimName: pragma-encoder-model-output
-          imagePullSecrets:
-            - name: pragma-registry
+    # Single-node job — no Worker spec.
+    # KFTO webhook rejects Worker.replicas=0; omit Worker for Master-only jobs.
 ---
 # PVC for model checkpoints and training outputs
 apiVersion: v1
