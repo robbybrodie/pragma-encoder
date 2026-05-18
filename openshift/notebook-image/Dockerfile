@@ -17,12 +17,10 @@ FROM image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2
 
 # Copy and install PRAGMA-specific Python requirements.
 # PyTorch, JupyterLab, and common data-science libraries are already in the base image.
+# The S2I base image runs the build as UID 1001 — do NOT chown /opt/app-root here;
+# the base image already sets group-writable permissions for OpenShift's random UID.
 COPY requirements.txt /opt/app-root/src/requirements.txt
 RUN pip install --no-cache-dir -r /opt/app-root/src/requirements.txt
-
-# OpenShift runs containers as a random non-root UID in group 0.
-# Ensure /opt/app-root is group-writable so the injected UID can write to it.
-RUN chown -R 1001:0 /opt/app-root && chmod -R g=u /opt/app-root
 
 # Point HOME at the PVC-backed mount so Jupyter can create its runtime dir.
 ENV HOME=/opt/app-root/src
