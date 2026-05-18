@@ -27,8 +27,10 @@ Pre-processing (required by paper §3.1.1):
 
 Probe type and optimiser (§3.1.1):
     Classification: LogisticRegression(solver='lbfgs', max_iter=1000)
-    Regression:     Ridge(solver='lbfgs')
-    Both use L-BFGS — key-numbers.md: probe_optimiser=L-BFGS, §3.1.1.
+    Regression:     Ridge() — L2 regularised linear regression.
+    L-BFGS is the paper-specified optimiser (key-numbers.md: probe_optimiser=L-BFGS, §3.1.1).
+    L-BFGS is a quasi-Newton method suited for smooth (L2) objectives. Ridge's quadratic
+    penalty is smooth; sklearn Ridge uses an equivalent exact solver by default.
 
 Metrics (§3.1.1):
     score() returns AUC-ROC for classification (matching PRAGMA paper metrics).
@@ -49,7 +51,7 @@ from typing import Optional
 
 import numpy as np
 import torch
-from sklearn.linear_model import Lasso, LogisticRegression
+from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import r2_score, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
@@ -92,7 +94,7 @@ class EmbeddingProbe:
     def __init__(self, config: PRAGMAConfig) -> None:
         self.config = config
         self.scaler: Optional[StandardScaler]               = None
-        self.model:  Optional[LogisticRegression | Lasso]  = None
+        self.model:  Optional[LogisticRegression | Ridge]  = None
         self._task:  Optional[str]                          = None
 
     def fit(
@@ -133,14 +135,14 @@ class EmbeddingProbe:
             # high-dimensional embeddings (d_model=192/512/1024).
             self.model = LogisticRegression(solver="lbfgs", max_iter=1000)
         else:
-            # Lasso regression — implementation choice; Ridge(solver='lbfgs') requires
-            # positive=True in sklearn >= 1.8 and is therefore unavailable for general
-            # regression. Lasso (coordinate descent) is the documented fallback.
-            # alpha=0.001: minimal regularisation so the probe behaves like OLS on
-            # PRAGMA embeddings (high-dimensional, pre-scaled). Default alpha=1.0
-            # over-regularises dense embeddings and degrades R².
-            # key-numbers.md: probe_optimiser=L-BFGS, §3.1.1.
-            self.model = Lasso(alpha=0.001)
+            # Ridge regression (L2) — key-numbers.md: probe_optimiser=L-BFGS, §3.1.1.
+            # L-BFGS is a quasi-Newton method suited for smooth (L2) objectives.
+            # Ridge's quadratic penalty is smooth and differentiable everywhere,
+            # matching the L-BFGS optimiser specification in the paper.
+            # Lasso (L1) is NOT correct — the paper does not specify sparsity.
+            # Note: sklearn Ridge(solver='lbfgs') requires positive=True; we use
+            # the default solver which minimises the same L2 objective exactly.
+            self.model = Ridge()
 
         self.model.fit(X_scaled, y)
 

@@ -209,7 +209,7 @@ class TestMathProperties:
         """§3.1.1: linear probe must achieve R² > 0.9 on linear data.
 
         y = w·x + small_noise is a perfectly linear relationship. A Ridge
-        regression with L-BFGS must recover it with high R². Failure means
+        regression (L2) must recover it with high R². Failure means
         the probe is not fitting or StandardScaler is breaking the transform.
         """
         X_train, y_train, X_test, y_test = _make_linear_regression()
@@ -219,9 +219,9 @@ class TestMathProperties:
         r2 = probe.score(X_test, y_test)
 
         assert r2 > 0.9, (  # key-numbers.md: probe_type=linear, §3.1.1
-            f"§3.1.1: Lasso regression probe must achieve R² > 0.9 on linear "
+            f"§3.1.1: Ridge regression probe must achieve R² > 0.9 on linear "
             f"data, got {r2:.4f}. "
-            f"Check that StandardScaler and Lasso(alpha=0.001) are applied correctly."
+            f"Check that StandardScaler and Ridge are applied correctly."
         )
 
     def test_scaler_is_stateful_applied_at_predict_time(self) -> None:
@@ -344,16 +344,19 @@ class TestPaperSpecifications:
             f"(§3.1.1), got solver='{probe.model.solver}'."
         )
 
-    def test_uses_linear_regression_model(self) -> None:
-        """key-numbers.md: probe_type = linear (§3.1.1).
+    def test_uses_ridge_regression_model(self) -> None:
+        """key-numbers.md: probe_optimiser = L-BFGS (§3.1.1) → Ridge (L2 regularisation).
 
-        The regression probe must use a linear sklearn model.
-        Implementation choice: Lasso (coordinate descent) — Ridge(solver='lbfgs')
-        requires positive=True in sklearn >= 1.8 and is therefore unavailable
-        for general regression. Lasso is the documented fallback.
-        key-numbers.md: probe_optimiser=L-BFGS, §3.1.1.
+        The paper specifies L-BFGS optimisation with an L2 penalty (ridge regression).
+        L1 (Lasso) has no basis in the paper and produces different sparse solutions.
+        Ridge(L2) is the correct match: L-BFGS is suited for smooth objectives and
+        Ridge's quadratic penalty is smooth.
+
+        Note: sklearn Ridge does not expose an 'lbfgs' solver for general regression;
+        the default solver (auto/cholesky) minimises the same L2 objective.
+        key-numbers.md: probe_type=linear, probe_optimiser=L-BFGS, §3.1.1.
         """
-        from sklearn.linear_model import Lasso
+        from sklearn.linear_model import Ridge
 
         X_train, y_train, _, _ = _make_linear_regression()
         probe = EmbeddingProbe(_CONFIG)
@@ -361,11 +364,10 @@ class TestPaperSpecifications:
 
         assert hasattr(probe, "model"), (
             "§3.1.1: EmbeddingProbe must store a 'model' attribute after fit(). "
-            "Expected a fitted Lasso."
+            "Expected a fitted Ridge."
         )
-        assert isinstance(probe.model, Lasso), (
-            f"§3.1.1: regression probe must use Lasso "
-            f"(key-numbers.md: probe_type=linear, §3.1.1). "
-            f"Note: Ridge(solver='lbfgs') requires positive=True in sklearn >= 1.8; "
-            f"Lasso is the documented fallback. Got {type(probe.model).__name__}."
+        assert isinstance(probe.model, Ridge), (
+            f"§3.1.1: regression probe must use Ridge (L2), not Lasso (L1). "
+            f"key-numbers.md: probe_optimiser=L-BFGS maps to Ridge (smooth L2 objective). "
+            f"Got {type(probe.model).__name__}."
         )

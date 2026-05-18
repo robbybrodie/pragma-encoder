@@ -217,9 +217,12 @@ spec:
                   echo "==> Starting PRAGMA-S pretraining (rank=${RANK:-0}) ..."
                   cd /workspace/repo
                   python scripts/train_pragma.py \
+                    --model-variant pragma-s \
                     --csv-path  /workspace/data/tabformer/card_transaction.v1.csv \
                     --vocab-path /workspace/data/tabformer/vocab.pkl \
                     --output-dir /workspace/outputs/pragma-s \
+                    --s3-checkpoint-prefix pragma-encoder/checkpoints/pragma-s \
+                    --resume \
                     --epochs     1 \
                     --batch-size 16 \
                     --max-steps  20 \

@@ -405,3 +405,218 @@ class TestPaperSpecifications:
             f"key-numbers.md: calendar MLP must have exactly 2 Linear layers "
             f"(§2.3.3, Equation 3). Got {len(linear_layers)}."
         )
+
+
+# ---------------------------------------------------------------------------
+# TestCalendarPeriodAlignment — DEF-002: sin/cos must use known cycle periods
+# ---------------------------------------------------------------------------
+
+
+class TestCalendarPeriodAlignment:
+    """DEF-002 — calendar sincos must normalise by known cycle periods.
+
+    Equation 3 (§2.3.3, key-numbers.md):
+        "Periods fixed to known calendar cycles (not learned)."
+
+    Correct normalisation (2π·value/period):
+        hour of day   → period=24:  sin(2π·h/24),   cos(2π·h/24)
+        day of week   → period=7:   sin(2π·d/7),    cos(2π·d/7)
+        day of month  → period=31:  sin(2π·dom/31), cos(2π·dom/31)
+
+    Key property: period-equivalent inputs must produce identical calendar
+    embeddings zt (and therefore identical ze, since ze = z'e + zt and
+    z'e does not depend on xt).
+
+    Period equivalences used in tests (all mod their cycle period = 0):
+        hour=0  ≡ hour=24    (period 24)
+        dow=0   ≡ dow=7      (period 7)
+        dom=0   ≡ dom=31     (period 31)
+
+    Buggy behaviour (raw sin/cos on integers):
+        sin(0)=0, sin(24)≈-0.905 → xt=[0,0,0] and xt=[24,7,31] produce
+        different sincos values → different zt → ze_a ≠ ze_b.
+
+    Correct behaviour (period-normalised):
+        sin(2π·0/24)=sin(0)=0 and sin(2π·24/24)=sin(2π)=0 → same sincos
+        → same zt → ze_a == ze_b.
+    """
+
+    def test_hour_period_equivalence(self) -> None:
+        """hour=0 and hour=24 are period-equivalent — ze must be identical.
+
+        Period=24 → sin(2π·0/24)=sin(2π·24/24)=0.  (key-numbers.md §2.3.3)
+        Buggy code: sin(0)=0 ≠ sin(24)≈-0.905 → ze_a ≠ ze_b (test FAILS).
+        Fixed code: sin(0)=sin(2π)=0        → ze_a == ze_b (test PASSES).
+        """
+        encoder = EventEncoder(_CONFIG).eval()
+        torch.manual_seed(42)
+        batch, ne, ni = 1, 3, 4
+        xe = torch.randn(batch, ne, ni, _CONFIG.d_model)
+
+        # hour=0 and hour=24 are equivalent modulo 24
+        xt_a = torch.tensor([[[0, 0, 0]] * ne], dtype=torch.long)   # hour=0
+        xt_b = torch.tensor([[[24, 0, 0]] * ne], dtype=torch.long)  # hour=24
+
+        with torch.no_grad():
+            _, ze_a = encoder(xe, xt_a)
+            _, ze_b = encoder(xe, xt_b)
+
+        assert torch.allclose(ze_a, ze_b, atol=1e-5), (
+            "DEF-002: hour=0 and hour=24 must produce identical ze. "
+            "Calendar sincos must normalise by period=24 (2π·h/24). "
+            f"Max diff: {(ze_a - ze_b).abs().max().item():.6f}"
+        )
+
+    def test_dow_period_equivalence(self) -> None:
+        """dow=0 and dow=7 are period-equivalent — ze must be identical.
+
+        Period=7 → sin(2π·0/7)=sin(2π·7/7)=0.  (key-numbers.md §2.3.3)
+        Buggy code: sin(0)=0 ≠ sin(7)≈0.657 → ze_a ≠ ze_b (test FAILS).
+        Fixed code: sin(0)=sin(2π)=0        → ze_a == ze_b (test PASSES).
+        """
+        encoder = EventEncoder(_CONFIG).eval()
+        torch.manual_seed(42)
+        batch, ne, ni = 1, 3, 4
+        xe = torch.randn(batch, ne, ni, _CONFIG.d_model)
+
+        # dow=0 and dow=7 are equivalent modulo 7
+        xt_a = torch.tensor([[[0, 0, 0]] * ne], dtype=torch.long)  # dow=0
+        xt_b = torch.tensor([[[0, 7, 0]] * ne], dtype=torch.long)  # dow=7
+
+        with torch.no_grad():
+            _, ze_a = encoder(xe, xt_a)
+            _, ze_b = encoder(xe, xt_b)
+
+        assert torch.allclose(ze_a, ze_b, atol=1e-5), (
+            "DEF-002: dow=0 and dow=7 must produce identical ze. "
+            "Calendar sincos must normalise by period=7 (2π·d/7). "
+            f"Max diff: {(ze_a - ze_b).abs().max().item():.6f}"
+        )
+
+    def test_dom_period_equivalence(self) -> None:
+        """dom=0 and dom=31 are period-equivalent — ze must be identical.
+
+        Period=31 → sin(2π·0/31)=sin(2π·31/31)=0.  (key-numbers.md §2.3.3)
+        Buggy code: sin(0)=0 ≠ sin(31)≈0.404 → ze_a ≠ ze_b (test FAILS).
+        Fixed code: sin(0)=sin(2π)=0         → ze_a == ze_b (test PASSES).
+        """
+        encoder = EventEncoder(_CONFIG).eval()
+        torch.manual_seed(42)
+        batch, ne, ni = 1, 3, 4
+        xe = torch.randn(batch, ne, ni, _CONFIG.d_model)
+
+        # dom=0 and dom=31 are equivalent modulo 31
+        xt_a = torch.tensor([[[0, 0, 0]] * ne], dtype=torch.long)   # dom=0
+        xt_b = torch.tensor([[[0, 0, 31]] * ne], dtype=torch.long)  # dom=31
+
+        with torch.no_grad():
+            _, ze_a = encoder(xe, xt_a)
+            _, ze_b = encoder(xe, xt_b)
+
+        assert torch.allclose(ze_a, ze_b, atol=1e-5), (
+            "DEF-002: dom=0 and dom=31 must produce identical ze. "
+            "Calendar sincos must normalise by period=31 (2π·dom/31). "
+            f"Max diff: {(ze_a - ze_b).abs().max().item():.6f}"
+        )
+
+    def test_all_periods_simultaneously(self) -> None:
+        """xt=[0,0,0] and xt=[24,7,31] are fully period-equivalent.
+
+        All three dimensions at once: hour+24≡hour, dow+7≡dow, dom+31≡dom.
+        This is the combined test that all three periods are correct.
+        """
+        encoder = EventEncoder(_CONFIG).eval()
+        torch.manual_seed(42)
+        batch, ne, ni = 1, 3, 4
+        xe = torch.randn(batch, ne, ni, _CONFIG.d_model)
+
+        xt_a = torch.tensor([[[0, 0, 0]] * ne], dtype=torch.long)    # base
+        xt_b = torch.tensor([[[24, 7, 31]] * ne], dtype=torch.long)  # +1 full period each
+
+        with torch.no_grad():
+            _, ze_a = encoder(xe, xt_a)
+            _, ze_b = encoder(xe, xt_b)
+
+        assert torch.allclose(ze_a, ze_b, atol=1e-5), (
+            "DEF-002: xt=[0,0,0] and xt=[24,7,31] must produce identical ze. "
+            "All three calendar periods must be normalised: "
+            "hour/24, dow/7, dom/31 (key-numbers.md §2.3.3). "
+            f"Max diff: {(ze_a - ze_b).abs().max().item():.6f}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestWithinEventPaddingMask — DEF-005a: xe_valid masks padding positions
+# ---------------------------------------------------------------------------
+
+
+class TestWithinEventPaddingMask:
+    """DEF-005a — EventEncoder must mask within-event padding positions.
+
+    Each event has ni_max token slots, but real events have fewer real tokens.
+    Padding slots (positions n_tok..ni_max-1) contain zero-embedded pad tokens
+    and must NOT influence the [EVT] token output at position 0.
+
+    Without masking (current bug): attention allows padding positions to
+    contribute to z_hat_e[:,:,0,:] through the softmax, changing [EVT]
+    representations when padding content changes (while real tokens stay fixed).
+
+    With xe_valid masking: padding keys are set to -inf before softmax → weight
+    is zero → padding positions cannot influence real token outputs.
+
+    Paper: §2.3.3 — each event processed independently; [EVT] at position 0
+    summarises the real tokens for that event only.
+    """
+
+    def test_padding_tokens_do_not_affect_evt_output(self) -> None:
+        """Changing padding slot content must not change z_hat_e for real positions.
+
+        Real tokens: positions 0..n_real-1.
+        Padding tokens: positions n_real..ni-1 (different content in base vs modified).
+
+        With xe_valid mask: z_hat_e[:,:,0:n_real,:] is identical between runs.
+        Without mask (bug): z_hat_e differs because padding keys attend to real queries.
+        """
+        encoder = EventEncoder(_CONFIG).eval()
+        batch, ne, ni = 1, 2, 6
+        n_real = 3  # first 3 token positions are real; positions 3-5 are padding
+
+        torch.manual_seed(42)
+        xe_base = torch.randn(batch, ne, ni, _CONFIG.d_model)
+
+        # Modify ONLY the padding slots (positions n_real..ni-1)
+        xe_modified = xe_base.clone()
+        xe_modified[:, :, n_real:, :] = torch.randn(batch, ne, ni - n_real, _CONFIG.d_model)
+
+        # xe_valid: True = real token, False = padding
+        xe_valid = torch.zeros(batch, ne, ni, dtype=torch.bool)
+        xe_valid[:, :, :n_real] = True
+
+        xt = torch.zeros(batch, ne, 3, dtype=torch.long)
+
+        with torch.no_grad():
+            z_hat_e_a, _ = encoder(xe_base, xt, xe_valid=xe_valid)
+            z_hat_e_b, _ = encoder(xe_modified, xt, xe_valid=xe_valid)
+
+        assert torch.allclose(
+            z_hat_e_a[:, :, :n_real, :],
+            z_hat_e_b[:, :, :n_real, :],
+            atol=1e-5,
+        ), (
+            "DEF-005a: real token outputs must not change when padding content changes. "
+            "EventEncoder must use xe_valid to mask padding positions in attention. "
+            f"Max diff: {(z_hat_e_a[:,:,:n_real,:] - z_hat_e_b[:,:,:n_real,:]).abs().max().item():.6f}"
+        )
+
+    def test_no_xe_valid_is_backward_compatible(self) -> None:
+        """forward(xe, xt) without xe_valid must still work (backward compat)."""
+        encoder = EventEncoder(_CONFIG).eval()
+        batch, ne, ni = 1, 2, 4
+        xe = torch.randn(batch, ne, ni, _CONFIG.d_model)
+        xt = torch.zeros(batch, ne, 3, dtype=torch.long)
+
+        with torch.no_grad():
+            z_hat_e, ze = encoder(xe, xt)  # no xe_valid — must not raise
+
+        assert z_hat_e.shape == (batch, ne, ni, _CONFIG.d_model)
+        assert ze.shape == (batch, ne, _CONFIG.d_model)

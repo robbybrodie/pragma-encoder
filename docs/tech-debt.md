@@ -145,3 +145,50 @@ If a dashboard-created workbench is ever needed, delete the GitOps-managed
 Notebook CR, recreate the workbench through the RHOAI dashboard (connecting
 the pipelines server), export the resulting Notebook CR, and replace the
 manifest in openshift/gitops/workbench/notebook.yaml.
+
+---
+
+## TD-005: PAD token used as UNK corruption in MaskingStrategy
+
+**Date:** 2026-05-18
+**Severity:** Low (training correctness; PAD and UNK are both excluded from MLM loss)
+**Status:** Known deviation — documented, not yet resolved
+
+### Description
+`src/masking/strategy.py` uses `TokenizerPipeline.PAD_ID = 0` as the
+corruption token for the "UNK replacement" path in masking (§2.3.5).
+
+The paper specifies that a fraction of selected positions are replaced
+with the [UNK] token as input dropout (excluded from MLM loss).
+
+`TokenizerPipeline` defines four specials: PAD (0), MASK (1), CLS (2), SEP (3).
+There is no dedicated [UNK] token. PAD_ID is used in its place.
+
+```python
+# strategy.py
+_UNK_TOKEN_ID: int = TokenizerPipeline.PAD_ID   # 0 — [UNK] replacement (no global UNK)
+```
+
+### Risk
+- `EmbeddingAssembler` may interpret ID=0 as a PAD token (valid embedding slot)
+  rather than as an [UNK] corruption — the embedding value differs from intent
+- If a future VocabularySpec version reserves ID=0 for a different purpose,
+  this silent aliasing becomes a correctness bug
+- The PAD embedding is shared between genuine padding positions and UNK-corrupted
+  positions — the model cannot distinguish them during training
+
+### Resolution
+Add a dedicated [UNK] token to `TokenizerPipeline`'s special token set:
+  `UNK_ID = 4` (appended after SEP)
+
+Update `VocabularySpec` and `EmbeddingAssembler` to allocate an embedding
+for the new UNK ID. Update `_UNK_TOKEN_ID` in `strategy.py` to use
+`TokenizerPipeline.UNK_ID`.
+
+Alternatively, accept PAD-as-UNK as a permanent simplification and update
+the comment in `strategy.py` to remove the "TODO" framing.
+
+### References
+- Paper: Section 2.3.5 (masking corruption)
+- Code: `src/masking/strategy.py` — `_UNK_TOKEN_ID` constant
+- Code: `src/tokenizer/pipeline.py` — special token IDs

@@ -54,6 +54,8 @@ Reference: Ostroukhov et al. (2026), Section 2.3.4, Equations 6 and 7
 RoPE: Su et al. (2024), arXiv:2104.09864
 """
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -95,9 +97,10 @@ class _RoPEMultiheadAttention(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,   # (batch, 1+ne, d_model)
-        te: torch.Tensor,  # (batch, 1+ne) — temporal coordinates (log-seconds)
-    ) -> torch.Tensor:     # (batch, 1+ne, d_model)
+        x: torch.Tensor,                           # (batch, 1+ne, d_model)
+        te: torch.Tensor,                          # (batch, 1+ne) — temporal coordinates (log-seconds)
+        attn_mask: Optional[torch.Tensor] = None,  # (batch, 1, 1, 1+ne) bool — True=attend
+    ) -> torch.Tensor:                             # (batch, 1+ne, d_model)
         batch, seq_len, _ = x.shape
 
         q = self.q_proj(x)
@@ -119,8 +122,12 @@ class _RoPEMultiheadAttention(nn.Module):
 
         # Bidirectional scaled dot-product attention — is_causal=False.
         # PRAGMA is encoder-only. NEVER use causal masking here. (CLAUDE.md)
+        # attn_mask: boolean key-padding mask (batch, 1, 1, 1+ne).
+        #   True  = position is real (attend normally)
+        #   False = position is padding (set to -inf before softmax)
         attn_out = F.scaled_dot_product_attention(
             q, k, v,
+            attn_mask=attn_mask,
             dropout_p=self._dropout if self.training else 0.0,
             is_causal=False,
         )  # (batch, n_heads, 1+ne, head_dim)
@@ -159,11 +166,12 @@ class _HistoryEncoderLayer(nn.Module):
 
     def forward(
         self,
-        z: torch.Tensor,   # (batch, 1+ne, d_model)
-        te: torch.Tensor,  # (batch, 1+ne) — temporal coordinates
-    ) -> torch.Tensor:     # (batch, 1+ne, d_model)
+        z: torch.Tensor,                           # (batch, 1+ne, d_model)
+        te: torch.Tensor,                          # (batch, 1+ne) — temporal coordinates
+        attn_mask: Optional[torch.Tensor] = None,  # (batch, 1, 1, 1+ne) bool — True=attend
+    ) -> torch.Tensor:                             # (batch, 1+ne, d_model)
         # Pre-norm attention + residual (§2.3: pre-norm LayerNorm)
-        z = z + self.dropout(self.attn(self.norm1(z), te))
+        z = z + self.dropout(self.attn(self.norm1(z), te, attn_mask=attn_mask))
         # Pre-norm feed-forward + residual (§2.3: GELU activation)
         z = z + self.dropout(self.ff(self.norm2(z)))
         return z
@@ -215,9 +223,10 @@ class HistoryEncoder(nn.Module):
 
     def forward(
         self,
-        z: torch.Tensor,   # (batch, 1+ne, d_model) — [USR:EVT] assembled by caller (Eq 6)
-        te: torch.Tensor,  # (batch, 1+ne) — temporal coordinates (log-seconds, Eq 2)
-    ) -> torch.Tensor:     # (batch, 1+ne, d_model) — zh, full encoder output (Eq 7)
+        z: torch.Tensor,                            # (batch, 1+ne, d_model) — [USR:EVT] assembled by caller (Eq 6)
+        te: torch.Tensor,                           # (batch, 1+ne) — temporal coordinates (log-seconds, Eq 2)
+        event_valid: Optional[torch.Tensor] = None, # (batch, ne) bool — True=real event, False=padding
+    ) -> torch.Tensor:                              # (batch, 1+ne, d_model) — zh, full encoder output (Eq 7)
         """Encode the concatenated [USR:EVT] history sequence with temporal RoPE.
 
         Args:
@@ -228,6 +237,12 @@ class HistoryEncoder(nn.Module):
             te: Temporal coordinates in log-seconds. Shape: (batch, 1+ne).
                 te[:,0]  = 0.0 — [USR] position (no timestamp per §2.3.4).
                 te[:,1:] = log-seconds to most recent event (Equation 2).
+            event_valid: Event-level validity mask. Shape: (batch, ne) bool. Optional.
+                         True = real event, False = padding. When provided, padding
+                         event positions are masked out from attention (set to -inf before
+                         softmax) so their Q/K/V bias contributions cannot leak into
+                         real event representations (DEF-005b).
+                         The [USR] position (index 0) is always treated as real.
 
         Returns:
             zh: Full history encoder output. Shape: (batch, 1+ne, d_model).
@@ -235,12 +250,23 @@ class HistoryEncoder(nn.Module):
                 zh[:,1:,:] = [EVT] representations (per-event level).
                 Caller slices as needed — this encoder returns the full zh.
         """
+        # Build attention key-padding mask from event_valid when provided.
+        # [USR] at position 0 is always real — prepend a True column.
+        # key_valid: (batch, 1+ne) → (batch, 1, 1, 1+ne) for SDPA broadcast.
+        # True = real key position (attend), False = padding key (-inf logit).
+        attn_mask: Optional[torch.Tensor] = None
+        if event_valid is not None:
+            batch = z.shape[0]
+            usr_valid = torch.ones(batch, 1, dtype=torch.bool, device=z.device)
+            key_valid = torch.cat([usr_valid, event_valid], dim=1)  # (batch, 1+ne)
+            attn_mask = key_valid.unsqueeze(1).unsqueeze(2)          # (batch, 1, 1, 1+ne)
+
         # Apply input dropout to embeddings
         zh = self.dropout(z)
 
         # Pass through each encoder layer — RoPE applied at every layer
         for layer in self.layers:
-            zh = layer(zh, te)
+            zh = layer(zh, te, attn_mask=attn_mask)
 
         # Final layer norm over the full sequence
         return self.norm(zh)

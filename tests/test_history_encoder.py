@@ -350,3 +350,79 @@ class TestPaperSpecifications:
                 f"§2.3.4 specifies pure self-attention. [USR] conditions [EVT] "
                 f"tokens through bidirectional self-attention over z = [za : ze]."
             )
+
+
+# ---------------------------------------------------------------------------
+# TestPaddingEventMask — DEF-005b: event_valid masks padding event positions
+# ---------------------------------------------------------------------------
+
+
+class TestPaddingEventMask:
+    """DEF-005b — HistoryEncoder must mask padding event positions via event_valid.
+
+    After PRAGMA.forward zeros ze for padding events (event_valid=False),
+    the padding positions still produce non-zero Q/K/V due to projection biases:
+        q_pad = W_q @ 0 + b_q = b_q  (non-zero)
+        v_pad = W_v @ 0 + b_v = b_v  (non-zero)
+
+    Real event positions then attend to v_pad, leaking the projection bias
+    into their representations. The fix: pass a boolean attention key-mask
+    to F.scaled_dot_product_attention so padding positions get -inf logits
+    (attention weight = 0).
+
+    Test: supply different z values at a padding event position while keeping
+    event_valid=False for that position. Real event outputs must be identical.
+    Without a mask: different z → different Q/K/V at the padding position →
+    different attention contribution → different zh for real positions.
+    """
+
+    def test_padding_event_does_not_affect_real_events(self) -> None:
+        """Changing a padding event's content must not change real event outputs.
+
+        Two runs: same event_valid (event 2 = False), different z content at
+        position 3 (= event 2, [USR] shifts by 1).
+
+        With event_valid mask: real events' attention to position 3 is zero →
+        zh for real positions is identical between runs.
+        Without mask (bug): W_v @ z[:,3,:] + b_v differs → real events differ.
+        """
+        encoder = HistoryEncoder(_CONFIG).eval()
+        batch, ne = 1, 4
+        d = _CONFIG.d_model
+        te = torch.zeros(batch, 1 + ne)
+
+        # event 2 (z position 3) is padding — keep the rest real
+        event_valid = torch.tensor([[True, True, False, True]])  # (batch, ne)
+
+        torch.manual_seed(42)
+        z_base = torch.randn(batch, 1 + ne, d)
+
+        # Modify ONLY position 3 (= event 2, the padding slot)
+        z_modified = z_base.clone()
+        z_modified[:, 3, :] = torch.randn(d)
+
+        with torch.no_grad():
+            zh_base = encoder(z_base, te, event_valid=event_valid)
+            zh_modified = encoder(z_modified, te, event_valid=event_valid)
+
+        # Real positions: [USR]=0, event0=1, event1=2, event3=4. NOT event2=3.
+        for pos in [0, 1, 2, 4]:
+            assert torch.allclose(zh_base[:, pos, :], zh_modified[:, pos, :], atol=1e-5), (
+                f"DEF-005b: position {pos} (real) output must not change when "
+                f"padding event 2 content changes. HistoryEncoder must use "
+                f"event_valid to mask padding key positions in attention. "
+                f"Max diff at pos {pos}: "
+                f"{(zh_base[:, pos, :] - zh_modified[:, pos, :]).abs().max().item():.6f}"
+            )
+
+    def test_no_event_valid_is_backward_compatible(self) -> None:
+        """forward(z, te) without event_valid must still work (backward compat)."""
+        encoder = HistoryEncoder(_CONFIG).eval()
+        batch, ne = 1, 4
+        z = torch.randn(batch, 1 + ne, _CONFIG.d_model)
+        te = torch.zeros(batch, 1 + ne)
+
+        with torch.no_grad():
+            zh = encoder(z, te)  # no event_valid — must not raise
+
+        assert zh.shape == (batch, 1 + ne, _CONFIG.d_model)

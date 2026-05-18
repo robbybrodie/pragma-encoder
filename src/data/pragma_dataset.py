@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import torch
 from torch.utils.data import Dataset
@@ -126,17 +126,19 @@ class PragmaDataset(Dataset):
         # Encode events
         events = transactions[:ne_max]
         n_events = len(events)
-        t_prev: Optional[object] = None  # pd.Timestamp
+        # Most recent event timestamp — te[i] = T(ts_last - ts[i]) (Equation 2, §2.3.4).
+        # Transactions arrive sorted oldest-first (TabFormerAdapter.iter_customers).
+        ts_last = events[-1]["timestamp"] if events else None
 
         for i, txn in enumerate(events):
             ts = txn["timestamp"]
 
-            # Compute elapsed seconds from the previous event (Equation 2)
+            # Elapsed seconds from this event to the most recent event (Equation 2).
+            # t = ts_last - ts[i]  →  t' = 8·ln(1+t/8)
+            # Most recent event: t=0 → t'=0.  Older events: t>0 → t'>0.
             t_seconds = 0.0
-            if t_prev is not None:
-                delta = ts - t_prev
-                t_seconds = max(0.0, delta.total_seconds())
-            t_prev = ts
+            if ts_last is not None:
+                t_seconds = max(0.0, (ts_last - ts).total_seconds())
 
             # Build the field list for this event
             fields = [

@@ -33,7 +33,7 @@ Processes static customer attributes. Outputs [USR] token.
 | Paper element | This repo |
 |---|---|
 | Bidirectional Transformer | `src/encoders/profile_state_encoder.py::ProfileStateEncoder` |
-| [USR] token | `ProfileStateEncoder.usr_token` parameter |
+| [USR] token | Prepended by `src/model/assembler.py::EmbeddingAssembler` at position 0 of `xa` before `ProfileStateEncoder.forward()` is called. `ProfileStateEncoder` receives it at `xa[:,0,:]` — it does not inject the token itself. |
 | RoPE on timestamp positions | `src/encoders/rope.py::RoPEEncoding` |
 
 ---
@@ -45,8 +45,8 @@ Processes a single transaction. Outputs [EVT] token.
 | Paper element | This repo |
 |---|---|
 | Bidirectional Transformer | `src/encoders/event_encoder.py::EventEncoder` |
-| [EVT] token | `EventEncoder.evt_token` parameter |
-| Calendar token embeddings | `src/encoders/event_encoder.py::CalendarEmbedding` |
+| [EVT] token | Prepended by `src/model/assembler.py::EmbeddingAssembler` at position 0 of each event (`xe[:,:,0,:]`) before `EventEncoder.forward()` is called. `EventEncoder` receives it already at position 0 — it does not inject the token itself. |
+| Calendar token embeddings | `src/encoders/event_encoder.py::EventEncoder._CalendarMLP` (private class; `sincos → 2-layer MLP → zt`, Equation 3) |
 
 ---
 
@@ -81,7 +81,7 @@ there is no cross-attention sublayer and no dedicated history summary token.
 | Dynamic batching | `src/training/batching.py::DynamicBatchSampler` |
 | Training entrypoint | `scripts/train_pragma.py` |
 | KFP pipeline | `pipeline/pragma_pipeline.py` |
-| KFTO PyTorchJob | `openshift/gitops/training/pytorchjob-pragma-s.yaml` |
+| KFTO PyTorchJob | `openshift/training/pytorchjob-pragma-s.yaml` |
 
 ---
 

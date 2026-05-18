@@ -178,10 +178,25 @@ That is the NVIDIA blueprint approach. PRAGMA is different.
 Pretraining uses **masked** (BERT-style) objective — NOT causal language modelling.
 Three strategies: token masking, field masking, event masking (Section 2.3.5).
 
-### 6. Cross-attention in History Encoder
-The `HistoryEncoder` has **cross-attention from event positions to the `[USR]` vector**.
-This is how the profile conditions the history encoder.
-Do NOT replace this with concatenation or addition.
+### 6. History Encoder — bidirectional self-attention over concatenated [USR:EVT]
+
+The `HistoryEncoder` receives the concatenated sequence `z = [za : ze]`
+(Equation 6, §2.3.4) and applies **bidirectional self-attention** over it.
+
+- `za` — the `[USR]` token from `ProfileStateEncoder` — is placed at position 0.
+- `ze` — the `[EVT]` tokens from `EventEncoder` — occupy positions 1..ne.
+- Profile conditioning happens because `[USR]` sits at position 0 of the input
+  sequence. Every `[EVT]` position attends to it through standard bidirectional
+  self-attention. No separate sublayer is needed or specified.
+
+**There is NO cross-attention sublayer in `HistoryEncoder`.**
+
+Do NOT add a cross-attention sublayer.
+Do NOT add dedicated cross-attention from `[EVT]` positions to `[USR]`.
+Do NOT revert to the old (incorrect) stub that had a cross-attention sublayer.
+
+Reference: §2.3.4, Equation 6, `docs/paper/02-03-architecture.md` §2.3.4,
+`docs/paper-to-code.md` §2.3.4, `src/encoders/history_encoder.py` module docstring.
 
 ---
 

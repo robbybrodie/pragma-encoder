@@ -60,7 +60,8 @@ Separation of concerns (CLAUDE.md, ADR 003):
 Reference: Ostroukhov et al. (2026), Section 2.3.3, Equations 3 and 5
 """
 
-from typing import Tuple
+import math
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -82,9 +83,10 @@ class _CalendarMLP(nn.Module):
         → Linear(d, d)     — layer 2
         → zt (batch, ne, d_model)
 
-    The sincos step provides a fixed periodic representation of each calendar
-    feature before the MLP learns how to use it. The periods are encoded
-    implicitly through the raw integer values passed to sin/cos.
+    The sincos step normalises each calendar dimension by its known cycle
+    period (hour/24, dow/7, dom/31) before applying sin/cos, giving each
+    dimension a fixed period equal to the real calendar cycle (§2.3.3:
+    "Periods fixed to known calendar cycles").
 
     Two layers: key-numbers.md: calendar_feature_embedding_layers=2, §2.3.3.
     sincos BEFORE the MLP — not after.
@@ -110,6 +112,13 @@ class _CalendarMLP(nn.Module):
     ) -> torch.Tensor:     # (batch, ne, d_model) — zt
         """Embed calendar features using sincos + 2-layer MLP (Equation 3).
 
+        Normalises each calendar dimension by its known cycle period before
+        applying sin/cos, so that the embedding is periodic with the correct
+        cycle length (§2.3.3: "Periods fixed to known calendar cycles"):
+            hour of day   → 2π · h   / 24
+            day of week   → 2π · dow / 7
+            day of month  → 2π · dom / 31
+
         Args:
             xt: Calendar features. Shape: (batch, ne, 3) — integers.
                 Values: [hour_of_day, day_of_week, day_of_month].
@@ -117,10 +126,18 @@ class _CalendarMLP(nn.Module):
         Returns:
             zt: Calendar embeddings. Shape: (batch, ne, d_model).
         """
-        xt_float = xt.float()  # (batch, ne, 3) — cast to float for sin/cos
-        # sincos: each scalar → (sin, cos) pair → 6 values per event
+        # Known calendar cycle periods — fixed, not learned (§2.3.3, Equation 3)
+        periods = torch.tensor(
+            [24.0, 7.0, 31.0], dtype=torch.float32, device=xt.device
+        )  # (3,) — hour/24, dow/7, dom/31
+
+        # Normalise to [0, 2π) before sin/cos so each dimension is periodic
+        # with the correct calendar cycle length.
+        xt_normed = xt.float() * (2.0 * math.pi) / periods  # (batch, ne, 3)
+
+        # sincos: each normalised scalar → (sin, cos) pair → 6 values per event
         sincos = torch.cat(
-            [torch.sin(xt_float), torch.cos(xt_float)],
+            [torch.sin(xt_normed), torch.cos(xt_normed)],
             dim=-1,
         )  # (batch, ne, 6)
         return self.mlp(sincos)  # (batch, ne, d_model)
@@ -156,8 +173,9 @@ class _EventAttention(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,  # (batch*ne, ni, d_model) — flattened events
-    ) -> torch.Tensor:    # (batch*ne, ni, d_model)
+        x: torch.Tensor,                           # (batch*ne, ni, d_model) — flattened events
+        attn_mask: Optional[torch.Tensor] = None,  # (batch*ne, 1, 1, ni) bool — True=attend
+    ) -> torch.Tensor:                             # (batch*ne, ni, d_model)
         bne, ni, _ = x.shape
 
         q = self.q_proj(x)
@@ -171,8 +189,12 @@ class _EventAttention(nn.Module):
 
         # Bidirectional attention — is_causal=False.
         # PRAGMA is encoder-only. NEVER use causal masking here. (CLAUDE.md)
+        # attn_mask: boolean key-padding mask (batch*ne, 1, 1, ni).
+        #   True  = position is real (attend normally)
+        #   False = position is padding (set to -inf before softmax)
         attn_out = F.scaled_dot_product_attention(
             q, k, v,
+            attn_mask=attn_mask,
             dropout_p=self._dropout if self.training else 0.0,
             is_causal=False,
         )  # (batch*ne, n_heads, ni, head_dim)
@@ -210,10 +232,11 @@ class _EventEncoderLayer(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,  # (batch*ne, ni, d_model)
-    ) -> torch.Tensor:    # (batch*ne, ni, d_model)
+        x: torch.Tensor,                           # (batch*ne, ni, d_model)
+        attn_mask: Optional[torch.Tensor] = None,  # (batch*ne, 1, 1, ni) bool — True=attend
+    ) -> torch.Tensor:                             # (batch*ne, ni, d_model)
         # Pre-norm attention + residual (§2.3: pre-norm LayerNorm)
-        x = x + self.dropout(self.attn(self.norm1(x)))
+        x = x + self.dropout(self.attn(self.norm1(x), attn_mask=attn_mask))
         # Pre-norm feed-forward + residual (§2.3: GELU activation)
         x = x + self.dropout(self.ff(self.norm2(x)))
         return x
@@ -267,9 +290,10 @@ class EventEncoder(nn.Module):
 
     def forward(
         self,
-        xe: torch.Tensor,  # (batch, ne, ni, d_model) — pre-embedded; [EVT] at pos 0
-        xt: torch.Tensor,  # (batch, ne, 3) — calendar features (integers)
-    ) -> Tuple[torch.Tensor, torch.Tensor]:  # (z_hat_e, ze)
+        xe: torch.Tensor,                          # (batch, ne, ni, d_model) — pre-embedded; [EVT] at pos 0
+        xt: torch.Tensor,                          # (batch, ne, 3) — calendar features (integers)
+        xe_valid: Optional[torch.Tensor] = None,   # (batch, ne, ni) bool — True=real token, False=padding
+    ) -> Tuple[torch.Tensor, torch.Tensor]:        # (z_hat_e, ze)
         """Encode event token sequences independently with calendar augmentation.
 
         Args:
@@ -279,6 +303,11 @@ class EventEncoder(nn.Module):
             xt: Calendar features. Shape: (batch, ne, 3) — integers.
                 Three values per event: [hour_of_day, day_of_week, day_of_month].
                 key-numbers.md: calendar_feature_dims=3, §2.2.
+            xe_valid: Token-level validity mask. Shape: (batch, ne, ni) bool. Optional.
+                      True = real token, False = padding. When provided, padding
+                      positions are masked out from attention (set to -inf before
+                      softmax) so they cannot influence real token outputs. Positions
+                      beyond the real token count for each event should be False.
 
         Returns:
             z_hat_e: Full token-level encoder output. Shape: (batch, ne, ni, d_model).
@@ -295,9 +324,16 @@ class EventEncoder(nn.Module):
         # KNOWN DEVIATION: paper uses FlashAttention varlen; we use reshape.
         x = self.dropout(xe.view(batch * ne, ni, self.d_model))
 
+        # Build attention key-padding mask from xe_valid when provided.
+        # xe_valid: (batch, ne, ni) → (batch*ne, ni) → (batch*ne, 1, 1, ni)
+        # Boolean mask: True = real token (attend), False = padding (-inf).
+        attn_mask: Optional[torch.Tensor] = None
+        if xe_valid is not None:
+            attn_mask = xe_valid.view(batch * ne, ni).unsqueeze(1).unsqueeze(2)
+
         # Pass through each encoder layer — bidirectional, no RoPE
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x, attn_mask=attn_mask)
 
         # Final layer norm over all token positions
         x = self.norm(x)
