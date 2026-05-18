@@ -28,6 +28,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 from .base import BaseTokenizer
 from .temporal import TemporalTokenizer
+from .vocabulary import VocabularySpec
 
 
 class TokenizerOutput(NamedTuple):
@@ -190,4 +191,52 @@ class TokenizerPipeline:
             + len(self.field_tokenizers)  # key tokens
             + sum(t.vocab_size for t in self.field_tokenizers.values())
             + self.temporal_tokenizer.vocab_size
+        )
+
+    def vocabulary_spec(self) -> VocabularySpec:
+        """Return a frozen snapshot of the vocabulary layout.
+
+        The VocabularySpec is the only object that crosses the tokenizer /
+        model boundary (ADR 002).  EmbeddingAssembler depends on VocabularySpec
+        but NOT on TokenizerPipeline.
+
+        Layout (mirrors _build_vocabulary_layout):
+            [0, N_SPECIAL_TOKENS)            — special tokens
+            [key_start, key_start+key_size)  — key tokens (sorted alphabetically)
+            [value_start, value_start+value_size) — value tokens (per field)
+
+        Note: temporal tokenizer vocab is excluded — temporal encoding is
+        handled by RoPE (continuous float) and calendar features (3 floats),
+        not by discrete token IDs in the embedding table.
+
+        Returns:
+            VocabularySpec — frozen dataclass with all vocabulary boundaries.
+        """
+        key_start  = self.N_SPECIAL_TOKENS
+        key_size   = len(self.field_tokenizers)
+        value_start = key_start + key_size
+        value_size  = sum(t.vocab_size for t in self.field_tokenizers.values())
+
+        # Build field value ranges in sorted field order (matches _build_vocabulary_layout)
+        field_value_ranges: Dict[str, Tuple[int, int]] = {}
+        offset = value_start
+        for field_name in sorted(self.field_tokenizers.keys()):
+            vsz = self.field_tokenizers[field_name].vocab_size
+            field_value_ranges[field_name] = (offset, offset + vsz)
+            offset += vsz
+
+        return VocabularySpec(
+            special_tokens={
+                "PAD":  self.PAD_ID,
+                "MASK": self.MASK_ID,
+                "CLS":  self.CLS_ID,
+                "SEP":  self.SEP_ID,
+            },
+            key_start=key_start,
+            key_size=key_size,
+            value_start=value_start,
+            value_size=value_size,
+            total_embedding_vocab_size=value_start + value_size,
+            field_key_ids=dict(self._key_token_ids),
+            field_value_ranges=field_value_ranges,
         )

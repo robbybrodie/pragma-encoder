@@ -91,10 +91,21 @@ Implements Equation 1: x = PosEmb(E(k) + E(v))
 Responsibility boundary:
 
 ```
-MaskingStrategy:     CHOOSES which positions to mask
-EmbeddingAssembler:  APPLIES corruption in embedding space
-                     CONVERTS global IDs to local target IDs
+MaskingStrategy:
+  CHOOSES which positions to mask
+  APPLIES token-ID corruption (MASK_ID or UNK_ID)
+  Returns: masked_ids, target_ids, mask
+
+EmbeddingAssembler:
+  EMBEDS whatever token IDs it receives (already corrupted)
+  LOCALISES original target IDs from global to value-vocab-local
+  Does NOT apply masking — that is MaskingStrategy's job
 ```
+
+Note: This differs from the originally proposed boundary where
+EmbeddingAssembler would apply corruption. The current
+implementation correctly keeps all ID manipulation inside
+MaskingStrategy, which simplifies the assembler.
 
 EmbeddingAssembler does not decide which positions to mask.
 MaskingStrategy does not convert IDs or apply embeddings.
