@@ -127,7 +127,12 @@ class EmbeddingAssembler(nn.Module):
         self.E = nn.Embedding(spec.total_embedding_vocab_size, config.d_model)
 
         # Fixed sinusoidal positional encoding — NOT a trainable parameter
-        self.pos_emb = SinusoidalPositionEmbedding(config.max_event_tokens, config.d_model)
+        # Use the larger of max_event_tokens and max_profile_tokens so that
+        # both event (max 24) and profile (max 200) position IDs are safely
+        # within the sinusoidal table.
+        # key-numbers.md: max_event_tokens=24, max_profile_tokens=200, §2.4
+        _max_positions = max(config.max_event_tokens, config.max_profile_tokens)
+        self.pos_emb = SinusoidalPositionEmbedding(_max_positions, config.d_model)
 
         # ID arithmetic — converts global IDs to value-vocab-local IDs for MLM targets
         self.vocab = VocabularyMap(spec)

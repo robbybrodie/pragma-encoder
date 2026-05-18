@@ -232,3 +232,31 @@ class TestValidateRaises:
         batch.targets = batch.targets.float()  # float instead of long
         with pytest.raises((AssertionError, ValueError)):
             batch.validate(_CONFIG)
+
+    def test_validate_catches_wrong_ta_shape(self) -> None:
+        """validate() must raise when ta.shape does not match (batch, na) from xa."""
+        batch = _make_valid_batch()
+        batch.ta = torch.zeros(_B, _NA + 1)  # wrong na dimension
+        with pytest.raises((AssertionError, ValueError)):
+            batch.validate(_CONFIG)
+
+    def test_validate_catches_wrong_te_shape(self) -> None:
+        """validate() must raise when te.shape does not match (batch, 1+ne) from xe."""
+        batch = _make_valid_batch()
+        batch.te = torch.zeros(_B, _NE)  # wrong — should be (batch, 1+ne)
+        with pytest.raises((AssertionError, ValueError)):
+            batch.validate(_CONFIG)
+
+    def test_validate_catches_wrong_xt_shape(self) -> None:
+        """validate() must raise when xt.shape does not match (batch, ne, 3) from xe."""
+        batch = _make_valid_batch()
+        batch.xt = torch.randint(0, 24, (_B, _NE + 1, 3))  # wrong ne
+        with pytest.raises((AssertionError, ValueError)):
+            batch.validate(_CONFIG)
+
+    def test_validate_catches_wrong_mask_shape(self) -> None:
+        """validate() must raise when mlm_mask.shape does not match (batch, ne, ni) from xe."""
+        batch = _make_valid_batch()
+        batch.mlm_mask = torch.zeros(_B, _NE, _NI + 1, dtype=torch.bool)  # wrong ni
+        with pytest.raises((AssertionError, ValueError)):
+            batch.validate(_CONFIG)

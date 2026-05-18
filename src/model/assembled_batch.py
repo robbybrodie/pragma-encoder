@@ -120,6 +120,32 @@ class AssembledBatch:
             f"targets must be long (int64) dtype, got {self.targets.dtype}"
         )
 
+        # Shape consistency — all fields must agree on batch, na, ne, ni, d_model
+        batch, na, d = self.xa.shape
+        _, ne, ni, d2 = self.xe.shape
+
+        assert d == config.d_model, (
+            f"xa d_model mismatch: {d} != {config.d_model}"
+        )
+        assert d2 == config.d_model, (
+            f"xe d_model mismatch: {d2} != {config.d_model}"
+        )
+        assert self.ta.shape == (batch, na), (
+            f"ta shape {tuple(self.ta.shape)} != ({batch}, {na})"
+        )
+        assert self.xt.shape == (batch, ne, 3), (
+            f"xt shape {tuple(self.xt.shape)} != ({batch}, {ne}, 3)"
+        )
+        assert self.te.shape == (batch, 1 + ne), (
+            f"te shape {tuple(self.te.shape)} != ({batch}, {1 + ne})"
+        )
+        assert self.mlm_mask.shape == (batch, ne, ni), (
+            f"mlm_mask shape {tuple(self.mlm_mask.shape)} != ({batch}, {ne}, {ni})"
+        )
+        assert self.targets.shape == (batch, ne, ni), (
+            f"targets shape {tuple(self.targets.shape)} != ({batch}, {ne}, {ni})"
+        )
+
         # ADR 002 key invariant — the guard against the global-ID-as-target bug.
         # Only inspect positions that are NOT ignored.
         valid_mask = self.targets != self.IGNORE_INDEX

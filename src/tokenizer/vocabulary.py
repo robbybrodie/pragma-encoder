@@ -90,16 +90,26 @@ class VocabularyMap:
 
         ADR 002: value_vocab_id = global_token_id - value_start
 
-        Callers must ensure ids are in [value_start, value_start + value_size)
-        before calling this method.  Out-of-range inputs produce negative or
-        oversized local IDs that will fail the MLM loss computation.
-
         Args:
-            ids: Tensor of global token IDs (any shape).
+            ids: Global token IDs. Must all be value IDs in
+                 [value_start, value_start + value_size).
+                 Raises ValueError if any ID is out of range.
 
         Returns:
-            Tensor of value-vocab-local IDs, same shape as ids.
+            Local value IDs in [0, value_size).
+
+        Raises:
+            ValueError: if any ID is outside [value_start, value_start + value_size).
         """
+        valid = self.is_global_value_id(ids)
+        if not bool(valid.all()):
+            bad = ids[~valid]
+            raise ValueError(
+                f"Expected global value IDs in "
+                f"[{self.spec.value_start}, "
+                f"{self.spec.value_start + self.spec.value_size}); "
+                f"found out-of-range IDs: {bad[:10].tolist()}"
+            )
         return ids - self.spec.value_start
 
     def is_key_id(self, ids: torch.Tensor) -> torch.Tensor:

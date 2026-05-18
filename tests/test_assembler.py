@@ -510,6 +510,31 @@ class TestPaperSpecifications:
         # validate() is called inside forward(); explicit call must also pass
         batch.validate(_CONFIG)
 
+    def test_pos_emb_covers_profile_positions(self) -> None:
+        """§2.4: sinusoidal table must cover max_profile_tokens (200), not just max_event_tokens (24).
+
+        Profile tokens (xa path) may have position IDs up to max_profile_tokens - 1.
+        If the sinusoidal table is sized to max_event_tokens only, positions >= 24
+        cause an index-out-of-bounds error at runtime.
+        """
+        spec, asm = _make_assembler()
+        asm.eval()
+
+        # xa_pos_ids at max_profile_tokens - 1 (the highest valid profile position)
+        max_prof = _CONFIG.max_profile_tokens  # 200
+        inputs = _make_inputs(spec, with_mask=False)
+        inputs["xa_pos_ids"] = torch.full(
+            (_BATCH, _NA), max_prof - 1, dtype=torch.long
+        )
+
+        with torch.no_grad():
+            batch = asm(**inputs)   # must not raise IndexError
+
+        assert batch.xa.shape == (_BATCH, _NA, _D), (
+            f"§2.4: xa shape must be ({_BATCH}, {_NA}, {_D}) "
+            f"even with pos_id={max_prof - 1}"
+        )
+
     def test_target_localisation_is_global_minus_value_start(self) -> None:
         """ADR 002: local_id = global_id - value_start (VocabularyMap arithmetic).
 

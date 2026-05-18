@@ -364,6 +364,24 @@ class TestVocabularyMap:
 
     # --- Mutual exclusivity ---
 
+    def test_global_to_local_raises_on_key_id(self) -> None:
+        """VocabularyMap must reject key IDs — they are not value IDs."""
+        pytest.importorskip("torch")
+        import torch
+        spec, vmap = self._make_spec_and_map()
+        key_id = torch.tensor([spec.key_start])
+        with pytest.raises(ValueError, match="out-of-range"):
+            vmap.global_to_local_value_id(key_id)
+
+    def test_global_to_local_raises_on_special_id(self) -> None:
+        """VocabularyMap must reject special IDs."""
+        pytest.importorskip("torch")
+        import torch
+        _, vmap = self._make_spec_and_map()
+        special_id = torch.tensor([0])  # PAD
+        with pytest.raises(ValueError, match="out-of-range"):
+            vmap.global_to_local_value_id(special_id)
+
     def test_id_regions_are_mutually_exclusive(self) -> None:
         """Each global ID falls into exactly one region: special, key, or value."""
         pytest.importorskip("torch")
