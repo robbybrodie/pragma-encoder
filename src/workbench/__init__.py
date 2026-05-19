@@ -19,10 +19,10 @@ from src.workbench._api import train_pragma
 from src.workbench._decorators import PragmaPipeline, pragma_pipeline
 from src.workbench._intent import dataset, train
 from src.workbench._run import (
+    PIPELINE_STEP_NAMES,
+    PipelineStep,
     PragmaRun,
     PragmaRunProtocol,
-    PipelineStep,
-    PIPELINE_STEP_NAMES,
 )
 
 __all__ = [

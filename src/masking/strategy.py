@@ -50,7 +50,6 @@ import torch
 from src.model.config import PRAGMAConfig
 from src.tokenizer.pipeline import TokenizerPipeline
 
-
 # Token IDs — sourced from TokenizerPipeline
 _MASK_TOKEN_ID: int = TokenizerPipeline.MASK_ID  # 1 — [MASK] replacement
 _UNK_TOKEN_ID:  int = TokenizerPipeline.PAD_ID   # 0 — [UNK] replacement (no global UNK)

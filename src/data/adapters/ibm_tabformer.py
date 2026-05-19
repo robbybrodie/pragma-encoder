@@ -29,9 +29,9 @@ import pickle
 from collections import defaultdict
 from pathlib import Path
 
-from src.model.config import PRAGMAConfig
 from src.data.dataset_manifest import DatasetManifest, DatasetShard
 from src.data.tabformer_adapter import TabFormerAdapter
+from src.model.config import PRAGMAConfig
 from src.tokenizer import FinancialTokenizerPipeline
 
 # ---------------------------------------------------------------------------

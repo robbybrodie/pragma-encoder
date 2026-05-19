@@ -26,7 +26,6 @@ from typing import Protocol, runtime_checkable
 
 from src.data.dataset_manifest import DatasetManifest
 
-
 # ---------------------------------------------------------------------------
 # The five §2.4 pipeline step names — canonical, must not drift
 # ---------------------------------------------------------------------------

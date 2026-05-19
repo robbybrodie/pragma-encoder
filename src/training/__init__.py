@@ -16,9 +16,9 @@ Training scale note (from the paper):
 Reference: Ostroukhov et al. (2026), Sections 2.3.5 and 2.4
 """
 
+from .batching import DynamicBatchSampler
 from .objective import MaskedEventModellingLoss
 from .packing import SequencePacker
-from .batching import DynamicBatchSampler
 
 __all__ = [
     "MaskedEventModellingLoss",

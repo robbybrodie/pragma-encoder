@@ -39,7 +39,6 @@ from src.workbench._intent import (
 )
 from src.workbench._run import PIPELINE_STEP_NAMES, STEP_DESCRIPTIONS
 
-
 # ---------------------------------------------------------------------------
 # PragmaPipeline — result of @pragma_pipeline decoration
 # ---------------------------------------------------------------------------

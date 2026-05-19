@@ -17,7 +17,6 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
-
 # ---------------------------------------------------------------------------
 # Thread-local capture context (internal)
 # ---------------------------------------------------------------------------

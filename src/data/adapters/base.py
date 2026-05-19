@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from src.model.config import PRAGMAConfig
 from src.data.dataset_manifest import DatasetManifest
+from src.model.config import PRAGMAConfig
 
 
 @runtime_checkable
