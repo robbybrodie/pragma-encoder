@@ -48,15 +48,31 @@ print(f"  Output dir  : {_OUTPUT_DIR}")
 print(f"  Max steps   : 1 (smoke — exits after one optimizer step)")
 print()
 
-run = train_pragma(
-    dataset="ibm-tabformer",
-    model_size="S",
-    epochs=1,
-    mode="local",
-    local_csv_path=_CSV_PATH,
-    output_dir=_OUTPUT_DIR,
-    max_steps=1,
-)
+try:
+    run = train_pragma(
+        dataset="ibm-tabformer",
+        model_size="S",
+        epochs=1,
+        mode="local",
+        local_csv_path=_CSV_PATH,
+        output_dir=_OUTPUT_DIR,
+        max_steps=1,
+    )
+except ModuleNotFoundError as exc:
+    missing = exc.name or str(exc)
+    print(f"ERROR — missing runtime dependency: {missing!r}")
+    print()
+    print("The PRAGMA training stack requires packages that are not installed")
+    print("in the current Python environment.")
+    print()
+    print("To fix, install all runtime dependencies:")
+    print("    pip install -r requirements.txt")
+    print()
+    print("Or run this example inside the prepared workbench image or venv,")
+    print("where all dependencies (including 'tokenizers') are pre-installed.")
+    print()
+    print("No training was completed.")
+    sys.exit(2)
 
 print()
 run.show_pipeline()

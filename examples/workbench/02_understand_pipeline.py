@@ -196,8 +196,9 @@ print(f"  max_events       : {manifest.config.max_events}  (max events per custo
 print(f"  d_model          : {manifest.config.d_model}  (embedding dimension)")
 print()
 print("The manifest is the only object the train stage needs. If you already")
-print("have a prepared dataset in S3 you can skip prepare and upload by passing")
-print("manifest_uri= directly to the pipeline or to submit_pytorchjob.")
+print("have a prepared dataset in S3, use pragma_train_from_manifest_pipeline(manifest_uri=...)")
+print("to run stages 3-5 only (submit -> train -> export), skipping prepare and upload.")
+print("The full pragma_pretraining_pipeline always runs all five stages.")
 print()
 
 # ─────────────────────────────────────────────────────────────────────────────
