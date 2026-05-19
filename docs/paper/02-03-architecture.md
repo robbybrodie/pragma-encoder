@@ -183,7 +183,7 @@ The three encoders must remain **separate**:
 Only aggregated tokens pass between encoders:
 - Profile State Encoder → [USR] token only → History Encoder
 - Event Encoder → [EVT] tokens only → History Encoder
-- Raw tokens never cross encoder boundaries (ADR 002)
+- Raw tokens never cross encoder boundaries (ADR 001 §2)
 
 The MLM head receives concatenation of **three** d-dimensional vectors (not one).
-Do not simplify. The 3d input is specified in the paper (ADR 004).
+Do not simplify. The 3d input is specified in the paper (ADR 001 §4).

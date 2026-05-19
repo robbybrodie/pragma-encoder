@@ -89,8 +89,10 @@ Solution: **Varlen attention kernel** (Dao et al., 2022 — FlashAttention)
 
 ## Implementation Notes
 
-For this open-source implementation, NeMo AutoModel handles the training loop
-(ADR 005). The model itself is pure PyTorch.
+For this open-source implementation, a custom PyTorch training loop
+(`scripts/train_pragma.py`) handles training orchestration (ADR 005).
+The model itself is pure PyTorch. NeMo AutoModel is not currently used;
+it remains a future option if scaling requirements demand it.
 
 The varlen attention kernel detail is an infrastructure optimisation that can be
 implemented in a later phase. Initial implementation can use standard padded attention

@@ -57,7 +57,7 @@ Example: `Lifelong: first_topup at 20-11-02 12:09:04`
 Life-long events enable the model to encode the timing of historical milestones
 (e.g., account age) even when those events fall outside the truncated event history window.
 
-**ADR 008:** Profile state is a separate input to the Profile State Encoder.
+**ADR 001 §6:** Profile state is a separate input to the Profile State Encoder.
 It is never mixed with the event sequence. Life-long events are encoded as profile state
 with individual timestamps, not as regular events in the history.
 
@@ -93,7 +93,7 @@ The dataset section defines the two input streams to PRAGMA:
 1. **Event history** → processed by `EventEncoder` (§2.3.3)
 2. **Profile state** (including life-long events) → processed by `ProfileStateEncoder` (§2.3.2)
 
-These are never merged into one sequence (ADR 008).
+These are never merged into one sequence (ADR 001 §6).
 
 The `PRAGMATokenizer` must handle all event source types with the same tokenisation scheme
 described in §2.2. No special handling per source type at the tokeniser level.
