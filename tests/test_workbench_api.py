@@ -432,3 +432,398 @@ class TestDryRunVisibility:
         assert real_run.run_mode is None, (
             "PragmaRun.run_mode must default to None for non-dry-run cases"
         )
+
+
+# ---------------------------------------------------------------------------
+# Local mode tests — train_pragma(mode="local")
+# ---------------------------------------------------------------------------
+
+class TestLocalModeContract:
+    """train_pragma(mode='local') must invoke scripts/train_pragma.py via subprocess.
+
+    sec.2.4 local execution path: the same training script used for cluster runs
+    is invoked locally (subprocess, no KFTO) with --num-workers 0 for development
+    and smoke testing.
+
+    Unit tests mock subprocess.run and DatasetAdapter.prepare() to avoid real
+    CSV files and real training time. Integration is verified separately via
+    examples/workbench/04_local_training_smoke.py with a tiny fixture CSV.
+
+    Category: contract, behavior, interface
+    Paper: Section 2.4 (Training Infrastructure)
+    ADR: docs/decisions/003-workbench-training-api.md
+    """
+
+    _CSV = "tests/fixtures/ibm_tabformer_tiny.csv"
+    _OUT = "/tmp/pragma-local-test"
+
+    def _make_manifest(self):
+        """Return a minimal DatasetManifest for use as a mock prepare() return value."""
+        from src.data.dataset_manifest import DatasetManifest, DatasetShard
+        shard = DatasetShard(uri="local/shard.csv", format="csv", rows=4)
+        return DatasetManifest(
+            dataset_name="ibm-tabformer",
+            dataset_version="v1",
+            prepared_prefix_uri="local/",
+            shards=(shard,),
+            vocab_uri=None,
+            schema_uri=None,
+            manifest_uri=None,
+            row_count=4,
+            source={"origin": "ibm-tabformer"},
+            config=PRAGMAConfig.pragma_s(),
+        )
+
+    def _local_run(self, returncode: int = 0, **kwargs) -> PragmaRun:
+        """Call train_pragma(mode='local') with subprocess and adapter mocked."""
+        from unittest.mock import patch, MagicMock
+        manifest = self._make_manifest()
+        mock_adapter = MagicMock()
+        mock_adapter.prepare.return_value = manifest
+        mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+        with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("src.workbench._api.subprocess") as mock_subp, \
+             patch("pathlib.Path.mkdir"):
+            mock_subp.run.return_value = MagicMock(returncode=returncode)
+            run = train_pragma(
+                dataset=_VALID_DATASET,
+                model_size="S",
+                epochs=1,
+                mode="local",
+                local_csv_path=self._CSV,
+                output_dir=self._OUT,
+                max_steps=1,
+                **kwargs,
+            )
+        return run
+
+    # --- Contract: return type and run_mode ---
+
+    def test_local_mode_returns_pragma_run(self) -> None:
+        """sec.2.4 / ADR 003: train_pragma(mode='local') must return a PragmaRun."""
+        run = self._local_run()
+        assert isinstance(run, PragmaRun), (
+            f"train_pragma(mode='local') must return a PragmaRun, got {type(run)}"
+        )
+
+    def test_local_mode_run_mode_is_local(self) -> None:
+        """ADR 003: local mode PragmaRun must have run_mode='local'."""
+        run = self._local_run()
+        assert run.run_mode == "local", (
+            f"train_pragma(mode='local') must set run_mode='local', "
+            f"got {run.run_mode!r}"
+        )
+
+    def test_local_mode_show_pipeline_does_not_say_dry_run(self, capsys) -> None:
+        """ADR 003: local mode show_pipeline() must not claim 'DRY RUN'.
+
+        Local mode runs real training — it must not be mistaken for a preview.
+        """
+        run = self._local_run()
+        run.show_pipeline()
+        captured = capsys.readouterr()
+        assert "DRY RUN" not in captured.out, (
+            "show_pipeline() for a local run must not print the DRY RUN banner"
+        )
+
+    # --- Interface: required parameters and rejections ---
+
+    def test_local_mode_requires_local_csv_path(self) -> None:
+        """ADR 003: local mode must raise ValueError if local_csv_path is None.
+
+        local_csv_path is required for local mode — the adapter needs the
+        source CSV to fit the tokeniser and build a vocabulary.
+        """
+        with pytest.raises((ValueError, TypeError)):
+            train_pragma(
+                dataset=_VALID_DATASET,
+                model_size="S",
+                mode="local",
+                local_csv_path=None,
+            )
+
+    def test_local_mode_rejects_nodes_gt_1(self) -> None:
+        """ADR 003: local mode must raise NotImplementedError for nodes > 1.
+
+        Multi-node DDP requires KFTO PyTorchJob orchestration (cluster mode only).
+        Local mode is single-process (nodes=1). Two-node topology is a manifest
+        and KFP pipeline demo — not a local subprocess concern.
+        """
+        with pytest.raises(NotImplementedError):
+            train_pragma(
+                dataset=_VALID_DATASET,
+                model_size="S",
+                mode="local",
+                local_csv_path=self._CSV,
+                nodes=2,
+            )
+
+    # --- Step statuses ---
+
+    def test_local_mode_prepare_step_is_completed(self) -> None:
+        """sec.2.4 stage 1: prepare step must be 'completed' after adapter.prepare()."""
+        run = self._local_run()
+        step = next(s for s in run.steps if s.name == "prepare")
+        assert step.status == "completed", (
+            f"local mode prepare step must be 'completed', got '{step.status}'"
+        )
+
+    def test_local_mode_upload_step_is_skipped(self) -> None:
+        """sec.2.4 stage 2: upload step must be 'skipped' in local mode (no S3)."""
+        run = self._local_run()
+        step = next(s for s in run.steps if s.name == "upload")
+        assert step.status == "skipped", (
+            f"local mode upload step must be 'skipped' (no S3 in local mode), "
+            f"got '{step.status}'"
+        )
+
+    def test_local_mode_submit_step_is_skipped(self) -> None:
+        """sec.2.4 stage 3: submit step must be 'skipped' in local mode (no cluster)."""
+        run = self._local_run()
+        step = next(s for s in run.steps if s.name == "submit")
+        assert step.status == "skipped", (
+            f"local mode submit step must be 'skipped' (no KFTO in local mode), "
+            f"got '{step.status}'"
+        )
+
+    def test_local_mode_train_step_is_completed_on_success(self) -> None:
+        """sec.2.4 stage 4: train step must be 'completed' when subprocess exits 0."""
+        run = self._local_run(returncode=0)
+        step = next(s for s in run.steps if s.name == "train")
+        assert step.status == "completed", (
+            f"local mode train step must be 'completed' when subprocess exits 0, "
+            f"got '{step.status}'"
+        )
+
+    def test_local_mode_export_step_is_skipped(self) -> None:
+        """sec.2.4 stage 5: export step must be 'skipped' in local mode (no S3)."""
+        run = self._local_run()
+        step = next(s for s in run.steps if s.name == "export")
+        assert step.status == "skipped", (
+            f"local mode export step must be 'skipped' (no S3 export in local mode), "
+            f"got '{step.status}'"
+        )
+
+    def test_local_mode_marks_train_failed_on_subprocess_error(self) -> None:
+        """ADR 003: train step must be 'failed' when subprocess exits non-zero.
+
+        A non-zero returncode means the training process crashed or was killed.
+        The PragmaRun must honestly reflect failure — not claim 'completed'.
+        """
+        run = self._local_run(returncode=1)
+        step = next(s for s in run.steps if s.name == "train")
+        assert step.status == "failed", (
+            f"local mode train step must be 'failed' when subprocess exits 1, "
+            f"got '{step.status}'"
+        )
+
+    # --- Artifacts ---
+
+    def test_local_mode_output_dir_in_artifacts(self) -> None:
+        """ADR 003: local mode must record output_dir in artifacts().
+
+        The output directory is the canonical local artifact (no S3 URIs).
+        It lets the user find the checkpoint without grep'ing training logs.
+        """
+        run = self._local_run()
+        artifacts = run.artifacts()
+        assert "output_dir" in artifacts, (
+            f"local mode artifacts() must include 'output_dir' key, got {artifacts}"
+        )
+        assert artifacts["output_dir"] == self._OUT, (
+            f"output_dir artifact must equal the requested output_dir path, "
+            f"got {artifacts['output_dir']!r}"
+        )
+
+    # --- Behavior: adapter delegation ---
+
+    def test_local_mode_calls_prepare_upload_false(self) -> None:
+        """ADR 003: local mode must call DatasetAdapter.prepare(upload=False).
+
+        upload=False prevents any S3 connection — the adapter writes vocab
+        locally only. S3 credentials are not required for local mode.
+        """
+        from unittest.mock import patch, MagicMock
+        manifest = self._make_manifest()
+        mock_adapter = MagicMock()
+        mock_adapter.prepare.return_value = manifest
+        mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+        with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("src.workbench._api.subprocess") as mock_subp, \
+             patch("pathlib.Path.mkdir"):
+            mock_subp.run.return_value = MagicMock(returncode=0)
+            train_pragma(
+                dataset=_VALID_DATASET,
+                model_size="S",
+                epochs=1,
+                mode="local",
+                local_csv_path=self._CSV,
+                output_dir=self._OUT,
+            )
+
+        mock_adapter.prepare.assert_called_once()
+        kwargs = mock_adapter.prepare.call_args.kwargs
+        assert kwargs.get("upload") is False, (
+            f"DatasetAdapter.prepare() must be called with upload=False in local mode, "
+            f"got call_args={mock_adapter.prepare.call_args}"
+        )
+
+    def test_local_mode_does_not_touch_s3(self) -> None:
+        """ADR 003: local mode must succeed without any S3 credentials.
+
+        adapter.prepare(upload=False) ensures no boto3 connection is made.
+        No MODEL_REGISTRY_* env vars are required for local mode.
+        """
+        import os
+        from unittest.mock import patch, MagicMock
+        manifest = self._make_manifest()
+        mock_adapter = MagicMock()
+        mock_adapter.prepare.return_value = manifest
+        mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+        # Scrub all S3 credentials — local mode must not need them
+        env_backup = {}
+        for var in ("MODEL_REGISTRY_BUCKET", "MODEL_REGISTRY_ENDPOINT",
+                    "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
+            env_backup[var] = os.environ.pop(var, None)
+        try:
+            with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+                 patch("src.workbench._api.subprocess") as mock_subp, \
+                 patch("pathlib.Path.mkdir"):
+                mock_subp.run.return_value = MagicMock(returncode=0)
+                run = train_pragma(
+                    dataset=_VALID_DATASET,
+                    model_size="S",
+                    epochs=1,
+                    mode="local",
+                    local_csv_path=self._CSV,
+                    output_dir=self._OUT,
+                )
+        finally:
+            for var, val in env_backup.items():
+                if val is not None:
+                    os.environ[var] = val
+
+        assert isinstance(run, PragmaRun), (
+            "local mode must succeed without S3 credentials"
+        )
+
+    def test_local_mode_does_not_call_oc_kubectl(self) -> None:
+        """ADR 003: local mode must not invoke oc or kubectl via subprocess.
+
+        Cluster tools must not be called — local mode is intentionally
+        cluster-free. Any subprocess call to 'oc' or 'kubectl' is a bug.
+        """
+        from unittest.mock import patch, MagicMock
+        manifest = self._make_manifest()
+        mock_adapter = MagicMock()
+        mock_adapter.prepare.return_value = manifest
+        mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+        with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("src.workbench._api.subprocess") as mock_subp, \
+             patch("pathlib.Path.mkdir"):
+            mock_subp.run.return_value = MagicMock(returncode=0)
+            train_pragma(
+                dataset=_VALID_DATASET,
+                model_size="S",
+                epochs=1,
+                mode="local",
+                local_csv_path=self._CSV,
+                output_dir=self._OUT,
+            )
+
+        for call in mock_subp.run.call_args_list:
+            cmd = call.args[0] if call.args else call.kwargs.get("args", [])
+            cmd_str = " ".join(str(c) for c in cmd)
+            assert "oc " not in cmd_str and not cmd_str.startswith("oc"), (
+                f"local mode must not call 'oc' via subprocess, got: {cmd_str!r}"
+            )
+            assert "kubectl" not in cmd_str, (
+                f"local mode must not call 'kubectl' via subprocess, got: {cmd_str!r}"
+            )
+
+    def test_local_mode_does_not_import_kfp(self) -> None:
+        """ADR 003: local mode must not import kfp as a side effect.
+
+        kfp is an optional dependency ([workbench] extra). Local training
+        must work without kfp installed (and must not cause an ImportError
+        in environments where kfp is absent).
+        """
+        import sys
+        kfp_before = "kfp" in sys.modules
+        self._local_run()
+        if not kfp_before:
+            assert "kfp" not in sys.modules, (
+                "local mode must not import kfp — it is optional and "
+                "not needed for local subprocess training"
+            )
+
+    # --- Behavior: subprocess command structure ---
+
+    def test_local_mode_builds_expected_subprocess_command(self) -> None:
+        """ADR 003 / sec.2.4: local mode must invoke scripts/train_pragma.py correctly.
+
+        Expected command contains:
+            scripts/train_pragma.py
+            --csv-path  <local_csv_path>
+            --vocab-path <output_dir>/vocab.pkl
+            --output-dir <output_dir>
+            --model-variant pragma-s    (PRAGMA-S -> 'pragma-s', Table 1)
+            --epochs 1
+            --num-workers 0             (single-process, no DataLoader workers)
+            --max-steps 1               (from max_steps param)
+        """
+        from unittest.mock import patch, MagicMock
+        manifest = self._make_manifest()
+        mock_adapter = MagicMock()
+        mock_adapter.prepare.return_value = manifest
+        mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+        with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("src.workbench._api.subprocess") as mock_subp, \
+             patch("pathlib.Path.mkdir"):
+            mock_subp.run.return_value = MagicMock(returncode=0)
+            train_pragma(
+                dataset=_VALID_DATASET,
+                model_size="S",
+                epochs=1,
+                mode="local",
+                local_csv_path=self._CSV,
+                output_dir=self._OUT,
+                max_steps=1,
+            )
+
+        assert mock_subp.run.called, (
+            "subprocess.run must be called for local mode"
+        )
+        call_args = mock_subp.run.call_args
+        cmd = call_args.args[0] if call_args.args else call_args.kwargs.get("args", [])
+        cmd_str = " ".join(str(c) for c in cmd)
+
+        assert "train_pragma.py" in cmd_str, (
+            f"subprocess command must invoke scripts/train_pragma.py, got: {cmd_str!r}"
+        )
+        assert "--csv-path" in cmd_str and self._CSV in cmd_str, (
+            f"command must include --csv-path {self._CSV!r}, got: {cmd_str!r}"
+        )
+        assert "--output-dir" in cmd_str and self._OUT in cmd_str, (
+            f"command must include --output-dir {self._OUT!r}, got: {cmd_str!r}"
+        )
+        assert "--model-variant" in cmd_str and "pragma-s" in cmd_str, (
+            f"command must include --model-variant pragma-s for model_size='S', "
+            f"got: {cmd_str!r}"
+        )
+        assert "--epochs" in cmd_str, (
+            f"command must include --epochs, got: {cmd_str!r}"
+        )
+        assert "--num-workers" in cmd_str, (
+            f"command must include --num-workers 0 for local single-process mode, "
+            f"got: {cmd_str!r}"
+        )
+        assert "--max-steps" in cmd_str, (
+            f"command must include --max-steps when max_steps is set, "
+            f"got: {cmd_str!r}"
+        )
