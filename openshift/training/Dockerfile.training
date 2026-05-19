@@ -58,13 +58,15 @@ FROM image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-enco
 
 # Copy PRAGMA source code into the image at WORKDIR.
 # WORKDIR is /opt/app-root/src (inherited from S2I base).
+# --chown=1001:0 matches the S2I base image's uid:gid convention so the
+# build's RUN steps (which execute as UID 1001) can read the copied files.
 # After this COPY:
 #   scripts/train_pragma.py        -> accessible as 'scripts/train_pragma.py'
 #   src/data/fit_tokenizer.py      -> accessible as 'src/data/fit_tokenizer.py'
 #   python -c "import src.workbench" succeeds from WORKDIR
-COPY src/ src/
-COPY scripts/ scripts/
-COPY pyproject.toml pyproject.toml
+COPY --chown=1001:0 src/ src/
+COPY --chown=1001:0 scripts/ scripts/
+COPY --chown=1001:0 pyproject.toml pyproject.toml
 
 # Verify source code is importable from WORKDIR at build time.
 # This catches missing __init__.py files, broken imports, or incomplete
