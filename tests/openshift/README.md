@@ -33,6 +33,20 @@ The separation exists because:
 
 ---
 
+## Pipeline Runtime
+
+This environment uses **OpenShift AI Data Science Pipelines (DSPA) / KFP v2**.
+
+Red Hat OpenShift AI Data Science Pipelines 2.0 does **not** use kfp-tekton.
+Tekton CRDs (`pipelineruns.tekton.dev`, `taskruns.tekton.dev`) are not installed
+by default and are not required for PRAGMA pipeline execution.
+
+- **Default pipeline target**: OpenShift AI DSPA / KFP v2
+- **Tekton**: optional legacy/alternate runtime — checks gated by `RUN_TEKTON_TESTS=1`
+- **Level 3b batch/v1 Job smoke**: proves training image execution in-cluster, not pipeline runtime
+
+---
+
 ## Architecture
 
 ```
@@ -41,11 +55,12 @@ Argo CD  ─── deploys ──►  platform substrate  (long-lived, Argo-mana
                            └── ServiceAccount
                            └── RBAC
                            └── Secrets (S3, image pull)
+                           └── DSPA instance  (KFP v2 API server)
 
 tests/openshift/  ─── verify substrate ──►  read-only checks (Levels 0–1)
                   ─── create (future) ──►   short-lived labelled resources
-                                            └── PipelineRun (Level 3)
-                                            └── PyTorchJob  (Level 4)
+                                            └── KFP PipelineRun (Level 3, via DSPA)
+                                            └── PyTorchJob       (Level 4)
                   ─── cleanup ──────────►   only label-scoped resources
 ```
 
@@ -87,7 +102,8 @@ Tests never write to S3 unless explicitly authorised.
 | `PRAGMA_S3_SECRET_NAME` | (unset) | Name of the S3 credentials Secret. Test verifies existence only; data is never read. |
 | `PRAGMA_TRAINING_SERVICE_ACCOUNT` | `pragma-encoder-training` | Name of the training ServiceAccount to verify. |
 | `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset / `pragma-registry`) | Name of the image pull Secret. Level 1: test verifies existence only (no data access). Level 3b: used as `imagePullSecrets` in the smoke Job pod spec; defaults to `pragma-registry` if unset. |
-| `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 PipelineRun smoke tests. |
+| `RUN_TEKTON_TESTS=1` | (unset) | Opt-in for Tekton CRD checks (Level 1) and Tekton cleanup. Off by default — this environment uses DSPA / KFP v2. Enable only when validating a cluster with Tekton installed as an alternate runtime. |
+| `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 DSPA / KFP v2 pipeline smoke tests. |
 | `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1` | (unset) | Opt-in for Level 3b training container smoke. Requires `PRAGMA_TRAINING_IMAGE`. |
 | `PRAGMA_TRAINING_IMAGE` | (unset) | Image URI for the Level 3b batch/v1 Job smoke. Must be built from `openshift/training/Dockerfile.training` with `src/` and `scripts/` baked in at WORKDIR. |
 | `PRAGMA_ALLOW_RUNTIME_GIT_CLONE` | `0` | Level 3b debug fallback only. Set to `1` to allow the smoke Job to git-clone the repo at runtime if the image lacks code. Off by default. Use only to diagnose dependency-only images — not the intended primary path. |
@@ -130,7 +146,7 @@ Tests never write to S3 unless explicitly authorised.
 The `cleanup_labelled_resources` fixture runs after each test and deletes only:
 
 ```
-pipelinerun, taskrun, pod, job, configmap, pytorchjob
+pod, job, configmap, pytorchjob
 ```
 
 …in `PRAGMA_TEST_RUNTIME_NAMESPACE`, scoped to the selector:
@@ -138,6 +154,10 @@ pipelinerun, taskrun, pod, job, configmap, pytorchjob
 ```
 pragma.redhat.com/test-run=true,pragma.redhat.com/test-id=<test_id>
 ```
+
+When `RUN_TEKTON_TESTS=1` is set, `pipelinerun` and `taskrun` are also included.
+They are **omitted by default** because this environment uses DSPA / KFP v2, which
+does not install Tekton CRDs. Attempting to delete a non-existent CRD produces noise.
 
 Cleanup failures are reported as warnings but do not hide the original test result.
 
@@ -314,8 +334,10 @@ in the environment). Only unit tests run.
 - `test_runtime_namespace_exists_if_different` — runtime namespace check (if set)
 
 ### Level 1 — Argo-managed substrate
-- `test_pipelinerun_crd_exists` — Tekton CRDs installed
-- `test_taskrun_crd_exists`
+- `test_dspa_crd_exists` — DSPA CRD installed (OpenShift AI default pipeline substrate)
+- `test_kfp_pipeline_crd_exists` — KFP v2 pipeline CRD installed
+- `test_pipelinerun_crd_exists` — Tekton CRD; **skipped unless `RUN_TEKTON_TESTS=1`**
+- `test_taskrun_crd_exists` — Tekton CRD; **skipped unless `RUN_TEKTON_TESTS=1`**
 - `test_pytorchjob_crd_exists_if_enabled` — gated by `RUN_PYTORCHJOB_TESTS=1`
 - `test_training_service_account_exists` — SA deployed by Argo CD
 - `test_s3_secret_exists_if_configured` — existence check only, no data access
@@ -351,10 +373,11 @@ Gated by `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1`. Also requires `PRAGMA_TRAINING_IM
 
 ## What Is Future / xfail
 
-### Level 3 — OpenShift Pipelines runtime smoke
-`test_pipeline_smoke_run_future` — xfail. Submit a PRAGMA-S PipelineRun with
-`max_steps=1`, wait for completion, verify logs, cleanup labelled resources.
-Will xpass when pipeline submission is implemented in `src/workbench/`.
+### Level 3 — DSPA / KFP v2 pipeline runtime smoke
+`test_pipeline_smoke_run_future` — xfail. Submit a PRAGMA-S pipeline run via
+the OpenShift AI DSPA / KFP v2 API with `max_steps=1`, wait for completion,
+verify logs, cleanup labelled resources.
+Will xpass when DSPA pipeline submission is implemented in `src/workbench/`.
 
 ### Level 4 — PyTorchJob execution smoke
 `test_pytorchjob_two_node_smoke_future` — xfail. Apply two-node manifest with

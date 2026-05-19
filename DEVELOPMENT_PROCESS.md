@@ -749,7 +749,7 @@ Lives in `tests/openshift/`. See `tests/openshift/README.md` for full docs.
 OpenShift integration tests are required before merging any change that affects:
 
 - `openshift/` manifests (PyTorchJob YAML, namespace config, RBAC)
-- OpenShift Pipeline runtime execution (PipelineRun, TaskRun submission)
+- OpenShift AI Pipelines / DSPA / KFP v2 runtime execution
 - PyTorchJob manifests or distributed training configuration
 - Service account, RBAC, image pull, or S3 secret assumptions
 - Cluster-side dataset staging or S3-backed artefact paths
@@ -833,7 +833,7 @@ pytest tests/openshift/test_00_oc_access.py \
        tests/openshift/test_02_pipeline_compile.py -q
 ```
 
-Future pipeline smoke (creates labelled PipelineRun, opt-in):
+Future DSPA / KFP v2 pipeline smoke (submits pipeline run via OpenShift AI DSPA API, opt-in):
 ```bash
 RUN_OPENSHIFT_TESTS=1 \
 RUN_OPENSHIFT_PIPELINE_SMOKE=1 \

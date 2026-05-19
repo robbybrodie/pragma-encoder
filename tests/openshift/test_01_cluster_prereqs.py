@@ -4,12 +4,22 @@ Verifies that the long-lived substrate resources deployed by Argo CD are
 present and correctly configured. These tests are read-only — they verify
 existence only and never read secret data.
 
-Substrate resources verified:
-  - Tekton/OpenShift Pipelines CRDs (pipelineruns.tekton.dev, taskruns.tekton.dev)
+Pipeline runtime context:
+  This environment uses OpenShift AI Data Science Pipelines (DSPA) / KFP v2.
+  Red Hat OpenShift AI Data Science Pipelines 2.0 does not use kfp-tekton.
+  Tekton CRDs (pipelineruns.tekton.dev, taskruns.tekton.dev) are NOT installed
+  by default and are not required for PRAGMA pipeline execution.
+
+Substrate resources verified by default:
+  - DSPA/KFP v2 CRDs (DataSciencePipelinesApplication, pipelines.kubeflow.org)
   - KFTO PyTorchJob CRD (optional, gated by RUN_PYTORCHJOB_TESTS=1)
   - PRAGMA training ServiceAccount
   - S3 secret existence (optional, gated by PRAGMA_S3_SECRET_NAME)
   - Image pull secret existence (optional, gated by PRAGMA_IMAGE_PULL_SECRET_NAME)
+
+Optional/legacy Tekton substrate (gated by RUN_TEKTON_TESTS=1):
+  - pipelineruns.tekton.dev
+  - taskruns.tekton.dev
 
 All tests are read-only. No resources are created or modified.
 Secret data is never accessed or printed.
@@ -31,26 +41,90 @@ from tests.openshift.oc import crd_exists, resource_exists
 # Default service account name — overridden by PRAGMA_TRAINING_SERVICE_ACCOUNT.
 _DEFAULT_SA = "pragma-encoder-training"
 
+# Skip guard for Tekton-specific tests.
+_require_tekton = pytest.mark.skipif(
+    os.environ.get("RUN_TEKTON_TESTS") != "1",
+    reason=(
+        "Tekton CRD checks are opt-in. "
+        "This environment uses OpenShift AI DSPA / KFP v2, not Tekton. "
+        "Set RUN_TEKTON_TESTS=1 to enable Tekton substrate checks."
+    ),
+)
+
+
+class TestDSPACRDs:
+    """Level 1: OpenShift AI Data Science Pipelines (DSPA) / KFP v2 CRD presence.
+
+    This is the default pipeline substrate for PRAGMA.
+    OpenShift AI Data Science Pipelines 2.0 uses KFP v2 and does NOT use
+    kfp-tekton. These CRDs are installed by the RHOAI operator.
+    """
+
+    def test_dspa_crd_exists(self) -> None:
+        """CRD datasciencepipelinesapplications must exist on the cluster.
+
+        The DataSciencePipelinesApplication CRD is installed by the Red Hat
+        OpenShift AI (RHOAI) operator. It manages the DSPA instance that
+        provides the KFP v2 API server for pipeline submission.
+
+        If this fails: verify the RHOAI operator is installed and the
+        DataSciencePipelines component is enabled in the DataScienceCluster.
+        CRD: datasciencepipelinesapplications.datasciencepipelinesapplications.opendatahub.io
+        """
+        assert crd_exists(
+            "datasciencepipelinesapplications.datasciencepipelinesapplications.opendatahub.io"
+        ), (
+            "CRD datasciencepipelinesapplications...opendatahub.io not found. "
+            "Verify the Red Hat OpenShift AI operator is installed and the "
+            "DataSciencePipelines component is enabled in the DataScienceCluster CR."
+        )
+
+    def test_kfp_pipeline_crd_exists(self) -> None:
+        """CRD pipelines.pipelines.kubeflow.org must exist on the cluster.
+
+        This CRD is installed by the DSPA operator alongside the KFP v2 API
+        server. Its presence confirms KFP v2 is installed and functional.
+
+        If this fails: verify the DSPA instance is healthy in PRAGMA_TEST_NAMESPACE
+        and that the RHOAI operator has finished reconciling.
+        """
+        assert crd_exists("pipelines.pipelines.kubeflow.org"), (
+            "CRD pipelines.pipelines.kubeflow.org not found. "
+            "The DSPA / KFP v2 API server may not be fully installed. "
+            "Check: oc get dspa -n <namespace> and oc get pods -n <namespace>."
+        )
+
 
 class TestTektonCRDs:
-    """Level 1: Tekton/OpenShift Pipelines CRD presence."""
+    """Level 1: Tekton/OpenShift Pipelines CRD presence (opt-in, legacy/alternate runtime).
 
+    Tekton is NOT the default pipeline runtime for PRAGMA.
+    This environment uses OpenShift AI DSPA / KFP v2.
+
+    These tests are gated by RUN_TEKTON_TESTS=1. They should only be run
+    when validating a cluster that has the OpenShift Pipelines operator installed
+    as an alternate or legacy runtime (e.g. a different cluster configuration).
+    """
+
+    @_require_tekton
     def test_pipelinerun_crd_exists(self) -> None:
-        """CRD pipelineruns.tekton.dev must exist on the cluster.
+        """CRD pipelineruns.tekton.dev must exist when RUN_TEKTON_TESTS=1.
 
         OpenShift Pipelines (Tekton) must be installed and the operator must
-        have registered its CRDs before any pipeline tests can run.
+        have registered its CRDs. This check is for alternate/legacy runtime
+        validation only — PRAGMA pipelines use DSPA / KFP v2 by default.
 
         If this fails: verify OpenShift Pipelines operator is installed
         in the cluster (Operator Hub → Red Hat OpenShift Pipelines).
         """
         assert crd_exists("pipelineruns.tekton.dev"), (
             "CRD pipelineruns.tekton.dev not found. "
-            "Install the OpenShift Pipelines operator before running pipeline tests."
+            "Install the OpenShift Pipelines operator before running Tekton tests."
         )
 
+    @_require_tekton
     def test_taskrun_crd_exists(self) -> None:
-        """CRD taskruns.tekton.dev must exist on the cluster.
+        """CRD taskruns.tekton.dev must exist when RUN_TEKTON_TESTS=1.
 
         Co-installed with pipelineruns.tekton.dev by the OpenShift Pipelines operator.
         If pipelineruns.tekton.dev passes but this fails, the operator installation
