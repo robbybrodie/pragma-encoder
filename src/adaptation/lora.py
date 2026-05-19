@@ -115,7 +115,7 @@ class LoRAAdapter:
             task_type=TaskType.FEATURE_EXTRACTION,  # PRAGMA is encoder-only
         )
 
-    def apply(self, model: "PRAGMA") -> "peft.PeftModel":  # noqa: F821
+    def apply(self, model: "PRAGMA") -> "peft.PeftModel":  # type: ignore[name-defined]  # noqa: F821
         """Wrap a PRAGMA model with LoRA adapters.
 
         Freezes all backbone parameters and injects trainable LoRA delta

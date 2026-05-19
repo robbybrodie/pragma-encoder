@@ -26,10 +26,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from src.workbench._decorators import PragmaPipeline
+from typing import Any, Callable
 
 from src.data.adapters import get_adapter
 from src.model.config import PRAGMAConfig
@@ -43,7 +40,7 @@ from src.workbench._run import (
 # Model size → PRAGMAConfig factory map (case-sensitive per §2.4)
 # ---------------------------------------------------------------------------
 
-_MODEL_SIZE_MAP: dict[str, type] = {
+_MODEL_SIZE_MAP: dict[str, Callable[[], PRAGMAConfig]] = {
     "S": PRAGMAConfig.pragma_s,
     "M": PRAGMAConfig.pragma_m,
     "L": PRAGMAConfig.pragma_l,
@@ -72,7 +69,7 @@ def train_pragma(
     local_csv_path: str | None = None,
     output_dir: str | None = None,
     max_steps: int | None = None,
-) -> PragmaRun:
+) -> PragmaRun | Any:
     """Launch PRAGMA pretraining and return a PragmaRun for inspection.
 
     Args:
@@ -206,7 +203,7 @@ def _build_pipeline_intent(
     model_size: str,
     epochs: int,
     max_steps: int | None,
-) -> PragmaPipeline:
+) -> Any:
     """Return a PragmaPipeline capturing training intent without executing anything.
 
     No training, no S3, no cluster access. The returned PragmaPipeline can be

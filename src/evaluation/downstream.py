@@ -115,8 +115,8 @@ class DownstreamEvaluator:
             Dict with keys: 'auc', 'pr_auc', 'f1', 'ks', and optionally 'loss'.
         """
         model.eval()
-        all_scores: list = []
-        all_labels: list = []
+        all_scores: list[Any] = []
+        all_labels: list[Any] = []
         total_loss = 0.0
         n_batches = 0
 

@@ -140,7 +140,7 @@ class _CalendarMLP(nn.Module):
             [torch.sin(xt_normed), torch.cos(xt_normed)],
             dim=-1,
         )  # (batch, ne, 6)
-        return self.mlp(sincos)  # (batch, ne, d_model)
+        return self.mlp(sincos)  # type: ignore[no-any-return]
 
 
 class _EventAttention(nn.Module):
@@ -200,7 +200,7 @@ class _EventAttention(nn.Module):
         )  # (batch*ne, n_heads, ni, head_dim)
 
         attn_out = attn_out.transpose(1, 2).contiguous().view(bne, ni, self.d_model)
-        return self.out_proj(attn_out)
+        return self.out_proj(attn_out)  # type: ignore[no-any-return]
 
 
 class _EventEncoderLayer(nn.Module):

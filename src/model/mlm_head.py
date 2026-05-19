@@ -125,7 +125,7 @@ class MLMHead(nn.Module):
         # Linear(3*d_model → d_model) → GELU → Linear(d_model → value_vocab_size)
         hidden = self.gelu(self.proj(mlm_input))   # (n_masked, d_model)
         logits = self.decoder(hidden)              # (n_masked, value_vocab_size)
-        return logits
+        return logits  # type: ignore[no-any-return]
 
     def compute_loss(
         self,

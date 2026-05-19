@@ -17,14 +17,14 @@ used in any training or evaluation context.
 Reference: Ostroukhov et al. (2026), Section 2.3.5
 """
 
-from typing import Tuple
+from typing import Protocol, Tuple
 
 import torch
 
 from .strategy import MaskingStrategy
 
 
-class MaskingStrategyProtocol:
+class MaskingStrategyProtocol(Protocol):
     """Interface contract for MaskingStrategy (§2.3.5).
 
     Describes the forward() signature for three-strategy masked event
@@ -47,7 +47,7 @@ class MaskingStrategyProtocol:
         key_ids:   torch.Tensor,  # (batch, ne, ni)
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Apply three-strategy masking in a single forward pass (§2.3.5)."""
-        ...
+        ...  # noqa: D102
 
 
 __all__ = [

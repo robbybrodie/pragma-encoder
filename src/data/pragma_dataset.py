@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 import torch
 from torch.utils.data import Dataset
@@ -56,7 +56,7 @@ _EVENT_FIELDS = [
 ]
 
 
-class PragmaDataset(Dataset):
+class PragmaDataset(Dataset[Dict[str, Any]]):
     """torch.utils.data.Dataset over tokenised TabFormer customer sequences.
 
     Args:

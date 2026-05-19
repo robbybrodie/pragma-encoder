@@ -30,7 +30,7 @@ ADR: docs/decisions/004-workbench-decorated-pipelines.md
 from __future__ import annotations
 
 import importlib
-from typing import Callable
+from typing import Any, Callable
 
 from src.workbench._intent import (
     TrainIntent,
@@ -140,7 +140,7 @@ class PragmaPipeline:
 # pragma_pipeline — decorator factory
 # ---------------------------------------------------------------------------
 
-def pragma_pipeline(*, name: str) -> Callable:
+def pragma_pipeline(*, name: str) -> Callable[..., Any]:
     """Decorator factory for PRAGMA pipeline authoring.
 
     Captures training intent from the decorated function body and returns a
@@ -167,7 +167,7 @@ def pragma_pipeline(*, name: str) -> Callable:
     Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
     ADR: docs/decisions/004-workbench-decorated-pipelines.md
     """
-    def decorator(fn: Callable) -> PragmaPipeline:
+    def decorator(fn: Callable[..., Any]) -> PragmaPipeline:
         # Execute the function body once inside the thread-local capture context
         # so train() can register its TrainIntent in the capture list.
         # No side effects: dataset() and train() are pure intent-capture calls.
