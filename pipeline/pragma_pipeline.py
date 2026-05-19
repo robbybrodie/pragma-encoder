@@ -112,12 +112,12 @@ def pragma_pretraining_pipeline(
 
     # Stage 2: Upload prepared artifacts to S3 (idempotent)
     upload_op = upload_artifacts(
-        manifest_uri=prepare_op,
+        manifest_uri=prepare_op.output,
     )
 
     # Stage 3: Configure and submit KFTO PyTorchJob
     submit_op = submit_pytorchjob(
-        manifest_uri=upload_op,
+        manifest_uri=upload_op.output,
         model_size=model_size,
         nodes=nodes,
         epochs=epochs,
@@ -125,7 +125,7 @@ def pragma_pretraining_pipeline(
 
     # Stage 4: Execute pretraining — masked event modelling (§2.3.5)
     train_op = run_pretraining(
-        manifest_uri=upload_op,
+        manifest_uri=upload_op.output,
         model_size=model_size,
         nodes=nodes,
         epochs=epochs,
@@ -133,7 +133,7 @@ def pragma_pretraining_pipeline(
 
     # Stage 5: Export model checkpoints and outputs to S3
     export_op = export_checkpoint(
-        checkpoint_uri=train_op,
+        checkpoint_uri=train_op.output,
         model_size=model_size,
     )
 
