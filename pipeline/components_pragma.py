@@ -1,23 +1,23 @@
 """KFP SDK v2 pipeline components for PRAGMA training.
 
-Five components implementing the §2.4 training infrastructure stages:
+Five components implementing the sec.2.4 training infrastructure stages:
 
-  Stage 1 — prepare_dataset   : Prepare dataset via DatasetAdapter (fit tokeniser)
-  Stage 2 — upload_artifacts  : Upload prepared artifacts to S3 (idempotent)
-  Stage 3 — submit_pytorchjob : Configure and submit KFTO PyTorchJob
-  Stage 4 — run_pretraining   : Execute pretraining (MEM objective §2.3.5)
-  Stage 5 — export_checkpoint : Upload model checkpoints and outputs to S3
+  Stage 1 - prepare_dataset   : Prepare dataset via DatasetAdapter (fit tokeniser)
+  Stage 2 - upload_artifacts  : Upload prepared artifacts to S3 (idempotent)
+  Stage 3 - submit_pytorchjob : Configure and submit KFTO PyTorchJob
+  Stage 4 - run_pretraining   : Execute pretraining (MEM objective sec.2.3.5)
+  Stage 5 - export_checkpoint : Upload model checkpoints and outputs to S3
 
 KFP is an optional dependency.  When kfp is not installed, the _KFP_AVAILABLE
-flag is False and @dsl.component is not applied — components are plain Python
+flag is False and @dsl.component is not applied - components are plain Python
 callables that can be imported and inspected without a running KFP server.
 
 Design (ADR 003):
-  - pipeline/ → src/ only.  No circular dependency introduced.
+  - pipeline/ -> src/ only.  No circular dependency introduced.
   - DatasetManifest / manifest_uri is the canonical dataset contract.
   - No PVC-backed dataset storage.  All data lives in S3.
   - prepare_dataset delegates to DatasetAdapter (get_adapter).
-  - run_pretraining uses the same model_size → PRAGMAConfig mapping as
+  - run_pretraining uses the same model_size -> PRAGMAConfig mapping as
     train_pragma() so config is defined in exactly one place.
 
 Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
@@ -44,7 +44,7 @@ def _component(**kwargs):
 
 
 # ---------------------------------------------------------------------------
-# The five §2.4 pipeline stage names
+# The five sec.2.4 pipeline stage names
 # Must mirror PIPELINE_STEP_NAMES in src/workbench/_run.py (ADR 003).
 # ---------------------------------------------------------------------------
 
@@ -52,7 +52,7 @@ PIPELINE_STAGE_NAMES: tuple[str, ...] = (
     "prepare",   # Prepare dataset via DatasetAdapter; return manifest URI
     "upload",    # Upload prepared artifacts to S3 (idempotent)
     "submit",    # Configure and submit KFTO PyTorchJob
-    "train",     # Execute pretraining — masked event modelling (§2.3.5)
+    "train",     # Execute pretraining - masked event modelling (sec.2.3.5)
     "export",    # Upload model checkpoints and outputs to S3
 )
 
@@ -63,7 +63,7 @@ _BASE_IMAGE = (
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 — prepare_dataset
+# Stage 1 - prepare_dataset
 # ---------------------------------------------------------------------------
 
 @_component(base_image=_BASE_IMAGE)
@@ -78,7 +78,7 @@ def prepare_dataset(
     PRAGMAConfig for model_size, runs DatasetAdapter.prepare(), and returns
     the prepared_prefix_uri from the resulting DatasetManifest.
 
-    Does NOT hardcode IBM TabFormer logic — any registered adapter is
+    Does NOT hardcode IBM TabFormer logic - any registered adapter is
     supported.  New dataset adapters register in src/data/adapters/__init__.py
     and require no changes to this component.
 
@@ -89,7 +89,7 @@ def prepare_dataset(
                       the adapter (max_event_tokens=24, max_profile_tokens=200,
                       max_events=6500).
         upload:       If True, upload prepared artifacts to S3 during prepare.
-                      Default: False — S3 upload is the upload_artifacts stage.
+                      Default: False - S3 upload is the upload_artifacts stage.
 
     Returns:
         prepared_prefix_uri from the returned DatasetManifest (S3 prefix URI).
@@ -120,7 +120,7 @@ def prepare_dataset(
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 — upload_artifacts
+# Stage 2 - upload_artifacts
 # ---------------------------------------------------------------------------
 
 @_component(base_image=_BASE_IMAGE)
@@ -153,7 +153,7 @@ def upload_artifacts(
 
 
 # ---------------------------------------------------------------------------
-# Stage 3 — submit_pytorchjob
+# Stage 3 - submit_pytorchjob
 # ---------------------------------------------------------------------------
 
 @_component(base_image=_BASE_IMAGE)
@@ -166,17 +166,17 @@ def submit_pytorchjob(
 ) -> str:
     """Configure and submit a KFTO PyTorchJob to OpenShift AI.
 
-    Logical/configuration stage — no real cluster mutation in unit tests.
+    Logical/configuration stage - no real cluster mutation in unit tests.
 
     Selects the correct PyTorchJob manifest based on nodes:
-        nodes=1 → openshift/training/pytorchjob-pragma-s.yaml
-        nodes=2 → openshift/training/pytorchjob-pragma-s-2node.yaml (ADR 003)
+        nodes=1 -> openshift/training/pytorchjob-pragma-s.yaml
+        nodes=2 -> openshift/training/pytorchjob-pragma-s-2node.yaml (ADR 003)
 
     No PVC-backed canonical dataset storage is introduced.  Data is sourced
     from S3 via the init container (openshift-storage-pattern.md).
 
     Args:
-        manifest_uri: DatasetManifest URI — passed as DATA_URI env var to job.
+        manifest_uri: DatasetManifest URI - passed as DATA_URI env var to job.
         model_size:   Model variant "S", "M", or "L".  Default: "S".
         nodes:        Number of training nodes.  1 = single-node,
                       2 = two-node DDP.  Default: 1.
@@ -189,13 +189,13 @@ def submit_pytorchjob(
     """
     raise NotImplementedError(
         "submit_pytorchjob: apply the correct PyTorchJob manifest via oc apply. "
-        "nodes=1 → pytorchjob-pragma-s.yaml; "
-        "nodes=2 → pytorchjob-pragma-s-2node.yaml."
+        "nodes=1 -> pytorchjob-pragma-s.yaml; "
+        "nodes=2 -> pytorchjob-pragma-s-2node.yaml."
     )
 
 
 # ---------------------------------------------------------------------------
-# Stage 4 — run_pretraining
+# Stage 4 - run_pretraining
 # ---------------------------------------------------------------------------
 
 @_component(base_image=_BASE_IMAGE)
@@ -210,14 +210,14 @@ def run_pretraining(
     Monitors the PyTorchJob submitted in submit_pytorchjob until completion,
     then returns the S3 URI of the final checkpoint.
 
-    Uses the same model_size → PRAGMAConfig mapping as train_pragma() in
+    Uses the same model_size -> PRAGMAConfig mapping as train_pragma() in
     src/workbench/_api.py so configuration is defined in exactly one place.
     Specifically, the same _config_map {"S": PRAGMAConfig.pragma_s, ...}
     is used to ensure consistency.
 
     Args:
         manifest_uri: DatasetManifest URI for the prepared training dataset.
-                      Canonical §2.4 training contract — not a raw file path.
+                      Canonical sec.2.4 training contract - not a raw file path.
         model_size:   Model variant "S", "M", or "L".  Maps to PRAGMAConfig.
         nodes:        Number of training nodes (1 or 2).
         epochs:       Number of pretraining epochs.
@@ -227,8 +227,8 @@ def run_pretraining(
     """
     from src.model.config import PRAGMAConfig
 
-    # Same model_size → PRAGMAConfig mapping as train_pragma()
-    # (src/workbench/_api.py::_MODEL_SIZE_MAP) — no second implementation.
+    # Same model_size -> PRAGMAConfig mapping as train_pragma()
+    # (src/workbench/_api.py::_MODEL_SIZE_MAP) - no second implementation.
     _config_map = {
         "S": PRAGMAConfig.pragma_s,
         "M": PRAGMAConfig.pragma_m,
@@ -245,7 +245,7 @@ def run_pretraining(
 
 
 # ---------------------------------------------------------------------------
-# Stage 5 — export_checkpoint
+# Stage 5 - export_checkpoint
 # ---------------------------------------------------------------------------
 
 @_component(base_image=_BASE_IMAGE)

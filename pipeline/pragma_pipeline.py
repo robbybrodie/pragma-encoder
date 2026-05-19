@@ -3,20 +3,20 @@
 Defines the end-to-end PRAGMA pretraining pipeline for deployment on
 OpenShift AI via Kubeflow Pipelines (KFP SDK v2).
 
-The five pipeline stages mirror the §2.4 training infrastructure stages and
+The five pipeline stages mirror the sec.2.4 training infrastructure stages and
 the PIPELINE_STEP_NAMES exposed by PragmaRun.show_pipeline():
 
-    1. prepare   — prepare_dataset: fit tokeniser via DatasetAdapter
-    2. upload    — upload_artifacts: upload prepared data to S3 (idempotent)
-    3. submit    — submit_pytorchjob: configure / submit KFTO PyTorchJob
-    4. train     — run_pretraining: execute pretraining (MEM objective §2.3.5)
-    5. export    — export_checkpoint: upload model checkpoint to S3
+    1. prepare   - prepare_dataset: fit tokeniser via DatasetAdapter
+    2. upload    - upload_artifacts: upload prepared data to S3 (idempotent)
+    3. submit    - submit_pytorchjob: configure / submit KFTO PyTorchJob
+    4. train     - run_pretraining: execute pretraining (MEM objective sec.2.3.5)
+    5. export    - export_checkpoint: upload model checkpoint to S3
 
-Canonical dataset contract: DatasetManifest / manifest_uri (§2.4 data
+Canonical dataset contract: DatasetManifest / manifest_uri (sec.2.4 data
 storage).  No PVC-backed dataset storage.  All data lives in S3.
 
 If manifest_uri is provided (non-empty), the prepare and upload stages are
-skipped — callers can re-submit training on an already-prepared dataset
+skipped - callers can re-submit training on an already-prepared dataset
 without re-running the expensive tokeniser-fitting step.
 
 KFP is an optional dependency (same guard as components_pragma.py).
@@ -47,7 +47,7 @@ def _pipeline(**kwargs):
 
 
 # ---------------------------------------------------------------------------
-# Import pipeline components (pipeline/ → src/ only; no circular dependency)
+# Import pipeline components (pipeline/ -> src/ only; no circular dependency)
 # ---------------------------------------------------------------------------
 
 from pipeline.components_pragma import (  # noqa: E402
@@ -67,7 +67,7 @@ from pipeline.components_pragma import (  # noqa: E402
     name="pragma-pretraining-pipeline",
     description=(
         "End-to-end PRAGMA foundation model pretraining pipeline. "
-        "Five visible §2.4 stages: prepare → upload → submit → train → export. "
+        "Five visible s2.4 stages: prepare -> upload -> submit -> train -> export. "
         "Canonical dataset contract: DatasetManifest / manifest_uri (not PVC). "
         "Ostroukhov et al. (2026), arXiv:2604.08649v1."
     ),
@@ -79,10 +79,10 @@ def pragma_pretraining_pipeline(
     nodes: int = 1,
     manifest_uri: str = "",
 ) -> None:
-    """Full PRAGMA pretraining pipeline with five visible §2.4 stages.
+    """Full PRAGMA pretraining pipeline with five visible sec.2.4 stages.
 
     The pipeline consumes DatasetManifest / manifest_uri as the canonical
-    training dataset contract — not raw local file paths or PVC-mounted
+    training dataset contract - not raw local file paths or PVC-mounted
     data.
 
     If manifest_uri is non-empty, the prepare and upload stages are skipped
@@ -123,7 +123,7 @@ def pragma_pretraining_pipeline(
         epochs=epochs,
     )
 
-    # Stage 4: Execute pretraining — masked event modelling (§2.3.5)
+    # Stage 4: Execute pretraining - masked event modelling (sec.2.3.5)
     train_op = run_pretraining(
         manifest_uri=upload_op.output,
         model_size=model_size,
@@ -144,7 +144,7 @@ def pragma_pretraining_pipeline(
 
 if __name__ == "__main__":
     if not _KFP_AVAILABLE:
-        print("kfp is not installed — pipeline compilation requires kfp.")
+        print("kfp is not installed - pipeline compilation requires kfp.")
         raise SystemExit(1)
     import kfp.compiler as compiler
     compiler.Compiler().compile(
