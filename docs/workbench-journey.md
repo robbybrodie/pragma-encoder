@@ -123,7 +123,112 @@ safe default so examples are always safe to run.
 
 ---
 
-## Step 4 — The DatasetManifest
+## Step 4 — Prove the model can learn: local learning validation
+
+Before submitting anything to a cluster, it is worth confirming that the full
+PRAGMA training pipeline — tokeniser → masking → assembler → model → loss —
+actually works on your machine and that the model learns (loss decreases).
+
+The local learning validation script does exactly this on synthetic data:
+
+```bash
+PYTHONPATH=. python examples/workbench/06_local_learning_validation.py
+```
+
+Or with more steps and explicit model size:
+
+```bash
+PYTHONPATH=. python examples/workbench/06_local_learning_validation.py \
+    --model-size S --max-steps 50
+```
+
+**What it does:**
+
+1. Builds a `PRAGMA-S` model and an `EmbeddingAssembler` from the paper-spec config.
+2. Generates a synthetic fixed batch (IBM TabFormer-style geometry — no real data, no S3).
+3. Runs `--max-steps` Adam optimisation steps, printing loss at 10% intervals.
+4. Checks that loss decreased (gradient flow confirmed).
+5. Saves a checkpoint to a temporary directory and reloads it.
+6. Verifies the reloaded model produces bit-identical `zh` output.
+7. Runs a short resume loop from the reloaded checkpoint.
+8. Prints a final PASS/FAIL verdict.
+
+Expected output (truncated):
+
+```
+============================================================
+  PRAGMA LOCAL LEARNING VALIDATION — Readiness Report
+============================================================
+  Dataset
+    name            : ibm-tabformer-synthetic
+    path            : (not yet prepared — using synthetic data)
+    sequences       : 200
+    events (total)  : 2,000
+  ...
+  Model
+    variant         : pragma-s
+    trainable params: 10,xxx,xxx
+============================================================
+
+  Running 50 steps with Adam lr=1e-4 ...
+  Batch: 4 sequences × 10 events × 8 tokens/event
+
+  step    1/50  loss=9.9312  (0.3s)
+  step    5/50  loss=9.3141  (1.4s)
+  ...
+  step   50/50  loss=4.2017  (14.2s)
+
+============================================================
+  Training summary
+============================================================
+  Initial loss (step 1)  : 9.9312
+  Final loss   (step  50): 4.2017
+  Loss decreased         : YES ✓
+
+  Checkpoint saved       : pragma-s-step-0050.pt  (41,xxx KB)
+  Checkpoint reload      : OK ✓
+
+  Resuming for 5 more step(s) from reloaded checkpoint ...
+    resume step 1: loss=4.1843
+    resume step 5: loss=4.1021
+
+============================================================
+  RESULT
+============================================================
+  [PASS]  Loss is finite
+  [PASS]  Loss decreased
+  [PASS]  Checkpoint reload OK
+
+  All checks passed. PRAGMA-S is learning correctly.
+
+  Next step: run on real IBM TabFormer data.
+    See docs/training-guide.md → Local training — PRAGMA-S
+
+  This was LOCAL LEARNING VALIDATION — no cluster resources were used.
+============================================================
+```
+
+**This is NOT production training.** It uses synthetic data and a fixed batch
+(pure memorisation) to confirm architectural correctness. A real training run
+requires real IBM TabFormer data and is documented in `docs/training-guide.md`.
+
+**The four-stage progression:**
+
+| Stage | Mode | Proves | Resources needed |
+|-------|------|--------|-----------------|
+| `mode="dry_run"` | Preview | Pipeline structure is correct | None |
+| `06_local_learning_validation.py` | Local | Model can learn (gradients flow) | CPU only |
+| Local training on real data | Local | Tokeniser + real data work | CSV file |
+| Cluster training | OpenShift AI | Distributed scaling works | GPU node + S3 + cluster |
+
+Running the local learning validation before cluster training catches
+architectural bugs (frozen parameters, detached tensors, broken loss paths)
+on a laptop in under a minute — rather than discovering them after hours of
+wasted GPU compute.
+
+---
+
+## Step 5 — The DatasetManifest
 
 The `DatasetManifest` is a small metadata object that sits between the prepare
 stage and everything downstream. It records:
@@ -150,7 +255,7 @@ New datasets register one class in `src/data/adapters/__init__.py`.
 
 ---
 
-## Step 5 — How storage works
+## Step 6 — How storage works
 
 This is the most common source of confusion, so it is explained explicitly.
 
@@ -207,7 +312,7 @@ for example), but they are not part of the PRAGMA training data path.
 
 ---
 
-## Step 6 — Two-node distributed training
+## Step 7 — Two-node distributed training
 
 To see the two-node topology in action, run:
 
@@ -256,7 +361,7 @@ described in `docs/tech-debt.md` under **TD-006**. It is not yet implemented.
 
 ---
 
-## Step 7 — What Argo CD does (and does not do)
+## Step 8 — What Argo CD does (and does not do)
 
 **Argo CD** is a GitOps tool that the platform team uses to keep the cluster
 configuration in sync with this repository. When someone merges a change to a
@@ -286,7 +391,7 @@ You are the scientist who runs experiments inside it.
 
 ---
 
-## Step 8 — What the workbench API does
+## Step 9 — What the workbench API does
 
 The workbench API (`src/workbench`) is the thin layer that data scientists
 interact with. Its public surface is small:
@@ -334,9 +439,14 @@ through `train_pragma()` and inspect results through `PragmaRun`.
 | `examples/workbench/01_train_ibm_tabformer.py` | Beginner path: `train_pragma` + `show_pipeline` | `python examples/workbench/01_train_ibm_tabformer.py` |
 | `examples/workbench/02_understand_pipeline.py` | Five-stage walkthrough: what each stage does | `python examples/workbench/02_understand_pipeline.py` |
 | `examples/workbench/03_two_node_training_demo.py` | Two-node topology, DDP, and TD-006 honest callout | `python examples/workbench/03_two_node_training_demo.py` |
+| `examples/workbench/06_local_learning_validation.py` | Proves PRAGMA can learn: loss decreases, gradients flow, checkpoint save/reload | `PYTHONPATH=. python examples/workbench/06_local_learning_validation.py` |
 
-All three examples use `mode="dry_run"` by default. They require no credentials
+Examples 01–03 use `mode="dry_run"` by default. They require no credentials
 and submit no jobs. They are safe to run anywhere.
+
+Example 06 runs a short local training loop on synthetic data (CPU only, no
+credentials, no cluster). It is safe to run anywhere and completes in under a
+minute on a laptop.
 
 ---
 
@@ -345,6 +455,7 @@ and submit no jobs. They are safe to run anywhere.
 | Goal | Action |
 |------|--------|
 | Preview the pipeline for any model size | Change `model_size="S"` to `"M"` or `"L"` in any example |
+| Prove the model can learn (before real training) | `PYTHONPATH=. python examples/workbench/06_local_learning_validation.py` |
 | Prepare data locally (no cluster) | Run `src/data/fit_tokenizer.py` + `scripts/upload_training_data.py` |
 | Submit a real single-node training job | Follow `docs/training-guide.md` → Cluster training — PRAGMA-S |
 | Submit a real two-node training job | Apply `openshift/training/pytorchjob-pragma-s-2node.yaml` (see TD-006 note above) |
@@ -358,6 +469,7 @@ and submit no jobs. They are safe to run anywhere.
 | Capability | Status |
 |-----------|--------|
 | `mode="dry_run"` — pipeline preview | **Complete** |
+| Local learning validation (synthetic data, CPU) | **Complete** — `examples/workbench/06_local_learning_validation.py` |
 | IBM TabFormer dataset adapter | **Complete** |
 | DatasetManifest and DatasetShard | **Complete** |
 | PragmaRun inspection API | **Complete** |
