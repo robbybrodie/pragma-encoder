@@ -1,0 +1,10 @@
+User,Card,Year,Month,Day,Time,Amount,Use Chip,Merchant Name,Merchant City,Merchant State,MCC,Errors?,Is Fraud?
+0,0,2019,1,3,6:21,$134.09,Swipe Transaction,Reese's Coffee Shop,Bronx,NY,5812,,No
+0,0,2019,1,10,17:11,$38.48,Swipe Transaction,Uber,Metairie,LA,4121,,No
+0,0,2019,1,15,9:30,$12.50,Chip Transaction,Whole Foods,Chicago,IL,5411,,No
+1,0,2019,2,1,8:05,$55.00,Swipe Transaction,Shell,Houston,TX,5541,,No
+1,0,2019,2,14,12:45,$22.99,Online Transaction,Amazon,Seattle,WA,5945,,No
+1,0,2019,2,20,19:30,$8.75,Chip Transaction,Subway,Boston,MA,5812,,No
+2,0,2019,3,5,7:00,$67.30,Swipe Transaction,Chevron,Los Angeles,CA,5541,,No
+2,0,2019,3,12,14:22,$15.00,Chip Transaction,Starbucks,New York,NY,5812,,No
+2,0,2019,3,25,20:10,$200.00,Online Transaction,Best Buy,Minneapolis,MN,5732,,No
