@@ -66,7 +66,7 @@ Generate a dedicated NGC API key for pragma-encoder:
 
 **Date:** 2026-05-18
 **Severity:** Medium (blocks real training on profile data)
-**Status:** Accepted for research prototype
+**Status:** Partially resolved — xa zero-padded as shortcut
 
 ### Description
 EmbeddingAssembler accepts xa_key_ids, xa_val_ids, xa_pos_ids
@@ -85,15 +85,160 @@ tensors in valid ID ranges exercise the xa path correctly.
 In production: callers must supply xa inputs manually
 until ProfileTokenizerPipeline is implemented.
 
-### Resolution
+### Partial resolution (2026-05-18)
+PragmaDataset (src/data/pragma_dataset.py) implements the
+xa zero-padding shortcut:
+  - na = 1 (single minimal profile token)
+  - xa_key_ids: filled with vocab_spec.key_start
+  - xa_val_ids: filled with vocab_spec.value_start
+  - xa_pos_ids: filled with 0
+  - ta: filled with 0.0
+
+This allows real TabFormer training to proceed without
+a ProfileTokenizerPipeline.
+
+### Full resolution
 Implement src/tokenizer/profile_pipeline.py:
-  ProfileTokenizerPipeline that:
-  - Tokenises static customer attributes (plan, region etc)
-  - Tokenises life-long events with their timestamps (ta)
-  - Returns xa_key_ids, xa_val_ids, xa_pos_ids, ta
-  consistent with the same VocabularySpec used for events
+  ProfileTokenizerPipeline that tokenises static customer
+  attributes and life-long events, returning xa_key_ids,
+  xa_val_ids, xa_pos_ids, ta consistent with VocabularySpec.
 
 ### References
   Paper: Section 2.1.2 (profile state definition)
   Paper: Section 2.3.2 (ProfileStateEncoder inputs)
   EmbeddingAssembler: src/model/assembler.py
+
+---
+
+## TD-004: RHOAI native pipeline-config injection bypassed
+
+**Date:** 2026-05-18
+**Severity:** Low (demo environment)
+**Status:** Accepted for GitOps deployment; operator path not viable without dashboard
+
+### Description
+The RHOAI notebook-controller webhook injects `KFP_API_HOST` into workbench
+pods by reading a namespace Secret named `ds-pipeline-config`. In a healthy
+RHOAI cluster, this secret is created by the RHOAI dashboard when a user
+connects a pipelines server to a workbench through the UI.
+
+In a GitOps/bootstrap deployment (workbench declared via ArgoCD, not the
+dashboard), no dashboard interaction occurs and the secret is never created.
+Manually creating `ds-pipeline-config` does not work: the webhook rejects it
+with "Skipping mounting secret not managed by workbenches" regardless of
+labels or ownerReferences, because it was not created through the dashboard's
+ownership chain.
+
+### Workaround
+`openshift/gitops/workbench/notebook.yaml` declares `KFP_API_HOST` and
+`KF_PIPELINES_ENDPOINT` explicitly as env vars pointing to the
+namespace-local DSPA service (port 8888, direct HTTPS, no OAuth proxy):
+
+  https://ds-pipeline-pipelines-definition.pragma-encoder.svc.cluster.local:8888
+
+This is equivalent to the operator-injected value and survives pod restarts.
+The cluster CA bundle (`/etc/pki/tls/custom-certs/ca-bundle.crt`, injected
+by the Notebook Controller) covers the DSPA TLS certificate.
+
+### Resolution
+If a dashboard-created workbench is ever needed, delete the GitOps-managed
+Notebook CR, recreate the workbench through the RHOAI dashboard (connecting
+the pipelines server), export the resulting Notebook CR, and replace the
+manifest in openshift/gitops/workbench/notebook.yaml.
+
+---
+
+## TD-005: PAD token used as UNK corruption in MaskingStrategy
+
+**Date:** 2026-05-18
+**Severity:** Low (training correctness; PAD and UNK are both excluded from MLM loss)
+**Status:** Known deviation — documented, not yet resolved
+
+### Description
+`src/masking/strategy.py` uses `TokenizerPipeline.PAD_ID = 0` as the
+corruption token for the "UNK replacement" path in masking (§2.3.5).
+
+The paper specifies that a fraction of selected positions are replaced
+with the [UNK] token as input dropout (excluded from MLM loss).
+
+`TokenizerPipeline` defines four specials: PAD (0), MASK (1), CLS (2), SEP (3).
+There is no dedicated [UNK] token. PAD_ID is used in its place.
+
+```python
+# strategy.py
+_UNK_TOKEN_ID: int = TokenizerPipeline.PAD_ID   # 0 — [UNK] replacement (no global UNK)
+```
+
+### Risk
+- `EmbeddingAssembler` may interpret ID=0 as a PAD token (valid embedding slot)
+  rather than as an [UNK] corruption — the embedding value differs from intent
+- If a future VocabularySpec version reserves ID=0 for a different purpose,
+  this silent aliasing becomes a correctness bug
+- The PAD embedding is shared between genuine padding positions and UNK-corrupted
+  positions — the model cannot distinguish them during training
+
+### Resolution
+Add a dedicated [UNK] token to `TokenizerPipeline`'s special token set:
+  `UNK_ID = 4` (appended after SEP)
+
+Update `VocabularySpec` and `EmbeddingAssembler` to allocate an embedding
+for the new UNK ID. Update `_UNK_TOKEN_ID` in `strategy.py` to use
+`TokenizerPipeline.UNK_ID`.
+
+Alternatively, accept PAD-as-UNK as a permanent simplification and update
+the comment in `strategy.py` to remove the "TODO" framing.
+
+### References
+- Paper: Section 2.3.5 (masking corruption)
+- Code: `src/masking/strategy.py` — `_UNK_TOKEN_ID` constant
+- Code: `src/tokenizer/pipeline.py` — special token IDs
+
+---
+
+## TD-006: Multi-node checkpoint resume assumes shared filesystem
+
+**Date:** 2026-05-19
+**Severity:** Medium (blocks fault-tolerant multi-node training; does not affect fresh runs)
+**Status:** Known limitation — safe for demo, must resolve before production
+
+### Description
+`scripts/train_pragma.py` supports `--resume` to restart training from the
+latest checkpoint. The resume logic (lines 419–437) works as follows:
+
+1. Rank 0 searches locally, then downloads from S3 if `--s3-checkpoint-prefix` is set.
+2. Rank 0 broadcasts a `found` flag (0 or 1) to all ranks via `dist.broadcast`.
+3. Non-rank-0 workers then call `_find_latest_local_checkpoint(output_dir)` locally.
+
+Step 3 assumes all ranks share the same filesystem (e.g. a shared NFS PVC).
+In the two-node PyTorchJob manifests (`pytorchjob-pragma-s-2node.yaml`), each
+pod has its own independent `emptyDir` for `/workspace`. The Worker pod's
+`output_dir` is empty on startup, so `_find_latest_local_checkpoint` returns
+`None` and the Worker begins from a randomly initialised model state.
+
+Result: rank 0 resumes from a checkpoint; rank 1 starts from scratch.
+DDP averages gradients across ranks but does not re-synchronise starting
+weights. Training continues with diverged model states.
+
+### Impact on demo manifest
+Low for the `--max-steps 20` smoke run. On a fresh first run no checkpoint
+exists anywhere; `--resume` is a no-op for all ranks and training proceeds
+correctly. The bug only activates on a genuine restart where a checkpoint has
+already been saved (i.e. at least one full epoch completed before the job was
+interrupted).
+
+### Resolution
+Option A (preferred): All ranks download the checkpoint from S3 independently.
+Replace the broadcast + local-find pattern with a direct S3 download on every
+rank, guarded by whether the checkpoint key exists.
+
+Option B: Use a shared ReadWriteMany PVC for `/workspace/outputs` so all pods
+see the same checkpoint file. This reintroduces a PVC and the associated
+scheduling constraint (all pods must schedule on nodes with access to the PVC).
+Contradicts the no-PVC-as-canonical-storage rule in ADR 003.
+
+Option A is consistent with the S3-as-durable-store principle.
+
+### References
+- Code: `scripts/train_pragma.py` lines 419–437 (`_resume` block)
+- Manifest: `openshift/training/pytorchjob-pragma-s-2node.yaml`
+- ADR 003: docs/decisions/003-workbench-training-api.md (no PVC canonical storage)

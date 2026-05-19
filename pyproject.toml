@@ -10,6 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 
+[project.optional-dependencies]
+# kfp is optional: pipeline components and pragma_pipeline.py import it
+# conditionally (_KFP_AVAILABLE guard). Core training and the workbench API
+# work without kfp installed.
+workbench = ["kfp>=2"]
+
 [tool.mypy]
 strict = true
 ignore_missing_imports = true

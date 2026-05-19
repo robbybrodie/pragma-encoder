@@ -1,28 +1,138 @@
+# RHOAI Workbench — Notebook CR
+# Wave 4: applied after the DSPA (wave 3). The workbench image must exist
+# (built in wave 2) before the workbench pod can start, but the ArgoCD sync
+# won't block on build completion — the Notebook controller will retry until
+# the ImageStreamTag is available.
+#
+# DO NOT add securityContext, serviceAccountName, or port definitions —
+# the Kubeflow Notebook Controller injects these from the namespace SCC
+# and platform defaults.
+#
+# The nodeSelector pins the workbench to a GPU node. Combined with the
+# pipeline's nodeSelector (same label), this guarantees the workbench and
+# all pipeline steps land on the same node — required because the shared
+# PVC (pragma-encoder-workbench-data) is EBS ReadWriteOnce (one node only).
 apiVersion: kubeflow.org/v1
 kind: Notebook
 metadata:
-  name: pragma-workbench
+  name: pragma-encoder-workbench
   namespace: pragma-encoder
   labels:
-    app: pragma-encoder
-    app.kubernetes.io/managed-by: argocd
-    opendatahub.io/odh-managed: "true"
+    app: pragma-encoder-workbench
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    # Required: triggers oauth-proxy sidecar injection for SSO
+    notebooks.opendatahub.io/inject-oauth: 'true'
+    opendatahub.io/image-display-name: "PRAGMA Encoder"
+    openshift.io/display-name: "PRAGMA Encoder Workbench"
+    openshift.io/description: "Workbench for training and evaluating the PRAGMA transaction foundation model"
+    notebooks.opendatahub.io/last-image-selection: "pragma-encoder-workbench:latest"
+    opendatahub.io/username: kube:admin
+    notebooks.opendatahub.io/oauth-logout-url: 'https://rhods-dashboard-redhat-ods-applications.apps.ocpai-demo.sandbox3438.opentlc.com/projects/pragma-encoder?notebookLogout=pragma-encoder-workbench'
 spec:
   template:
     spec:
-      containers:
-        - name: pragma-workbench
-          image: pragma-encoder:latest
-          resources:
-            limits:
-              memory: "16Gi"
-              nvidia.com/gpu: "1"
-            requests:
-              memory: "8Gi"
+      # Clones the repo and pulls Git LFS model files on first boot.
+      # Idempotent: skips clone if .git already exists (PVC survives pod restarts).
+      # Uses the same workbench image so no external pull is needed (image is
+      # in the cluster-internal registry after the BuildConfig completes).
+      # Has git and git-lfs pre-installed. Runs non-root (SCC-assigned UID),
+      # same UID as the main container so file ownership is consistent.
+      initContainers:
+        - name: git-clone
+          image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              REPO=/opt/app-root/src/pragma-encoder
+              if [ -d "${REPO}/.git" ]; then
+                echo "Repo already present — skipping clone"
+              else
+                echo "Cloning repository..."
+                git clone \
+                  --branch pragma-implementation \
+                  --single-branch \
+                  https://github.com/robbybrodie/pragma-encoder.git \
+                  "${REPO}"
+                cd "${REPO}"
+                git lfs install
+                echo "Pulling LFS objects..."
+                git lfs pull || echo "Warning: LFS pull incomplete — run 'git lfs pull' in the workbench if needed"
+              fi
+              echo "Init complete."
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           volumeMounts:
-            - name: pragma-workbench-storage
+            - name: workbench-data
+              mountPath: /opt/app-root/src
+      # Deployment requirement: GPU node must have ≥ 2 GPUs so the workbench
+      # (1 GPU) and sequential pipeline GPU steps (1 GPU each) can coexist.
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: pragma-encoder-workbench
+          image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+          imagePullPolicy: Always
+          env:
+            # NOTEBOOK_BASE_URL is read by start-notebook.sh (the S2I entrypoint)
+            # to set --ServerApp.base_url. The Notebook Controller injects NB_PREFIX
+            # but start-notebook.sh only reads NOTEBOOK_BASE_URL — they are different
+            # env vars. Without this, JupyterLab serves at / and the OAuth proxy
+            # returns 404 for all requests under /notebook/pragma-encoder/...
+            - name: NOTEBOOK_BASE_URL
+              value: /notebook/pragma-encoder/pragma-encoder-workbench
+            # Disable JupyterLab token/password auth. The OAuth proxy sidecar
+            # (injected by inject-oauth: 'true') handles authentication via
+            # OpenShift OAuth. JupyterLab must run without its own auth or it
+            # will present a token page even after the OAuth proxy authenticates.
+            - name: NOTEBOOK_ARGS
+              value: "--ServerApp.token= --ServerApp.password="
+            # KFP pipeline API endpoint — namespace-local service, port 8888 HTTPS
+            # (direct path, no OAuth proxy hop). The RHOAI notebook-controller cannot
+            # inject KFP_API_HOST via ds-pipeline-config when the secret is declared
+            # outside the workbench controller's ownership chain. Explicit env vars
+            # make the GitOps deployment self-contained and survive pod restarts.
+            # See docs/tech-debt.md TD-004.
+            - name: KFP_API_HOST
+              value: "https://ds-pipeline-pipelines-definition.pragma-encoder.svc.cluster.local:8888"
+            - name: KF_PIPELINES_ENDPOINT
+              value: "https://ds-pipeline-pipelines-definition.pragma-encoder.svc.cluster.local:8888"
+          envFrom:
+            - secretRef:
+                name: pragma-workbench-env
+          resources:
+            requests:
+              cpu: "4"
+              memory: 32Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: 64Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: workbench-data
               mountPath: /opt/app-root/src
       volumes:
-        - name: pragma-workbench-storage
+        - name: workbench-data
           persistentVolumeClaim:
-            claimName: pragma-workbench-pvc
+            claimName: pragma-encoder-workbench-data
+---
+# PersistentVolumeClaim for workbench home directory
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pragma-encoder-workbench-data
+  namespace: pragma-encoder
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi

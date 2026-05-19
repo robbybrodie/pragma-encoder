@@ -1,0 +1,280 @@
+# PRAGMA-S single-node PyTorchJob — S3 data source
+# -------------------------------------------------------
+# Apply manually when ready to train (NOT auto-synced by ArgoCD):
+#   oc apply -f openshift/training/pytorchjob-pragma-s.yaml -n pragma-encoder
+#
+# RHOAI 3.3 supports PyTorchJob (kubeflow.org/v1) only.
+# The KFTO v2 TrainJob (trainer.kubeflow.org/v1alpha1) is NOT supported.
+#
+# Data flow:
+#   S3 (source of truth) ──init-container──► /workspace/data/   (emptyDir)
+#   Training outputs      ──rank-0 upload──► S3
+#
+# PVC is intentionally absent:
+#   - workbench-data PVC removed: code is git-cloned fresh by the init container
+#   - model-output PVC removed: outputs are uploaded to S3 by rank-0 post-training
+#   - emptyDir /workspace is ephemeral local execution storage only; it is
+#     destroyed when the pod exits. S3 is the durable store for all artifacts.
+#   - Removing RWO/RWX PVCs eliminates the single-node scheduling constraint
+#     and allows the job to run on any available GPU node.
+#
+# S3 credentials:
+#   All S3 access uses pragma-workbench-env (sealed via gitops/secrets/).
+#   Keys: MODEL_REGISTRY_ACCESS_KEY, MODEL_REGISTRY_SECRET_KEY,
+#         MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT.
+#   Do not hardcode credentials here.
+#
+# Python scripts in env vars:
+#   S3_STAGE_SCRIPT and S3_UPLOAD_SCRIPT are stored in env vars so they can
+#   be passed to python3 -c "$VAR" without heredoc syntax, which would break
+#   YAML parsing (zero-indented heredoc body terminates the block scalar).
+#
+# Prerequisites:
+#   oc get crd pytorchjobs.kubeflow.org                  # KFTO installed
+#   oc get secret pragma-workbench-env -n pragma-encoder  # credentials exist
+#   # card_transaction.v1.csv and vocab.pkl must already be in S3:
+#   #   s3://<bucket>/pragma-encoder/data/tabformer/card_transaction.v1.csv
+#   #   s3://<bucket>/pragma-encoder/data/tabformer/vocab.pkl
+#   # Upload them from the workbench before submitting this job.
+#
+# Monitor:
+#   oc get pytorchjob pragma-s-pretrain -n pragma-encoder
+#   oc logs -f -l job-name=pragma-s-pretrain,replica-type=master -n pragma-encoder
+#   # Init container logs (data staging):
+#   oc logs -c stage-data \
+#     $(oc get pod -n pragma-encoder -l job-name=pragma-s-pretrain -o name | head -1) \
+#     -n pragma-encoder
+#
+# Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, PRAGMA-S (~10M params)
+---
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: pragma-s-pretrain
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+    variant: pragma-s
+spec:
+  pytorchReplicaSpecs:
+
+    # Master: rank-0 process — always exactly 1 replica
+    Master:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          labels:
+            app: pragma-s-pretrain
+        spec:
+          # ServiceAccount with anyuid SCC grant — required because the training
+          # container may run as root (uid 0), which OpenShift's restricted-v2
+          # SCC does not permit. Created by openshift/gitops/rbac/service-accounts.yaml.
+          serviceAccountName: pragma-encoder-training
+
+          # GPU node selector. The nvidia.com/gpu resource request already
+          # constrains scheduling to GPU nodes; this is retained for explicitness.
+          nodeSelector:
+            nvidia.com/gpu.present: "true"
+
+          # ----------------------------------------------------------------
+          # Init container — data staging
+          #
+          # Responsibility: populate /workspace before the main container starts.
+          #   /workspace/repo/  — git clone of pragma-encoder (pragma-implementation)
+          #   /workspace/data/  — training data staged from S3
+          #
+          # The main container assumes both are present and does not retry on
+          # missing data. A non-zero exit from this container prevents training.
+          #
+          # Image: workbench image reused to avoid Docker Hub rate-limit risk.
+          # Already pulled on GPU nodes; contains git, Python 3, and boto3
+          # (boto3 is a transitive dependency of NeMo's cloud checkpointing).
+          #
+          # S3 is the source of truth for training data.
+          # emptyDir /workspace is ephemeral local execution storage only.
+          # ----------------------------------------------------------------
+          initContainers:
+            - name: stage-data
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
+              env:
+                # Python script stored in an env var to avoid heredoc syntax.
+                # YAML |  block strips leading indentation so Python receives
+                # correctly indented module-level code; boto3 f-string {vars}
+                # are not expanded by bash because they carry no $ prefix.
+                - name: S3_STAGE_SCRIPT
+                  value: |
+                    import boto3, os, pathlib
+                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
+                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
+                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
+                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    dest = pathlib.Path('/workspace/data/tabformer')
+                    dest.mkdir(parents=True, exist_ok=True)
+                    s3 = boto3.client(
+                        's3',
+                        endpoint_url=endpoint,
+                        aws_access_key_id=access,
+                        aws_secret_access_key=secret,
+                        region_name='us-west-2',
+                    )
+                    files = [
+                        ('pragma-encoder/data/tabformer/card_transaction.v1.csv', 'card_transaction.v1.csv'),
+                        ('pragma-encoder/data/tabformer/vocab.pkl',               'vocab.pkl'),
+                    ]
+                    for s3_key, fname in files:
+                        local = dest / fname
+                        print(f'  s3://{bucket}/{s3_key} -> {local}', flush=True)
+                        s3.download_file(bucket, s3_key, str(local))
+                        print(f'  ok ({local.stat().st_size:,} bytes)', flush=True)
+                    print('Data staging complete.', flush=True)
+              # S3 credentials injected from the existing sealed-secret-backed Secret.
+              # The same secret is used by the workbench pod and the KFP DSPA server.
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  # ---- Clone repository ---------------------------------
+                  # GitHub holds code; S3 holds data. Clone fresh so the job
+                  # is decoupled from any PVC state or local modifications.
+                  echo "==> Cloning pragma-encoder (pragma-implementation) ..."
+                  git clone \
+                    https://github.com/robbybrodie/pragma-encoder.git \
+                    /workspace/repo \
+                    --branch pragma-implementation \
+                    --depth 1
+                  echo "==> Repo cloned: $(ls /workspace/repo)"
+
+                  # ---- Stage training data from S3 ----------------------
+                  # Exit non-zero on any failure — pod must not proceed to
+                  # training with missing or partial data.
+                  echo "==> Staging training data from S3 ..."
+                  python3 -c "$S3_STAGE_SCRIPT"
+                  echo "==> Init complete."
+              volumeMounts:
+                # emptyDir shared with the main container.
+                # Init container writes; main container reads.
+                - name: workspace
+                  mountPath: /workspace
+
+          # ----------------------------------------------------------------
+          # Main training container
+          # Assumes /workspace/repo/ and /workspace/data/ are populated.
+          # Rank 0 uploads outputs to S3 after training; rank > 0 skips.
+          # ----------------------------------------------------------------
+          containers:
+            - name: pytorch
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
+              env:
+                # Post-training S3 upload script — rank 0 only.
+                # Same env-var pattern as S3_STAGE_SCRIPT above.
+                - name: S3_UPLOAD_SCRIPT
+                  value: |
+                    import boto3, os, pathlib
+                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
+                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
+                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
+                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    s3 = boto3.client(
+                        's3',
+                        endpoint_url=endpoint,
+                        aws_access_key_id=access,
+                        aws_secret_access_key=secret,
+                        region_name='us-west-2',
+                    )
+                    src_dir   = pathlib.Path('/workspace/outputs/pragma-s')
+                    s3_prefix = 'pragma-encoder/outputs/pragma-s'
+                    uploaded  = 0
+                    for local in sorted(src_dir.rglob('*')):
+                        if not local.is_file():
+                            continue
+                        key = f'{s3_prefix}/{local.relative_to(src_dir).as_posix()}'
+                        print(f'  {local} -> s3://{bucket}/{key}', flush=True)
+                        s3.upload_file(str(local), bucket, key)
+                        uploaded += 1
+                    print(f'Upload complete: {uploaded} file(s).', flush=True)
+              # S3 credentials — same secret as init container
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  # ---- Training ------------------------------------------
+                  # Run from repo root — train_pragma.py inserts
+                  # Path(__file__).parent.parent (= /workspace/repo) into
+                  # sys.path, which contains src/ for all PRAGMA imports.
+                  echo "==> Starting PRAGMA-S pretraining (rank=${RANK:-0}) ..."
+                  cd /workspace/repo
+                  python scripts/train_pragma.py \
+                    --model-variant pragma-s \
+                    --csv-path  /workspace/data/tabformer/card_transaction.v1.csv \
+                    --vocab-path /workspace/data/tabformer/vocab.pkl \
+                    --output-dir /workspace/outputs/pragma-s \
+                    --s3-checkpoint-prefix pragma-encoder/checkpoints/pragma-s \
+                    --resume \
+                    --epochs     1 \
+                    --batch-size 16 \
+                    --max-steps  20 \
+                    --log-every  10
+                  echo "==> Training complete (rank=${RANK:-0})."
+
+                  # ---- Post-training upload — rank 0 only ----------------
+                  # RANK is injected by the KFTO launcher into every replica.
+                  # Workers at rank > 0 skip the upload silently.
+                  if [ "${RANK:-0}" = "0" ]; then
+                    echo "==> Rank 0: uploading outputs to S3 ..."
+                    python3 -c "$S3_UPLOAD_SCRIPT"
+                    echo "==> Upload done."
+                  else
+                    echo "==> Rank ${RANK}: skipping upload (rank 0 handles it)."
+                  fi
+              resources:
+                requests:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
+                limits:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
+              volumeMounts:
+                # /workspace: emptyDir populated by the init container.
+                # Ephemeral local execution storage — not a durable store.
+                # S3 is the durable store for both inputs and outputs.
+                - name: workspace
+                  mountPath: /workspace
+                # /dev/shm: expanded shared memory for PyTorch DataLoader workers
+                - name: dshm
+                  mountPath: /dev/shm
+
+          volumes:
+            # workspace — ephemeral local execution storage.
+            # Shared between init container (writes) and main container (reads/writes).
+            # PVC intentionally absent: emptyDir avoids RWO/RWX scheduling coupling
+            # and allows the pod to schedule on any available GPU node.
+            # Destroyed when the pod exits; S3 is the durable artifact store.
+            - name: workspace
+              emptyDir:
+                sizeLimit: 100Gi
+            # dshm — expanded /dev/shm for PyTorch DataLoader shared memory
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 8Gi
+
+          imagePullSecrets:
+            - name: pragma-registry
+
+    # Single-node job — no Worker spec.
+    # KFTO webhook rejects Worker.replicas=0; omit Worker for Master-only jobs.

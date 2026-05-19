@@ -33,7 +33,7 @@ Processes static customer attributes. Outputs [USR] token.
 | Paper element | This repo |
 |---|---|
 | Bidirectional Transformer | `src/encoders/profile_state_encoder.py::ProfileStateEncoder` |
-| [USR] token | `ProfileStateEncoder.usr_token` parameter |
+| [USR] token | Prepended by `src/model/assembler.py::EmbeddingAssembler` at position 0 of `xa` before `ProfileStateEncoder.forward()` is called. `ProfileStateEncoder` receives it at `xa[:,0,:]` — it does not inject the token itself. |
 | RoPE on timestamp positions | `src/encoders/rope.py::RoPEEncoding` |
 
 ---
@@ -45,8 +45,8 @@ Processes a single transaction. Outputs [EVT] token.
 | Paper element | This repo |
 |---|---|
 | Bidirectional Transformer | `src/encoders/event_encoder.py::EventEncoder` |
-| [EVT] token | `EventEncoder.evt_token` parameter |
-| Calendar token embeddings | `src/encoders/event_encoder.py::CalendarEmbedding` |
+| [EVT] token | Prepended by `src/model/assembler.py::EmbeddingAssembler` at position 0 of each event (`xe[:,:,0,:]`) before `EventEncoder.forward()` is called. `EventEncoder` receives it already at position 0 — it does not inject the token itself. |
+| Calendar token embeddings | `src/encoders/event_encoder.py::EventEncoder._CalendarMLP` (private class; `sincos → 2-layer MLP → zt`, Equation 3) |
 
 ---
 
@@ -80,8 +80,15 @@ there is no cross-attention sublayer and no dedicated history summary token.
 | Sequence packing | `src/training/packing.py::SequencePacker` |
 | Dynamic batching | `src/training/batching.py::DynamicBatchSampler` |
 | Training entrypoint | `scripts/train_pragma.py` |
-| KFP pipeline | `pipeline/pragma_pipeline.py` |
-| KFTO PyTorchJob | `openshift/gitops/training/pytorchjob-pragma-s.yaml` |
+| KFP pipeline components | `pipeline/components_pragma.py` — five components (`prepare_dataset`, `upload_artifacts`, `submit_pytorchjob`, `run_pretraining`, `export_checkpoint`); `PIPELINE_STAGE_NAMES` mirrors `PIPELINE_STEP_NAMES`; kfp optional |
+| KFP pipeline | `pipeline/pragma_pipeline.py::pragma_pretraining_pipeline` — five visible §2.4 stages; kfp optional (`_KFP_AVAILABLE` guard); canonical contract is `manifest_uri` (DatasetManifest), not PVC |
+| KFTO PyTorchJob (single-node) | `openshift/training/pytorchjob-pragma-s.yaml` |
+| KFTO PyTorchJob (two-node) | `openshift/training/pytorchjob-pragma-s-2node.yaml` |
+| S3-backed dataset reference (§2.4 data storage) | `src/data/dataset_manifest.py::DatasetManifest` — immutable reference to prepared shards; carries `PRAGMAConfig` truncation limits (`max_event_tokens=24`, `max_profile_tokens=200`, `max_events=6500`) |
+| Prepared data shard (CSV, Parquet, Arrow) | `src/data/dataset_manifest.py::DatasetShard` — one prepared file within a manifest; format-agnostic |
+| Dataset preparation (IBM TabFormer → manifest) | `src/data/adapters/ibm_tabformer.py::IBMTabFormerAdapter` — fits `FinancialTokenizerPipeline` on 80% training split, serialises vocab, returns `DatasetManifest` with one CSV shard; `upload=False` for local dev |
+| Workbench training API | `src/workbench/_api.py::train_pragma` — maps §2.4 stages to execution path; `mode="dry_run"` returns a `PragmaRun` preview (no side effects); validates `model_size` {"S","M","L"} and `dataset` via adapter registry before dispatch |
+| Pipeline-visible run result | `src/workbench/_run.py::PragmaRun` — wraps a training job; `show_pipeline()` prints the five §2.4 stages (`prepare → upload → submit → train → export`) with status; `metrics()` and `artifacts()` return defensive-copy dicts |
 
 ---
 
