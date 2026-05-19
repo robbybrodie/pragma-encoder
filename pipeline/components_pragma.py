@@ -24,8 +24,6 @@ Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 ADR: docs/decisions/003-workbench-training-api.md
 """
 
-from __future__ import annotations
-
 # ---------------------------------------------------------------------------
 # KFP optional import guard
 # ---------------------------------------------------------------------------
