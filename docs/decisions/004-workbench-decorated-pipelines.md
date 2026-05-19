@@ -207,11 +207,68 @@ are unchanged.
 1. No training, no S3, no cluster access at decoration time
 2. No `from pipeline` or `import pipeline` static imports in `src/`
 3. No PVC parameters introduced in `dataset()`, `train()`, or `pragma_pipeline()`
-4. compile() must not submit training or mutate S3
+4. `compile()` must not submit training or mutate S3
 5. `submit()` raises `NotImplementedError` until explicitly implemented
 6. `mode="dry_run"` and `mode="local"` are unchanged
 7. KFP is optional — absence must fail clearly, not silently
 8. Pipeline components (`pipeline/`) are reused, not duplicated
+9. **Decorated function must call `train()` exactly once** (see Capture Validation below)
+10. **Lazy-import boundary is `compile()` only** (see Lazy-Import Boundary below)
+
+---
+
+## Capture Validation
+
+`@pragma_pipeline` validates the capture list immediately after executing the
+decorated function. The following invariants are enforced at decoration time
+(not at compile or submit time):
+
+| Captured `train()` calls | Behaviour |
+|--------------------------|-----------|
+| 0 | `ValueError` — mentions `train()`, includes an example fix |
+| 1 | Normal path — `PragmaPipeline` is returned |
+| > 1 | `ValueError` — mentions the call count, directs user to use separate `@pragma_pipeline` definitions |
+
+Rationale: silent fabrication (the prior "unknown" fallback) hides programming
+errors that would only surface at compile or run time. Silent selection of the
+first of multiple `train()` calls produces non-deterministic pipelines if the
+order ever changes. Both are programming errors and must be caught early.
+
+---
+
+## Lazy-Import Boundary
+
+### Rule
+
+`pipeline/` modules may be loaded inside `compile()` only, at call time,
+via `importlib.import_module()`. They must **never** be loaded as a side
+effect of importing any `src/workbench/` module.
+
+```
+Allowed:   compile() → importlib.import_module("pipeline.pragma_pipeline")
+Forbidden: src/workbench/_decorators.py (module level) → import pipeline.*
+```
+
+### Rationale
+
+The `src/ → pipeline/` dependency direction is forbidden by ADR 003 because:
+- `pipeline/` imports `src/` — a static cycle would make `src/` untestable in isolation
+- The KFP `@dsl.component` / `@dsl.pipeline` decorators have import-time side
+  effects that may fail when KFP is not installed
+
+`compile()` is the only method that genuinely needs `pipeline/`. Placing the
+`importlib.import_module` inside `compile()` ensures:
+- The module is loaded only when `compile()` is called (lazy)
+- Importing `src.workbench._decorators` never loads any `pipeline/` module
+- KFP absence raises a clear `RuntimeError` from `compile()`, not an obscure
+  `ImportError` at import time
+
+### Enforcement
+
+`tests/test_pipeline_components.py::TestNoCircularDependency::test_decorators_do_not_load_pipeline_at_import_time`
+verifies this at runtime: it imports `src.workbench._decorators` and asserts
+that no module whose name starts with `"pipeline"` appears in `sys.modules`
+as a result.
 
 ---
 

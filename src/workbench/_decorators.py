@@ -33,7 +33,6 @@ import importlib
 from typing import Callable
 
 from src.workbench._intent import (
-    DatasetIntent,
     TrainIntent,
     start_capture,
     stop_capture,
@@ -179,16 +178,22 @@ def pragma_pipeline(*, name: str) -> Callable:
         finally:
             captured = stop_capture()
 
-        # Use the first captured TrainIntent. Graceful fallback for edge cases
-        # where the function body calls train() zero times.
-        if captured:
-            train_intent = captured[0]
-        else:
-            train_intent = TrainIntent(
-                dataset=DatasetIntent(name="unknown"),
-                model_size="S",
+        if len(captured) == 0:
+            raise ValueError(
+                "@pragma_pipeline decorated function must call train() exactly once. "
+                "No train() call was found in the function body. "
+                "Add a train() call inside the decorated function, e.g.:\n"
+                "    @pragma_pipeline(name='my-pipeline')\n"
+                "    def run():\n"
+                "        ds = dataset('ibm-tabformer')\n"
+                "        train(dataset=ds, model_size='S', epochs=10)"
             )
-
-        return PragmaPipeline(name=name, train_intent=train_intent)
+        if len(captured) > 1:
+            raise ValueError(
+                f"@pragma_pipeline decorated function must call train() exactly once. "
+                f"Found {len(captured)} train() calls — intent is ambiguous. "
+                f"Use separate @pragma_pipeline definitions for separate training runs."
+            )
+        return PragmaPipeline(name=name, train_intent=captured[0])
 
     return decorator

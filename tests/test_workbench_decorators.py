@@ -869,3 +869,83 @@ class TestNoPvcStorage:
         assert not pvc_strings, (
             f"_intent.py contains PVC references: {pvc_strings}"
         )
+
+
+# ===========================================================================
+# 13. TestDecoratorValidation
+#     @pragma_pipeline raises on zero or multiple train() calls.
+# ===========================================================================
+
+class TestDecoratorValidation:
+    """Verify @pragma_pipeline raises instead of silently fabricating intent.
+
+    ADR 004 hardening: a decorated function must call train() exactly once.
+    Zero calls → the decorator cannot capture intent and must not fabricate.
+    Multiple calls → ambiguous intent; the decorator must not silently pick one.
+    Both cases raise ValueError with a helpful message that mentions train().
+    """
+
+    def test_zero_train_calls_raises_value_error(self) -> None:
+        """ADR 004: @pragma_pipeline raises ValueError when train() is never called.
+
+        The decorator must not silently fabricate a TrainIntent with
+        name='unknown'. A missing train() call is a programming error
+        and must be surfaced immediately at decoration time.
+        """
+        with pytest.raises(ValueError):
+            @pragma_pipeline(name="no-train")
+            def _run():
+                ds = dataset(_VALID_DATASET)
+                # Deliberately omit train() call
+
+    def test_zero_train_calls_error_mentions_train_function(self) -> None:
+        """ADR 004: the ValueError for zero train() calls must mention train().
+
+        The error message must guide the data scientist toward the fix:
+        adding a train() call inside the decorated function body.
+        """
+        with pytest.raises(ValueError) as exc_info:
+            @pragma_pipeline(name="no-train-message")
+            def _run():
+                ds = dataset(_VALID_DATASET)
+                # Deliberately omit train() call
+
+        msg = str(exc_info.value).lower()
+        assert "train" in msg, (
+            f"ValueError for zero train() calls must mention 'train'. "
+            f"Got: {exc_info.value!r}"
+        )
+
+    def test_multiple_train_calls_raises(self) -> None:
+        """ADR 004: @pragma_pipeline raises when train() is called more than once.
+
+        Multiple train() calls produce ambiguous intent — it is unclear which
+        training configuration should be compiled. The decorator must reject
+        this rather than silently picking the first (or any other) call.
+        """
+        with pytest.raises((ValueError, NotImplementedError)):
+            @pragma_pipeline(name="two-trains")
+            def _run():
+                ds = dataset(_VALID_DATASET)
+                train(dataset=ds, model_size="S", epochs=1)
+                train(dataset=ds, model_size="M", epochs=2)  # second call — ambiguous
+
+    def test_multiple_train_calls_error_is_helpful(self) -> None:
+        """ADR 004: the error for multiple train() calls must be actionable.
+
+        The error message must help the data scientist understand that only
+        one train() call is allowed per @pragma_pipeline decorated function.
+        It must mention either 'train' or 'once' or 'one'.
+        """
+        with pytest.raises((ValueError, NotImplementedError)) as exc_info:
+            @pragma_pipeline(name="two-trains-message")
+            def _run():
+                ds = dataset(_VALID_DATASET)
+                train(dataset=ds, model_size="S", epochs=1)
+                train(dataset=ds, model_size="M", epochs=2)
+
+        msg = str(exc_info.value).lower()
+        assert "train" in msg or "once" in msg or "one" in msg, (
+            f"Error for multiple train() calls must mention 'train', 'once', or 'one'. "
+            f"Got: {exc_info.value!r}"
+        )
