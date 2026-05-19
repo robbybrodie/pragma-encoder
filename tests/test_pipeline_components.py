@@ -467,27 +467,6 @@ class TestPipelineFunction:
             f"pragma_pretraining_pipeline nodes must default to 1, got {p.default}"
         )
 
-    def test_pipeline_function_accepts_manifest_uri(self) -> None:
-        """ADR 003: pipeline must accept manifest_uri to skip prepare/upload stages.
-
-        When manifest_uri is provided (non-empty), the pipeline skips prepare and
-        upload and goes directly to submit.  This lets users re-submit training
-        on already-prepared data without re-running the expensive prepare stage.
-        """
-        assert "manifest_uri" in self._params(), (
-            "pragma_pretraining_pipeline must accept a 'manifest_uri' parameter "
-            "so callers can supply a pre-prepared DatasetManifest URI."
-        )
-
-    def test_pipeline_manifest_uri_default_is_empty_string(self) -> None:
-        """ADR 003: manifest_uri must default to '' (empty = run prepare from scratch)."""
-        p = self._params().get("manifest_uri")
-        assert p is not None
-        assert p.default == "", (
-            f"manifest_uri must default to '' (empty = run prepare stage), "
-            f"got default={p.default!r}"
-        )
-
     def test_pipeline_function_accepts_epochs(self) -> None:
         """§2.4: pipeline must accept epochs: int."""
         assert "epochs" in self._params(), (
@@ -501,6 +480,211 @@ class TestPipelineFunction:
         assert p.default == 10, (
             f"epochs must default to 10 (consistent with train_pragma), "
             f"got {p.default}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestPragmaPretrainingPipelineHonestContract  (category: interface)
+# ---------------------------------------------------------------------------
+
+class TestPragmaPretrainingPipelineHonestContract:
+    """pragma_pretraining_pipeline always runs all five §2.4 stages. No skip path.
+
+    Category: interface
+    Paper: Section 2.4 (Training Infrastructure)
+    ADR 003: five sequential stages — prepare, upload, submit, train, export.
+
+    The pipeline previously advertised a manifest_uri skip path that was
+    never implemented (the implementation always ran prepare and upload).
+    These tests lock down the honest contract: all five stages always run.
+    Callers who already have a manifest use pragma_train_from_manifest_pipeline.
+    """
+
+    def test_full_pipeline_has_no_manifest_uri_param(self) -> None:
+        """§2.4: pragma_pretraining_pipeline must not expose manifest_uri.
+
+        The skip path was never implemented.  Removing the parameter makes
+        the contract honest: this pipeline always runs prepare and upload.
+        Callers with an existing manifest use pragma_train_from_manifest_pipeline.
+        """
+        _require_importable()
+        fn = getattr(_pipe, "pragma_pretraining_pipeline", None)
+        assert fn is not None
+        sig = inspect.signature(fn)
+        assert "manifest_uri" not in sig.parameters, (
+            "pragma_pretraining_pipeline must not have a manifest_uri parameter. "
+            "It always runs all five stages. Use pragma_train_from_manifest_pipeline "
+            "for the manifest-bypass path."
+        )
+
+    def test_full_pipeline_source_calls_prepare_dataset(self) -> None:
+        """§2.4 stage 1: prepare_dataset must be wired in the full pipeline."""
+        src = _src_text(_PIPELINE_PATH)
+        assert "prepare_dataset" in src, (
+            "pragma_pretraining_pipeline source must call prepare_dataset (stage 1). "
+            "All five stages must always run in this pipeline."
+        )
+
+    def test_full_pipeline_source_calls_upload_artifacts(self) -> None:
+        """§2.4 stage 2: upload_artifacts must be wired in the full pipeline."""
+        src = _src_text(_PIPELINE_PATH)
+        assert "upload_artifacts" in src, (
+            "pragma_pretraining_pipeline source must call upload_artifacts (stage 2). "
+            "All five stages must always run in this pipeline."
+        )
+
+    def test_full_pipeline_docstring_no_skip_claim(self) -> None:
+        """§2.4: pragma_pretraining_pipeline docstring must not claim stages are skipped."""
+        _require_importable()
+        fn = getattr(_pipe, "pragma_pretraining_pipeline", None)
+        assert fn is not None
+        doc = fn.__doc__ or ""
+        assert "skip" not in doc.lower(), (
+            "pragma_pretraining_pipeline docstring must not claim prepare/upload "
+            "are skipped. The skip path is not implemented. Use honest language."
+        )
+        assert "manifest_uri" not in doc, (
+            "pragma_pretraining_pipeline docstring must not mention manifest_uri — "
+            "that parameter no longer exists on this pipeline."
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestTrainFromManifestPipeline  (category: interface)
+# ---------------------------------------------------------------------------
+
+class TestTrainFromManifestPipeline:
+    """pragma_train_from_manifest_pipeline: submit+train+export only.
+
+    Category: interface
+    Paper: Section 2.4 (Training Infrastructure) stages 3-5.
+    ADR 003: manifest_uri as canonical dataset contract.
+
+    This pipeline accepts a pre-prepared DatasetManifest URI and runs only
+    the cluster-facing stages: submit -> train -> export.
+    It must NOT call prepare_dataset or upload_artifacts.
+    """
+
+    def test_function_exists(self) -> None:
+        """§2.4: pragma_train_from_manifest_pipeline must be defined."""
+        _require_importable()
+        assert hasattr(_pipe, "pragma_train_from_manifest_pipeline"), (
+            "pipeline/pragma_pipeline.py must define pragma_train_from_manifest_pipeline(). "
+            "This is the honest manifest-bypass pipeline (stages 3-5 only)."
+        )
+        assert callable(getattr(_pipe, "pragma_train_from_manifest_pipeline")), (
+            "pragma_train_from_manifest_pipeline must be callable."
+        )
+
+    def _sig(self) -> inspect.Signature:
+        _require_importable()
+        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
+        assert fn is not None, "pragma_train_from_manifest_pipeline must be defined."
+        return inspect.signature(fn)
+
+    def _params(self) -> dict:
+        return dict(self._sig().parameters)
+
+    def test_has_manifest_uri_required_param(self) -> None:
+        """§2.4 / ADR 003: manifest_uri must be a required parameter (no default).
+
+        Requiring manifest_uri with no default prevents accidental invocation
+        without a prepared dataset — the pipeline would fail with no manifest.
+        """
+        params = self._params()
+        assert "manifest_uri" in params, (
+            "pragma_train_from_manifest_pipeline must have a manifest_uri parameter."
+        )
+        assert params["manifest_uri"].default is inspect.Parameter.empty, (
+            "manifest_uri must be required (no default). "
+            "Callers must always supply a prepared DatasetManifest URI."
+        )
+
+    def test_has_no_dataset_name_param(self) -> None:
+        """§2.4: no dataset_name — this pipeline does not call the adapter registry."""
+        assert "dataset_name" not in self._params(), (
+            "pragma_train_from_manifest_pipeline must not have a dataset_name parameter. "
+            "It skips prepare/upload and does not use the DatasetAdapter registry."
+        )
+
+    def test_source_does_not_call_prepare_dataset(self) -> None:
+        """§2.4 stage 1: prepare_dataset must NOT be wired in the manifest pipeline."""
+        src = _src_text(_PIPELINE_PATH)
+        # The function body of pragma_train_from_manifest_pipeline must not call
+        # prepare_dataset.  We check the function's own source (after its def line).
+        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
+        assert fn is not None
+        fn_src = inspect.getsource(fn)
+        assert "prepare_dataset" not in fn_src, (
+            "pragma_train_from_manifest_pipeline must not call prepare_dataset. "
+            "Stage 1 (prepare) is skipped — the manifest already exists in S3."
+        )
+
+    def test_source_does_not_call_upload_artifacts(self) -> None:
+        """§2.4 stage 2: upload_artifacts must NOT be wired in the manifest pipeline."""
+        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
+        assert fn is not None
+        fn_src = inspect.getsource(fn)
+        assert "upload_artifacts" not in fn_src, (
+            "pragma_train_from_manifest_pipeline must not call upload_artifacts. "
+            "Stage 2 (upload) is skipped — the data is already in S3."
+        )
+
+    def test_source_calls_submit_pytorchjob(self) -> None:
+        """§2.4 stage 3: submit_pytorchjob must be wired in the manifest pipeline."""
+        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
+        assert fn is not None
+        fn_src = inspect.getsource(fn)
+        assert "submit_pytorchjob" in fn_src, (
+            "pragma_train_from_manifest_pipeline must call submit_pytorchjob (stage 3)."
+        )
+
+    def test_source_calls_run_pretraining(self) -> None:
+        """§2.4 stage 4: run_pretraining must be wired in the manifest pipeline."""
+        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
+        assert fn is not None
+        fn_src = inspect.getsource(fn)
+        assert "run_pretraining" in fn_src, (
+            "pragma_train_from_manifest_pipeline must call run_pretraining (stage 4)."
+        )
+
+    def test_source_calls_export_checkpoint(self) -> None:
+        """§2.4 stage 5: export_checkpoint must be wired in the manifest pipeline."""
+        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
+        assert fn is not None
+        fn_src = inspect.getsource(fn)
+        assert "export_checkpoint" in fn_src, (
+            "pragma_train_from_manifest_pipeline must call export_checkpoint (stage 5)."
+        )
+
+    def test_has_model_size_with_default(self) -> None:
+        """§2.4 / Table 1: model_size must default to 'S' (PRAGMA-S)."""
+        params = self._params()
+        assert "model_size" in params, (
+            "pragma_train_from_manifest_pipeline must have a model_size parameter."
+        )
+        assert params["model_size"].default == "S", (
+            f"model_size must default to 'S', got {params['model_size'].default!r}"
+        )
+
+    def test_has_epochs_with_default(self) -> None:
+        """§2.4: epochs must default to 10."""
+        params = self._params()
+        assert "epochs" in params, (
+            "pragma_train_from_manifest_pipeline must have an epochs parameter."
+        )
+        assert params["epochs"].default == 10, (
+            f"epochs must default to 10, got {params['epochs'].default!r}"
+        )
+
+    def test_has_nodes_with_default(self) -> None:
+        """ADR 003: nodes must default to 1 (single-node)."""
+        params = self._params()
+        assert "nodes" in params, (
+            "pragma_train_from_manifest_pipeline must have a nodes parameter."
+        )
+        assert params["nodes"].default == 1, (
+            f"nodes must default to 1 (single-node), got {params['nodes'].default!r}"
         )
 
 
@@ -714,6 +898,29 @@ class TestKfpOptionalExecution:
             )
             assert os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0, (
                 "Pipeline compilation must produce a non-empty YAML file."
+            )
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    def test_manifest_pipeline_compilable_when_kfp_available(self) -> None:
+        """When kfp is installed, pragma_train_from_manifest_pipeline must compile to YAML."""
+        kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping KFP execution tests")
+        import tempfile, os
+        _require_importable()
+        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
+        assert fn is not None, (
+            "pragma_train_from_manifest_pipeline must be defined before KFP compilation."
+        )
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            kfp.compiler.Compiler().compile(
+                pipeline_func=fn,
+                package_path=tmp_path,
+            )
+            assert os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0, (
+                "pragma_train_from_manifest_pipeline compilation must produce a non-empty YAML."
             )
         finally:
             if os.path.exists(tmp_path):
