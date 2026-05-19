@@ -86,10 +86,11 @@ Tests never write to S3 unless explicitly authorised.
 | `PRAGMA_TEST_RUNTIME_NAMESPACE` | `PRAGMA_TEST_NAMESPACE` | Namespace for ephemeral test resources. Use when you want to isolate test-created resources from the Argo-managed namespace. |
 | `PRAGMA_S3_SECRET_NAME` | (unset) | Name of the S3 credentials Secret. Test verifies existence only; data is never read. |
 | `PRAGMA_TRAINING_SERVICE_ACCOUNT` | `pragma-encoder-training` | Name of the training ServiceAccount to verify. |
-| `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset) | Name of the image pull Secret. Test verifies existence only; data is never read. |
+| `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset / `pragma-registry`) | Name of the image pull Secret. Level 1: test verifies existence only (no data access). Level 3b: used as `imagePullSecrets` in the smoke Job pod spec; defaults to `pragma-registry` if unset. |
 | `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 PipelineRun smoke tests. |
 | `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1` | (unset) | Opt-in for Level 3b training container smoke. Requires `PRAGMA_TRAINING_IMAGE`. |
-| `PRAGMA_TRAINING_IMAGE` | (unset) | Image URI for the Level 3b batch/v1 Job smoke. Must have PRAGMA code baked in at WORKDIR. |
+| `PRAGMA_TRAINING_IMAGE` | (unset) | Image URI for the Level 3b batch/v1 Job smoke. Must be built from `openshift/training/Dockerfile.training` with `src/` and `scripts/` baked in at WORKDIR. |
+| `PRAGMA_ALLOW_RUNTIME_GIT_CLONE` | `0` | Level 3b debug fallback only. Set to `1` to allow the smoke Job to git-clone the repo at runtime if the image lacks code. Off by default. Use only to diagnose dependency-only images — not the intended primary path. |
 | `RUN_PYTORCHJOB_TESTS=1` | (unset) | Opt-in for Level 4 PyTorchJob tests. |
 | `PRAGMA_TEST_TIMEOUT_SECONDS` | `300` | Timeout for cluster wait loops (minimum 30s). |
 
@@ -207,26 +208,74 @@ work correctly inside the cluster, before DSPA/KFP pipeline runtime is attempted
 
 It is **not** a PyTorchJob. It is a single-pod `batch/v1 Job` with no DDP.
 
+#### Building the training image
+
+`PRAGMA_TRAINING_IMAGE` must be built from `openshift/training/Dockerfile.training`.
+The workbench notebook image alone is **not** sufficient — it has no source code.
+
+```bash
+# One-time setup: create ImageStream for the training image output
+oc new-build --strategy=docker \
+  --binary \
+  --name=pragma-encoder-training \
+  -n pragma-encoder
+
+# Build from repo root (sends src/, scripts/, pyproject.toml to the build daemon)
+oc start-build pragma-encoder-training \
+  --from-dir=. \
+  --follow \
+  -n pragma-encoder
+
+# Verify the image was pushed
+oc get istag pragma-encoder-training:latest -n pragma-encoder
+```
+
+The resulting image URI is:
+```
+image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
+```
+
+The smoke test validates the image before running training steps. If the image
+lacks code, the Job fails immediately with:
+```
+ERROR: scripts/train_pragma.py not found in image WORKDIR.
+PRAGMA_TRAINING_IMAGE is a dependency-only image, not a training image.
+Rebuild using: openshift/training/Dockerfile.training
+```
+
+#### Running the smoke
+
 Prerequisites:
-- A built PRAGMA training image pushed to a registry accessible from the cluster
-- The image must have the PRAGMA code baked in at its WORKDIR with all Python
-  dependencies installed
+- `PRAGMA_TRAINING_IMAGE` built and pushed (see above)
 - `oc` logged into the cluster
 
 ```bash
 RUN_OPENSHIFT_TESTS=1 \
 RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1 \
 PRAGMA_TEST_NAMESPACE=pragma-encoder \
-PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder:latest \
+PRAGMA_TRAINING_IMAGE=image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest \
 pytest tests/openshift/test_03b_training_job_smoke.py -q
+```
+
+Optional — override image pull secret (default: `pragma-registry`):
+```bash
+PRAGMA_IMAGE_PULL_SECRET_NAME=my-pull-secret \
+...
+```
+
+Optional — debug fallback if image lacks code (off by default, not the intended path):
+```bash
+PRAGMA_ALLOW_RUNTIME_GIT_CLONE=1 \
+...
 ```
 
 What it creates (all label-scoped, cleaned up automatically):
 - `ConfigMap` `pragma-smoke-csv-<test_id>` — 15-row synthetic IBM TabFormer CSV
-- `batch/v1 Job` `pragma-smoke-job-<test_id>` — runs fit_tokenizer + PRAGMA-S --max-steps 1
+- `batch/v1 Job` `pragma-smoke-job-<test_id>` — validates image, runs fit_tokenizer + PRAGMA-S --max-steps 1
 - `Pod` created by the Job controller (auto-labelled by the Job)
 
 What it asserts:
+- Pod logs contain `"Image validation passed"` (src/ and scripts/ found at WORKDIR)
 - Job reaches `Complete` status within `PRAGMA_TEST_TIMEOUT_SECONDS`
 - Pod logs contain `"pragma-s"` (model variant confirmed at startup)
 - Pod logs contain `"Reached --max-steps"` (early-stop confirmed)

@@ -46,12 +46,25 @@ Optional env vars:
                                      (defaults to PRAGMA_TEST_NAMESPACE)
   PRAGMA_TEST_TIMEOUT_SECONDS      — wait timeout (default 300)
 
+Required image contract:
+  PRAGMA_TRAINING_IMAGE must be built from openshift/training/Dockerfile.training.
+  The image must have src/ and scripts/ baked in at WORKDIR so that:
+    scripts/train_pragma.py    is present at WORKDIR
+    src/data/fit_tokenizer.py  is present at WORKDIR
+    python -c "import src.workbench" succeeds from WORKDIR
+  A dependency-only image (e.g. pragma-encoder-workbench without code) will
+  fail the smoke Job at the image validation step with a clear error message.
+
 Known limitations:
   - No S3: the checkpoint is written to emptyDir /tmp/pragma-smoke only.
   - No PyTorchJob (no KFTO, no distributed training).
   - No DDP: num-workers=0, no torchrun.
-  - The training image must have the code baked in at its WORKDIR.
-    See README.md → "Training container smoke" for build requirements.
+
+Debug fallback:
+  PRAGMA_ALLOW_RUNTIME_GIT_CLONE=1 enables a runtime git-clone fallback
+  that clones the repo into the Job container before training. This is off
+  by default and is a debug tool only. The intended path is a proper
+  training image built from openshift/training/Dockerfile.training.
 
 Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Sections 2.3, 2.4
 """
@@ -132,6 +145,12 @@ _REQUIRED_CSV_COLUMNS = frozenset({
 # Shell command that runs inside the Job container.
 #
 # Steps:
+#   0. Validate training image — PRAGMA_TRAINING_IMAGE must have src/ and
+#      scripts/ baked in at WORKDIR. Fails immediately with a clear error
+#      message if the image is dependency-only (no code).
+#   0b. (Debug only) If PRAGMA_ALLOW_RUNTIME_GIT_CLONE=1 is injected via
+#      the Job env, clone the repo at runtime and cd into it.
+#      This is off by default and must never be the primary path.
 #   a. Create scratch directories.
 #   b. Copy mounted ConfigMap CSV to the hardcoded path expected by
 #      src/data/fit_tokenizer.py (data/tabformer/card_transaction.v1.csv).
@@ -143,13 +162,41 @@ _REQUIRED_CSV_COLUMNS = frozenset({
 #   e. Run train_pragma.py with --max-steps 1 (one forward + backward step).
 #
 # Assumptions:
-#   - Container WORKDIR is the project root (code is baked into image).
-#   - PYTHONPATH is set in the image or defaults correctly from WORKDIR.
+#   - PRAGMA_TRAINING_IMAGE is built from openshift/training/Dockerfile.training.
+#   - src/ and scripts/ are baked in at WORKDIR (not a dependency-only image).
+#   - PYTHONPATH is not required — src/ is importable from WORKDIR directly.
 #   - The image has all Python dependencies installed (torch, pandas, etc.).
 # ---------------------------------------------------------------------------
 
 _SMOKE_SHELL = """\
 set -ex
+
+echo "[smoke] Validating training image contains PRAGMA repo code ..."
+for required_path in scripts/train_pragma.py src/data/fit_tokenizer.py; do
+  if [ ! -f "$required_path" ]; then
+    echo "ERROR: $required_path not found in image WORKDIR."
+    echo "PRAGMA_TRAINING_IMAGE is a dependency-only image, not a training image."
+    echo "The image must have src/ and scripts/ baked in at WORKDIR."
+    echo "Rebuild using: openshift/training/Dockerfile.training"
+    exit 1
+  fi
+done
+python -c "import src.workbench" 2>/dev/null || {
+  echo "ERROR: import src.workbench failed."
+  echo "PRAGMA_TRAINING_IMAGE is a dependency-only image, not a training image."
+  echo "The image must have src/ baked in at WORKDIR with PRAGMA code importable."
+  echo "Rebuild using: openshift/training/Dockerfile.training"
+  exit 1
+}
+echo "[smoke] Image validation passed."
+
+if [ "${PRAGMA_ALLOW_RUNTIME_GIT_CLONE:-0}" = "1" ]; then
+  echo "[smoke] WARNING: PRAGMA_ALLOW_RUNTIME_GIT_CLONE=1 — cloning repo as debug fallback ..."
+  git clone https://github.com/robbybrodie/pragma-encoder.git /workspace/repo \
+    --branch pragma-implementation --depth 1
+  cd /workspace/repo
+fi
+
 echo "[smoke] Creating scratch directories ..."
 mkdir -p /tmp/pragma-smoke data/tabformer
 
@@ -177,10 +224,12 @@ echo "[smoke] Training smoke complete."
 """
 
 # Log markers that confirm the Job executed correctly.
-#   "pragma-s"          — model variant logged by train_pragma.py at startup
-#   "Reached --max-steps" — early-stop message written by train_pragma.py
-#                           when global_step >= args.max_steps
+#   "Image validation passed" — image contains src/ and scripts/ at WORKDIR
+#   "pragma-s"               — model variant logged by train_pragma.py at startup
+#   "Reached --max-steps"    — early-stop message written by train_pragma.py
+#                              when global_step >= args.max_steps
 _EXPECTED_LOG_MARKERS: tuple[str, ...] = (
+    "Image validation passed",
     "pragma-s",
     "Reached --max-steps",
 )
@@ -193,6 +242,38 @@ _EXPECTED_LOG_MARKERS: tuple[str, ...] = (
 def _get_training_image() -> Optional[str]:
     """Return PRAGMA_TRAINING_IMAGE or None if not set / empty."""
     return os.environ.get("PRAGMA_TRAINING_IMAGE", "").strip() or None
+
+
+def _get_image_pull_secret() -> Optional[str]:
+    """Return the image pull secret name for the smoke Job.
+
+    Reads PRAGMA_IMAGE_PULL_SECRET_NAME.
+    Defaults to 'pragma-registry' — the pull secret used by PyTorchJob manifests
+    in this repository (openshift/training/pytorchjob-pragma-s.yaml).
+
+    Returns None only if PRAGMA_IMAGE_PULL_SECRET_NAME is explicitly set to
+    the empty string, which disables imagePullSecrets on the Job pod spec.
+    In most cases the default 'pragma-registry' is correct.
+    """
+    raw = os.environ.get("PRAGMA_IMAGE_PULL_SECRET_NAME", "pragma-registry").strip()
+    return raw or None
+
+
+def _allow_runtime_git_clone() -> bool:
+    """Return True if the runtime git-clone debug fallback is explicitly enabled.
+
+    Reads PRAGMA_ALLOW_RUNTIME_GIT_CLONE.
+    Off by default (returns False unless the value is exactly '1').
+
+    When True, the smoke Job shell command will git-clone the repo at runtime
+    before running training steps. This is a debug fallback for diagnosing
+    dependency-only images — it is not the intended primary path.
+
+    The intended path is a training image built from
+    openshift/training/Dockerfile.training that has src/ and scripts/ baked
+    in at WORKDIR.
+    """
+    return os.environ.get("PRAGMA_ALLOW_RUNTIME_GIT_CLONE") == "1"
 
 
 def _build_configmap(
@@ -222,6 +303,8 @@ def _build_job(
     labels: dict[str, str],
     image: str,
     configmap_name: str,
+    image_pull_secret: Optional[str] = None,
+    allow_runtime_git_clone: bool = False,
 ) -> dict:
     """Build a batch/v1 Job manifest dict for the training smoke.
 
@@ -232,7 +315,50 @@ def _build_job(
                                        cleanup_labelled_resources fails
       - ConfigMap mounted at /data/ — smoke.csv available as /data/smoke.csv
       - resources: 500m/1Gi requests, 2/4Gi limits — fits CPU-only nodes
+      - imagePullSecrets: set from image_pull_secret (default: 'pragma-registry')
+      - PRAGMA_ALLOW_RUNTIME_GIT_CLONE: injected as container env var;
+        controls the debug git-clone fallback in _SMOKE_SHELL (off by default)
     """
+    pod_spec: dict = {
+        "restartPolicy": "Never",
+        "containers": [
+            {
+                "name": "pragma-smoke",
+                "image": image,
+                "command": ["bash", "-c"],
+                "args": [_SMOKE_SHELL],
+                "env": [
+                    {
+                        "name": "PRAGMA_ALLOW_RUNTIME_GIT_CLONE",
+                        "value": "1" if allow_runtime_git_clone else "0",
+                    },
+                ],
+                "volumeMounts": [
+                    {
+                        "name": "csv-fixture",
+                        "mountPath": "/data",
+                        "readOnly": True,
+                    },
+                ],
+                "resources": {
+                    "requests": {"cpu": "500m", "memory": "1Gi"},
+                    "limits":   {"cpu": "2",    "memory": "4Gi"},
+                },
+            },
+        ],
+        "volumes": [
+            {
+                "name": "csv-fixture",
+                "configMap": {
+                    "name": configmap_name,
+                },
+            },
+        ],
+    }
+
+    if image_pull_secret:
+        pod_spec["imagePullSecrets"] = [{"name": image_pull_secret}]
+
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -248,36 +374,7 @@ def _build_job(
                 "metadata": {
                     "labels": labels,
                 },
-                "spec": {
-                    "restartPolicy": "Never",
-                    "containers": [
-                        {
-                            "name": "pragma-smoke",
-                            "image": image,
-                            "command": ["bash", "-c"],
-                            "args": [_SMOKE_SHELL],
-                            "volumeMounts": [
-                                {
-                                    "name": "csv-fixture",
-                                    "mountPath": "/data",
-                                    "readOnly": True,
-                                },
-                            ],
-                            "resources": {
-                                "requests": {"cpu": "500m", "memory": "1Gi"},
-                                "limits":   {"cpu": "2",    "memory": "4Gi"},
-                            },
-                        },
-                    ],
-                    "volumes": [
-                        {
-                            "name": "csv-fixture",
-                            "configMap": {
-                                "name": configmap_name,
-                            },
-                        },
-                    ],
-                },
+                "spec": pod_spec,
             },
         },
     }
@@ -535,16 +632,27 @@ class TestTrainingJobSmokePrereqs:
         """The smoke shell command must reference each required step.
 
         Validates that _SMOKE_SHELL has not accidentally dropped a step
-        due to editing. A missing step would cause the Job to fail with
-        a file-not-found error rather than a clear PRAGMA error.
+        due to editing.
 
         Required markers:
+            Validating training image contains PRAGMA repo code
+                        — image validation header line
+            dependency-only image
+                        — clear error string when image lacks code
+            Dockerfile.training
+                        — reference to the fix (build the correct image)
+            PRAGMA_ALLOW_RUNTIME_GIT_CLONE
+                        — debug fallback gate (must be present but off by default)
             fit_tokenizer.py   — tokenizer fit step
             train_pragma.py    — training step
             --max-steps 1      — smoke is bounded (max-steps=1)
             --model-variant pragma-s — model size is PRAGMA-S
         """
         required_markers = {
+            "Validating training image contains PRAGMA repo code",
+            "dependency-only image",
+            "Dockerfile.training",
+            "PRAGMA_ALLOW_RUNTIME_GIT_CLONE",
             "fit_tokenizer.py",
             "train_pragma.py",
             "--max-steps 1",
@@ -553,8 +661,10 @@ class TestTrainingJobSmokePrereqs:
         for marker in required_markers:
             assert marker in _SMOKE_SHELL, (
                 f"Smoke shell command is missing required step marker: {marker!r}. "
-                "The smoke command must fit the tokenizer and run PRAGMA-S with "
-                "--max-steps 1. Check the _SMOKE_SHELL constant."
+                "The smoke command must validate the image, reference Dockerfile.training "
+                "on failure, gate the debug git-clone fallback behind "
+                "PRAGMA_ALLOW_RUNTIME_GIT_CLONE, fit the tokenizer, and run "
+                "PRAGMA-S with --max-steps 1. Check the _SMOKE_SHELL constant."
             )
 
 
@@ -647,12 +757,17 @@ class TestTrainingJobSmoke:
 
         # -- Step 2: Create labelled batch/v1 Job ----------------------------
 
+        image_pull_secret = _get_image_pull_secret()
+        allow_git_clone = _allow_runtime_git_clone()
+
         job_manifest = _build_job(
             name=job_name,
             namespace=runtime_namespace,
             labels=test_labels,
             image=image,
             configmap_name=cm_name,
+            image_pull_secret=image_pull_secret,
+            allow_runtime_git_clone=allow_git_clone,
         )
         _apply_manifest(job_manifest, tmp_path / "smoke-job.json", runtime_namespace)
 
@@ -678,6 +793,10 @@ class TestTrainingJobSmoke:
             f"batch/v1 Job {job_name!r} did not succeed within "
             f"{timeout_seconds}s in namespace {runtime_namespace!r}.\n"
             f"Image: {image}\n"
+            f"imagePullSecret: {image_pull_secret!r}\n"
+            f"PRAGMA_ALLOW_RUNTIME_GIT_CLONE: {'1' if allow_git_clone else '0 (off)'}\n"
+            f"If the job failed at image validation, the image lacks src/ or scripts/.\n"
+            f"Build a training image using: openshift/training/Dockerfile.training\n"
             f"Command: see _SMOKE_SHELL in "
             f"tests/openshift/test_03b_training_job_smoke.py\n"
             f"Diagnostics (redacted):\n{diagnostics}"
