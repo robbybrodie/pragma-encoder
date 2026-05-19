@@ -28,8 +28,8 @@ import pytest
 torch = pytest.importorskip("torch", reason="torch not installed")
 nn = torch.nn
 
-from src.model.config import PRAGMAConfig
 from src.encoders.history_encoder import HistoryEncoder
+from src.model.config import PRAGMAConfig
 
 _CONFIG = PRAGMAConfig.pragma_s()
 

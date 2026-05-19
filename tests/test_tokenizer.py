@@ -25,9 +25,8 @@ from src.model.config import PRAGMAConfig
 from src.tokenizer.base import BaseTokenizer
 from src.tokenizer.categorical import CategoricalTokenizer
 from src.tokenizer.numerical import NumericalTokenizer
-from src.tokenizer.pipeline import TokenizerOutput, TokenizerPipeline
+from src.tokenizer.pipeline import TokenizerPipeline
 from src.tokenizer.temporal import TemporalTokenizer
-
 
 # ---------------------------------------------------------------------------
 # Test fixtures and helpers

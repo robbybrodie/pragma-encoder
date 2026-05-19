@@ -30,16 +30,14 @@ ADR: docs/decisions/004-workbench-decorated-pipelines.md
 from __future__ import annotations
 
 import importlib
-from typing import Callable
+from typing import Any, Callable
 
 from src.workbench._intent import (
-    DatasetIntent,
     TrainIntent,
     start_capture,
     stop_capture,
 )
 from src.workbench._run import PIPELINE_STEP_NAMES, STEP_DESCRIPTIONS
-
 
 # ---------------------------------------------------------------------------
 # PragmaPipeline — result of @pragma_pipeline decoration
@@ -142,7 +140,7 @@ class PragmaPipeline:
 # pragma_pipeline — decorator factory
 # ---------------------------------------------------------------------------
 
-def pragma_pipeline(*, name: str) -> Callable:
+def pragma_pipeline(*, name: str) -> Callable[..., Any]:
     """Decorator factory for PRAGMA pipeline authoring.
 
     Captures training intent from the decorated function body and returns a
@@ -169,7 +167,7 @@ def pragma_pipeline(*, name: str) -> Callable:
     Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
     ADR: docs/decisions/004-workbench-decorated-pipelines.md
     """
-    def decorator(fn: Callable) -> PragmaPipeline:
+    def decorator(fn: Callable[..., Any]) -> PragmaPipeline:
         # Execute the function body once inside the thread-local capture context
         # so train() can register its TrainIntent in the capture list.
         # No side effects: dataset() and train() are pure intent-capture calls.
@@ -179,16 +177,22 @@ def pragma_pipeline(*, name: str) -> Callable:
         finally:
             captured = stop_capture()
 
-        # Use the first captured TrainIntent. Graceful fallback for edge cases
-        # where the function body calls train() zero times.
-        if captured:
-            train_intent = captured[0]
-        else:
-            train_intent = TrainIntent(
-                dataset=DatasetIntent(name="unknown"),
-                model_size="S",
+        if len(captured) == 0:
+            raise ValueError(
+                "@pragma_pipeline decorated function must call train() exactly once. "
+                "No train() call was found in the function body. "
+                "Add a train() call inside the decorated function, e.g.:\n"
+                "    @pragma_pipeline(name='my-pipeline')\n"
+                "    def run():\n"
+                "        ds = dataset('ibm-tabformer')\n"
+                "        train(dataset=ds, model_size='S', epochs=10)"
             )
-
-        return PragmaPipeline(name=name, train_intent=train_intent)
+        if len(captured) > 1:
+            raise ValueError(
+                f"@pragma_pipeline decorated function must call train() exactly once. "
+                f"Found {len(captured)} train() calls — intent is ambiguous. "
+                f"Use separate @pragma_pipeline definitions for separate training runs."
+            )
+        return PragmaPipeline(name=name, train_intent=captured[0])
 
     return decorator

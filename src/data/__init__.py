@@ -5,7 +5,7 @@ Provides:
     PragmaDataset     — torch.utils.data.Dataset over tokenised customer sequences
 """
 
-from .tabformer_adapter import TabFormerAdapter
 from .pragma_dataset import PragmaDataset
+from .tabformer_adapter import TabFormerAdapter
 
 __all__ = ["TabFormerAdapter", "PragmaDataset"]

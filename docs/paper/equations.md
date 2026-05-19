@@ -190,7 +190,7 @@ not absolute positions. Closer events produce higher dot-product similarity.
 - `HistoryEncoder`: RoPE on `te` (log-seconds to most recent event)
 - NOT used in `EventEncoder` (uses calendar features instead)
 
-**Key constraint (ADR 003):** Must NOT mix temporal RoPE with within-field PosEmb.
+**Key constraint (ADR 001 §3):** Must NOT mix temporal RoPE with within-field PosEmb.
 Within-field positions use standard sine/cosine PosEmb (Equation 1).
 
 **Implementation:** `src/encoders/rope.py`

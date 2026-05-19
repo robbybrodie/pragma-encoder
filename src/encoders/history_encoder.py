@@ -60,8 +60,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.model.config import PRAGMAConfig
 from src.encoders.rope import RoPEEncoding
+from src.model.config import PRAGMAConfig
 
 
 class _RoPEMultiheadAttention(nn.Module):
@@ -98,7 +98,7 @@ class _RoPEMultiheadAttention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,                           # (batch, 1+ne, d_model)
-        te: torch.Tensor,                          # (batch, 1+ne) — temporal coordinates (log-seconds)
+        te: torch.Tensor,                          # (batch, 1+ne) — temporal coordinates (log-seconds)  # noqa: E501
         attn_mask: Optional[torch.Tensor] = None,  # (batch, 1, 1, 1+ne) bool — True=attend
     ) -> torch.Tensor:                             # (batch, 1+ne, d_model)
         batch, seq_len, _ = x.shape
@@ -133,7 +133,7 @@ class _RoPEMultiheadAttention(nn.Module):
         )  # (batch, n_heads, 1+ne, head_dim)
 
         attn_out = attn_out.transpose(1, 2).contiguous().view(batch, seq_len, self.d_model)
-        return self.out_proj(attn_out)
+        return self.out_proj(attn_out)  # type: ignore[no-any-return]
 
 
 class _HistoryEncoderLayer(nn.Module):
@@ -223,10 +223,10 @@ class HistoryEncoder(nn.Module):
 
     def forward(
         self,
-        z: torch.Tensor,                            # (batch, 1+ne, d_model) — [USR:EVT] assembled by caller (Eq 6)
-        te: torch.Tensor,                           # (batch, 1+ne) — temporal coordinates (log-seconds, Eq 2)
-        event_valid: Optional[torch.Tensor] = None, # (batch, ne) bool — True=real event, False=padding
-    ) -> torch.Tensor:                              # (batch, 1+ne, d_model) — zh, full encoder output (Eq 7)
+        z: torch.Tensor,                            # (batch, 1+ne, d_model) — [USR:EVT] assembled by caller (Eq 6)  # noqa: E501
+        te: torch.Tensor,                           # (batch, 1+ne) — temporal coordinates (log-seconds, Eq 2)  # noqa: E501
+        event_valid: Optional[torch.Tensor] = None, # (batch, ne) bool — True=real event, False=padding  # noqa: E501
+    ) -> torch.Tensor:                              # (batch, 1+ne, d_model) — zh, full encoder output (Eq 7)  # noqa: E501
         """Encode the concatenated [USR:EVT] history sequence with temporal RoPE.
 
         Args:
@@ -269,4 +269,4 @@ class HistoryEncoder(nn.Module):
             zh = layer(zh, te, attn_mask=attn_mask)
 
         # Final layer norm over the full sequence
-        return self.norm(zh)
+        return self.norm(zh)  # type: ignore[no-any-return]

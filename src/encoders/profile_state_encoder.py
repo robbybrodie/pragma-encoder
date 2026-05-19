@@ -46,8 +46,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.model.config import PRAGMAConfig
 from src.encoders.rope import RoPEEncoding
+from src.model.config import PRAGMAConfig
 
 
 class _RoPEMultiheadAttention(nn.Module):
@@ -112,7 +112,7 @@ class _RoPEMultiheadAttention(nn.Module):
 
         # Reshape back to (batch, na, d_model)
         attn_out = attn_out.transpose(1, 2).contiguous().view(batch, na, self.d_model)
-        return self.out_proj(attn_out)
+        return self.out_proj(attn_out)  # type: ignore[no-any-return]
 
 
 class _ProfileEncoderLayer(nn.Module):
@@ -216,4 +216,4 @@ class ProfileStateEncoder(nn.Module):
             za = layer(za, ta)
 
         # Final layer norm over the full sequence
-        return self.norm(za)
+        return self.norm(za)  # type: ignore[no-any-return]

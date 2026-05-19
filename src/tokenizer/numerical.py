@@ -55,12 +55,12 @@ class NumericalTokenizer(BaseTokenizer):
         self._fitted = False
 
     @property
-    def ZERO_ID(self) -> int:
+    def ZERO_ID(self) -> int:  # noqa: N802 — uppercase is intentional (constant-like property)
         """Token ID for exactly-zero values. §2.2: extra bucket for zero."""
         return self.n_buckets
 
     @property
-    def MISSING_ID(self) -> int:
+    def MISSING_ID(self) -> int:  # noqa: N802 — uppercase is intentional (constant-like property)
         """Token ID for NaN / None values."""
         return self.n_buckets + 1
 

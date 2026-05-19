@@ -29,10 +29,9 @@ import pickle
 
 import pytest
 
+from src.data.pragma_dataset import PragmaDataset
 from src.tokenizer.categorical import CategoricalTokenizer
 from src.tokenizer.pipeline import TokenizerPipeline
-from src.data.pragma_dataset import PragmaDataset
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

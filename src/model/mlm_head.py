@@ -56,7 +56,6 @@ import torch.nn.functional as F
 
 from src.model.config import PRAGMAConfig
 
-
 # Label smoothing epsilon — implementation choice.
 # The paper (§2.3.5) specifies cross-entropy with label smoothing but does
 # not give the exact epsilon. 0.1 is standard in the MLM literature.
@@ -126,7 +125,7 @@ class MLMHead(nn.Module):
         # Linear(3*d_model → d_model) → GELU → Linear(d_model → value_vocab_size)
         hidden = self.gelu(self.proj(mlm_input))   # (n_masked, d_model)
         logits = self.decoder(hidden)              # (n_masked, value_vocab_size)
-        return logits
+        return logits  # type: ignore[no-any-return]
 
     def compute_loss(
         self,

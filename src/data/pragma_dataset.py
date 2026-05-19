@@ -34,14 +34,13 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict
 
 import torch
 from torch.utils.data import Dataset
 
 from src.data.tabformer_adapter import TabFormerAdapter
 from src.tokenizer.pipeline import TokenizerPipeline
-
 
 # Fields passed to encode_event in the order they appear in each transaction
 _EVENT_FIELDS = [
@@ -57,7 +56,7 @@ _EVENT_FIELDS = [
 ]
 
 
-class PragmaDataset(Dataset):
+class PragmaDataset(Dataset[Dict[str, Any]]):
     """torch.utils.data.Dataset over tokenised TabFormer customer sequences.
 
     Args:

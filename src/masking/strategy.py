@@ -50,7 +50,6 @@ import torch
 from src.model.config import PRAGMAConfig
 from src.tokenizer.pipeline import TokenizerPipeline
 
-
 # Token IDs — sourced from TokenizerPipeline
 _MASK_TOKEN_ID: int = TokenizerPipeline.MASK_ID  # 1 — [MASK] replacement
 _UNK_TOKEN_ID:  int = TokenizerPipeline.PAD_ID   # 0 — [UNK] replacement (no global UNK)
@@ -147,7 +146,7 @@ class MaskingStrategy:
                       key type was selected for masking.
         """
         selected = torch.zeros_like(key_ids, dtype=torch.bool)
-        unique_keys = key_ids.unique()
+        unique_keys = key_ids.unique()  # type: ignore[no-untyped-call]
         for k in unique_keys:
             if torch.bernoulli(torch.tensor(self.key_mask_prob)).item():
                 selected |= (key_ids == k)

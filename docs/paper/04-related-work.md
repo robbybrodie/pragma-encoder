@@ -93,4 +93,4 @@ PRAGMA uses the opposite for all three:
 - Masked modelling
 - Key–value–time tokenisation
 
-Do not import or reuse code from the NVIDIA blueprint (ADR 007).
+Do not import or reuse code from the NVIDIA blueprint (ADR 001 §5).

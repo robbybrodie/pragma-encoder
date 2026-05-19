@@ -21,7 +21,7 @@ Reference: Ostroukhov et al. (2026), Section 3
 """
 
 from .downstream import DownstreamEvaluator
-from .metrics import compute_auc, compute_pr_auc, compute_f1, compute_ks
+from .metrics import compute_auc, compute_f1, compute_ks, compute_pr_auc
 
 __all__ = [
     "DownstreamEvaluator",

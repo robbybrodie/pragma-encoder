@@ -1,337 +1,210 @@
-# Architecture Decision Records — PRAGMA Encoder
+# Decision 001: PRAGMA Encoder Architecture
 
-These decisions are derived from the PRAGMA paper:
-"PRAGMA: Revolut Foundation Model"
-Ostroukhov et al. (2026), arXiv:2604.08649v1
-
-Once accepted, these decisions are fixed.
-Future Claude Code sessions must not contradict them.
-To change a decision: create a new ADR superseding this one.
+Status: Accepted
+Date: 2026-05-17
+Paper reference: Sections 2.1–2.3
+Supersedes: nothing
 
 ---
 
-## Decision 001: Encoder-Only Architecture
+## Context
 
-Status: Accepted
-Paper reference: Section 2.3
+The adjacent NVIDIA blueprint uses a decoder-only (GPT/Llama-style) architecture
+with causal language modelling. A decision was needed on whether to follow the
+same approach or implement the PRAGMA architecture as described in the paper.
 
-### Context
-The adjacent NVIDIA blueprint uses a decoder-only
-(GPT/Llama-style) architecture with causal language
-modelling. A decision was needed on whether to follow
-the same approach or implement the PRAGMA architecture
-as described in the paper.
+The PRAGMA paper (Ostroukhov et al., 2026, arXiv:2604.08649v1) describes a
+purpose-built encoder-only foundation model for financial transaction data, with
+a distinctive key-value-time tokenisation scheme and three separate encoder branches.
 
-### Decision
-Use encoder-only (BERT-style) bidirectional Transformer.
-Do not use decoder-only or causal architecture.
-
-### Consequences
-Enables:
-  - Each token attends to all other tokens in both directions
-  - Better representation learning for embedding extraction
-  - Masked modelling objective (requires bidirectional attention)
-  - Direct implementation of the paper as published
-
-Constrains:
-  - Cannot generate text (no autoregressive decoding)
-  - Cannot use causal attention mask anywhere in the model
-  - All three encoders must use bidirectional attention
-
-What future sessions must not contradict:
-  Do not add causal masking to any attention layer.
-  Do not switch to a decoder architecture.
-  Do not use GPT-style generation.
+This ADR captures the core architecture decisions derived from Sections 2.1–2.3.
+They are non-negotiable: contradicting them produces a model that is not PRAGMA.
 
 ---
 
-## Decision 002: Three Separate Encoder Branches
+## Decision
 
-Status: Accepted
-Paper reference: Section 2.3
+**Use the encoder-only (BERT-style) bidirectional Transformer architecture
+exactly as described in the paper. Do not implement a decoder-only or causal
+architecture.**
 
-### Context
-The model must process two distinct input types:
-profile state (static customer attributes) and event
-history (sequential transactions). A decision was needed
-on whether to use one unified encoder or separate branches.
-
-### Decision
-Use three separate encoder branches:
-  1. Profile State Encoder (Section 2.3.2)
-  2. Event Encoder (Section 2.3.3)
-  3. History Encoder (Section 2.3.4)
-
-Each is a separate bidirectional Transformer with its
-own weights, depth, and positional encoding strategy.
-
-### Consequences
-Enables:
-  - Profile state processed independently of events
-  - Event-level encoding before cross-event attention
-  - Clean ablation (can remove profile branch entirely
-    as in paper Section 3.4.2)
-  - Profile state contributes a single [USR] token to
-    the History Encoder — clean interface
-
-Constrains:
-  - Three separate forward passes required
-  - Cannot merge into one unified encoder
-  - The [USR] token from Profile State Encoder and
-    [EVT] tokens from Event Encoder are the only
-    outputs passed to the History Encoder
-
-What future sessions must not contradict:
-  Do not merge the three encoders into one.
-  Do not pass raw profile tokens to the History Encoder.
-  Do not pass raw event tokens to the History Encoder.
-  Only the aggregated [USR] and [EVT] tokens are passed.
+The following architectural constraints all follow from this primary decision
+and are equally binding.
 
 ---
 
-## Decision 003: RoPE Positional Encoding
+## Architectural Constraints
 
-Status: Accepted
-Paper reference: Section 2.3.2, Su et al. (2024)
+### 1. Encoder-only, bidirectional attention (§2.3)
 
-### Context
-The model must encode temporal coordinates (log-seconds
-to the most recent event) as positional information.
-Standard sinusoidal or learned positional embeddings
-were considered.
+Use bidirectional self-attention throughout. Every token attends to every other
+token in both directions. Do not use a causal (left-to-right) attention mask
+anywhere in the model.
 
-### Decision
-Use Rotary Position Embeddings (RoPE) for temporal
-coordinate encoding in the Profile State Encoder and
-History Encoder.
-
-Use calendar feature embeddings (periodic functions)
-for the Event Encoder's within-event temporal signals.
-
-### Consequences
-Enables:
-  - Relative temporal positions encoded naturally
-  - Extrapolation to unseen temporal gaps
-  - Disentangled from value-level positional embeddings
-    (separate from the within-field position embeddings)
-
-Constrains:
-  - Must implement RoPE correctly as rotation matrices
-  - Cannot use absolute positional embeddings
-  - Cannot use learned positional embeddings
-  - The temporal coordinate t must be provided to every
-    RoPE-using encoder as a separate argument
-
-What future sessions must not contradict:
-  Do not replace RoPE with sinusoidal positional encoding.
-  Do not replace RoPE with learned positional embeddings.
-  Do not mix the temporal RoPE with within-field PosEmb.
-  (Within-field positions use standard sinusoidal PosEmb
-   per Section 2.3.1 — this is separate from temporal RoPE)
+**What future sessions must not contradict:**
+- Do not add causal masking to any attention layer.
+- Do not switch to a decoder architecture.
+- Do not use GPT-style autoregressive generation.
 
 ---
 
-## Decision 004: Masked Modelling Objective
+### 2. Three separate encoder branches (§2.3.2–2.3.4)
 
-Status: Accepted
-Paper reference: Section 2.3.5
+Use three separate encoder branches with independent weights:
 
-### Context
-The adjacent NVIDIA blueprint uses causal language
-modelling (predict next token). A decision was needed
-on the pre-training objective for PRAGMA.
+1. **Profile State Encoder** (§2.3.2) — static customer attributes
+2. **Event Encoder** (§2.3.3) — per-event token sequence
+3. **History Encoder** (§2.3.4) — event sequence, conditioned on `[USR]`
 
-### Decision
+Each is a separate bidirectional Transformer. The `[USR]` token produced by the
+Profile State Encoder and the `[EVT]` tokens produced by the Event Encoder are
+the only outputs passed to the History Encoder. Raw profile or event tokens are
+never passed directly to the History Encoder.
+
+Code locations:
+- `src/encoders/profile_state_encoder.py`
+- `src/encoders/event_encoder.py`
+- `src/encoders/history_encoder.py`
+
+**What future sessions must not contradict:**
+- Do not merge the three encoders into one.
+- Do not pass raw profile tokens to the History Encoder.
+- Do not pass raw event tokens to the History Encoder.
+- Only the aggregated `[USR]` and `[EVT]` tokens are passed.
+
+---
+
+### 3. RoPE positional encoding (§2.3.2, Su et al. 2024)
+
+Use Rotary Position Embeddings (RoPE) for temporal coordinate encoding in:
+- Profile State Encoder (timestamp positions)
+- History Encoder (event sequence positions)
+
+Use **calendar feature embeddings** (periodic functions) for the Event Encoder's
+within-event temporal signals — not RoPE.
+
+RoPE encodes relative temporal positions naturally and extrapolates to unseen
+temporal gaps. The temporal coordinate `t` (log-seconds to most recent event)
+must be provided to every RoPE-using encoder as a separate argument.
+
+Code: `src/encoders/rope.py`
+
+**What future sessions must not contradict:**
+- Do not replace RoPE with sinusoidal positional encoding.
+- Do not replace RoPE with learned positional embeddings.
+- Do not mix the temporal RoPE with within-field PosEmb.
+- Within-field positions use standard sinusoidal PosEmb per §2.3.1.
+  This is separate from temporal RoPE and must not be confused with it.
+
+---
+
+### 4. Masked event modelling objective (§2.3.5)
+
 Use masked modelling (MLM) with three masking strategies:
-  1. Token-level masking: 15% probability
-  2. Event-level masking: 10% probability
-  3. Semantic-type (key) level masking: 10% probability
 
-A small fraction of selected positions replaced with
-[UNK] instead of [MASK] for input dropout effect.
+| Strategy | Probability |
+|----------|-------------|
+| Token-level masking | 15% |
+| Event-level masking | 10% |
+| Semantic-type (key) level masking | 10% |
 
-The MLM head receives a 3d-dimensional input:
-  - Event Encoder token-level output at masked position
-  - History Encoder [EVT] token for cross-event context
-  - History Encoder [USR] token for user-level context
+A small fraction of selected positions are replaced with `[UNK]` instead of
+`[MASK]` for an input dropout effect.
 
-### Consequences
-Enables:
-  - Bidirectional attention (requires non-causal model)
-  - Each masked token uses full context (past and future)
-  - Three masking strategies teach different capabilities:
-    token-level: individual field patterns
-    event-level: full event reconstruction
-    key-level: value prediction given field type
+The MLM head receives a concatenation of three `d_model`-dimensional vectors:
+- Event Encoder token-level output at masked position
+- History Encoder `[EVT]` token for cross-event context
+- History Encoder `[USR]` token for user-level context
 
-Constrains:
-  - Training is more complex than causal LM
-  - Three masking rates must match paper exactly
-  - MLM head must concatenate three d-dimensional vectors
-    not just use the encoder output directly
+This is a pre-training objective. Do not switch to causal language modelling.
 
-What future sessions must not contradict:
-  Do not switch to causal LM objective.
-  Do not change the masking rates without new ADR.
-  Do not simplify the MLM head to use one input vector.
-  All three (token-level, event-level, key-level) masking
-  strategies must be implemented.
+Code: `src/masking/strategy.py`, `src/model/mlm_head.py`
+
+**What future sessions must not contradict:**
+- Do not switch to a causal LM objective.
+- Do not change masking rates without a new ADR.
+- Do not simplify the MLM head to use one input vector.
+- All three strategies (token, event, key) must be implemented.
 
 ---
 
-## Decision 005: NeMo for Training Orchestration
+### 5. Key-value-time tokenisation (§2.2)
 
-Status: Accepted
-Paper reference: N/A (implementation decision)
-
-### Context
-The PRAGMA paper describes custom training infrastructure
-(Section 2.4). For this open source implementation a
-decision was needed on the training framework.
-
-### Decision
-Use NVIDIA NeMo AutoModel for training orchestration.
-
-The model itself is pure PyTorch.
-NeMo wraps the training loop, handles distributed
-training via torchrun, manages checkpointing,
-and integrates with the OpenShift AI deployment pattern
-established in the adjacent NVIDIA blueprint repo.
-
-### Consequences
-Enables:
-  - Consistent training pattern across both repos
-  - Distributed training via KFTO PyTorchJob on OpenShift
-  - NeMo's bf16 mixed precision and Muon/AdamW optimisers
-  - Checkpoint management and resume
-
-Constrains:
-  - Model must be compatible with NeMo AutoModel interface
-  - Training config must use NeMo YAML format
-  - Cannot use PyTorch Lightning or other training frameworks
-    without a new ADR
-
-What future sessions must not contradict:
-  Do not introduce PyTorch Lightning.
-  Do not introduce Hugging Face Trainer for pre-training.
-  NeMo is the training framework. PyTorch is the model.
-
----
-
-## Decision 006: PEFT/LoRA for Fine-Tuning
-
-Status: Accepted
-Paper reference: Section 3.1.2
-
-### Context
-The paper describes LoRA fine-tuning updating only
-2-4% of model weights. A decision was needed on
-the LoRA implementation library.
-
-### Decision
-Use Hugging Face PEFT library for LoRA fine-tuning.
-
-Default configuration from the paper:
-  rank = 8
-  alpha = 8
-  target modules: QKV projections and MLP layers
-  trainable parameters: 2-4% of total model parameters
-
-### Consequences
-Enables:
-  - Minimal parameter overhead per downstream task
-  - Frozen backbone shared across tasks
-  - Fast specialisation without catastrophic forgetting
-  - Standard, well-tested LoRA implementation
-
-Constrains:
-  - Must use PEFT library, not custom LoRA implementation
-  - rank and alpha defaults are 8 as per paper
-  - Target modules must include QKV and MLP
-  - Cannot use full fine-tuning without new ADR
-
-What future sessions must not contradict:
-  Do not implement custom LoRA. Use PEFT.
-  Do not change rank/alpha defaults without paper justification.
-
----
-
-## Decision 007: Key-Value-Time Tokenisation
-
-Status: Accepted
-Paper reference: Section 2.2
-
-### Context
-The NVIDIA blueprint uses tabular GPT-style tokenisation
-(token strings joined by separators). The PRAGMA paper
-describes a different disentangled embedding space.
-
-### Decision
 Use PRAGMA's key-value-time tokenisation scheme:
-  - Semantic type (key): single token per field
-  - Value: type-specific encoding
-    numerical → percentile bucket token
-    categorical → single token
-    textual → BPE subword tokens
-  - Temporal: log-seconds + calendar features
 
-This is fundamentally different from the NVIDIA blueprint.
-Do not import or reuse the adjacent repo's tokeniser.
+| Field type | Encoding |
+|------------|----------|
+| Numerical | Percentile bucket token |
+| Categorical | Single token |
+| Textual | BPE subword tokens |
+| Timestamp | Log-seconds + calendar features |
 
-### Consequences
-Enables:
-  - Model distinguishes field meaning from field value
-  - Numerical values preserve magnitude and ordering
-  - Text fields use semantic subword representation
-  - Temporal structure explicit and learnable
+Each transaction field produces a (key, value) token pair. Key and value are
+separate embedding lookups in the same embedding table `E`. This is fundamentally
+different from the NVIDIA blueprint (which serialises transactions as text strings).
 
-Constrains:
-  - Two separate vocabularies: key vocab (~60) and value vocab (~28k)
-  - Positional encodings index within-field not across-fields
-  - Cannot use the NVIDIA blueprint's tokeniser
-  - BPE tokeniser must be trained on the transaction corpus
+Vocabulary structure (§2.2):
+- ~60 key tokens (one per field type)
+- ~28k value tokens (numerical buckets, categoricals, BPE subwords)
+- Total embedding vocab = key_size + value_size + special tokens
 
-What future sessions must not contradict:
-  Do not reuse the NVIDIA blueprint tokeniser.
-  Do not serialise records as text strings.
-  Keys and values must be separate embedding lookups.
-  Within-field positions index values within one field only.
+Equation 1 (§2.3.1): `x_ij = PosEmb_j(E(k_i) + E(v_ij))`
+
+Code: `src/tokenizer/`
+
+**What future sessions must not contradict:**
+- Do not reuse the NVIDIA blueprint tokeniser.
+- Do not serialise records as text strings.
+- Keys and values must be separate embedding lookups in the same table `E`.
+- Within-field positions index values within one field only (not across fields).
 
 ---
 
-## Decision 008: Profile State Separate from Event History
+### 6. Profile state is a separate input stream (§2.1.2)
 
-Status: Accepted
-Paper reference: Section 2.1.2
+Profile state (static customer attributes: plan, region, balance quantile,
+life-long events such as `first_topup`, `account_age`) is a separate input
+to the Profile State Encoder. It is never mixed with the event sequence.
 
-### Context
-A decision was needed on whether to treat static customer
-attributes (plan, region, balance quantile) as regular
-events in the sequence or as a separate input stream.
+Life-long events are encoded as profile state with individual timestamps, not
+as regular events in the history.
 
-### Decision
-Profile state is a separate input to the Profile State
-Encoder. It is never mixed with the event sequence.
+**What future sessions must not contradict:**
+- Do not merge profile state into the event sequence.
+- Do not pass profile tokens to the Event Encoder.
+- Profile State Encoder and Event Encoder are independent.
+- Two separate inputs to the model: profile state and event history.
 
-Life-long events (first_topup, account_age) are encoded
-as profile state with individual timestamps, not as
-regular events in the history.
+---
 
-### Consequences
+## Consequences
+
 Enables:
-  - Clean ablation: remove profile branch to test event-only
-    (paper Section 3.4.2 shows +31.8% PR-AUC from profile state
-    on credit scoring)
-  - Profile state can include features unavailable in events
-  - Static and dynamic signals processed by specialised encoders
+- Bidirectional context for each masked position during pre-training
+- Clean ablation (removing profile branch) as tested in §3.4.2
+- Direct implementation of the paper as published
+- Better embedding quality for downstream fine-tuning tasks
 
 Constrains:
-  - Two separate inputs to the model (not one sequence)
-  - Profile state tokenised identically to events
-    but processed by a different encoder
-  - Cannot prepend profile tokens to the event sequence
+- Cannot generate text (no autoregressive decoding)
+- Three separate forward passes required per inference
+- Training uses MLM objective, not next-token prediction
+- NeMo and other causal-LM frameworks cannot be used for pre-training without adaptation
 
-What future sessions must not contradict:
-  Do not merge profile state into the event sequence.
-  Do not pass profile tokens to the Event Encoder.
-  Profile State Encoder and Event Encoder are independent.
+---
+
+## What this ADR does NOT cover
+
+- Training orchestration (framework, distributed strategy, cluster) → ADR 005
+- LoRA / PEFT fine-tuning → ADR 006
+- Workbench Python API → ADR 003
+- Decorated pipeline authoring → ADR 004
+- Embedding assembler architecture → ADR 002
+
+---
+
+## References
+
+- Paper: Ostroukhov et al. (2026), arXiv:2604.08649v1, Sections 2.1–2.3
+- `docs/paper/02-03-architecture.md`
+- `src/encoders/`, `src/masking/`, `src/model/mlm_head.py`, `src/tokenizer/`

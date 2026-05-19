@@ -140,7 +140,7 @@ class _CalendarMLP(nn.Module):
             [torch.sin(xt_normed), torch.cos(xt_normed)],
             dim=-1,
         )  # (batch, ne, 6)
-        return self.mlp(sincos)  # (batch, ne, d_model)
+        return self.mlp(sincos)  # type: ignore[no-any-return]
 
 
 class _EventAttention(nn.Module):
@@ -200,7 +200,7 @@ class _EventAttention(nn.Module):
         )  # (batch*ne, n_heads, ni, head_dim)
 
         attn_out = attn_out.transpose(1, 2).contiguous().view(bne, ni, self.d_model)
-        return self.out_proj(attn_out)
+        return self.out_proj(attn_out)  # type: ignore[no-any-return]
 
 
 class _EventEncoderLayer(nn.Module):
@@ -290,9 +290,9 @@ class EventEncoder(nn.Module):
 
     def forward(
         self,
-        xe: torch.Tensor,                          # (batch, ne, ni, d_model) — pre-embedded; [EVT] at pos 0
+        xe: torch.Tensor,                          # (batch, ne, ni, d_model) — pre-embedded; [EVT] at pos 0  # noqa: E501
         xt: torch.Tensor,                          # (batch, ne, 3) — calendar features (integers)
-        xe_valid: Optional[torch.Tensor] = None,   # (batch, ne, ni) bool — True=real token, False=padding
+        xe_valid: Optional[torch.Tensor] = None,   # (batch, ne, ni) bool — True=real token, False=padding  # noqa: E501
     ) -> Tuple[torch.Tensor, torch.Tensor]:        # (z_hat_e, ze)
         """Encode event token sequences independently with calendar augmentation.
 

@@ -38,18 +38,16 @@ import sys
 
 import pytest
 
+# These already exist and must remain importable.
+from src.workbench._api import train_pragma
+from src.workbench._decorators import PragmaPipeline, pragma_pipeline
+
 # ---------------------------------------------------------------------------
 # Imports from modules that do not exist yet (red phase).
 # These will raise ImportError until implementation is provided.
 # ---------------------------------------------------------------------------
-
 from src.workbench._intent import DatasetIntent, TrainIntent, dataset, train
-from src.workbench._decorators import PragmaPipeline, pragma_pipeline
-
-# These already exist and must remain importable.
-from src.workbench._api import train_pragma
-from src.workbench._run import PragmaRun, PIPELINE_STEP_NAMES
-
+from src.workbench._run import PIPELINE_STEP_NAMES, PragmaRun
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -435,7 +433,7 @@ class TestCompileBehavior:
 
     def test_compile_kfp_available_writes_yaml(self, tmp_path) -> None:
         """ADR 004: compile() must write a non-empty YAML file when KFP is installed."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping compile test")
+        pytest.importorskip("kfp", reason="kfp not installed — skipping compile test")
 
         p = _make_decorated_pipeline()
         output = tmp_path / "pragma-s-ibm-tabformer.yaml"
@@ -447,14 +445,14 @@ class TestCompileBehavior:
 
     def test_compile_accepts_string_path(self, tmp_path) -> None:
         """ADR 004: compile() must accept a string path argument."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
+        pytest.importorskip("kfp", reason="kfp not installed")
 
         p = _make_decorated_pipeline()
         p.compile(str(tmp_path / "out.yaml"))  # must not raise TypeError
 
     def test_compile_accepts_pathlib_path(self, tmp_path) -> None:
         """ADR 004: compile() must accept a pathlib.Path argument."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
+        pytest.importorskip("kfp", reason="kfp not installed")
 
         p = _make_decorated_pipeline()
         p.compile(tmp_path / "out.yaml")  # must not raise TypeError
@@ -474,8 +472,8 @@ class TestCompileNoSideEffects:
 
     def test_compile_does_not_call_subprocess_run(self, tmp_path) -> None:
         """ADR 004: compile() must not invoke subprocess.run()."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
-        from unittest.mock import patch, MagicMock
+        pytest.importorskip("kfp", reason="kfp not installed")
+        from unittest.mock import patch
 
         p = _make_decorated_pipeline()
         output = str(tmp_path / "out.yaml")
@@ -487,7 +485,7 @@ class TestCompileNoSideEffects:
 
     def test_compile_does_not_mutate_s3(self, tmp_path, monkeypatch) -> None:
         """ADR 004: compile() must not access S3, even if creds are absent."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
+        pytest.importorskip("kfp", reason="kfp not installed")
 
         for var in ("MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET",
                     "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
@@ -499,8 +497,8 @@ class TestCompileNoSideEffects:
 
     def test_compile_does_not_call_oc_kubectl(self, tmp_path) -> None:
         """ADR 004: compile() must not invoke oc or kubectl."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
-        from unittest.mock import patch, MagicMock
+        pytest.importorskip("kfp", reason="kfp not installed")
+        from unittest.mock import patch
 
         p = _make_decorated_pipeline()
         output = str(tmp_path / "out.yaml")
@@ -520,8 +518,8 @@ class TestCompileNoSideEffects:
 
     def test_compile_does_not_call_adapter_prepare(self, tmp_path) -> None:
         """ADR 004: compile() must not call DatasetAdapter.prepare()."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
-        from unittest.mock import patch, MagicMock
+        pytest.importorskip("kfp", reason="kfp not installed")
+        from unittest.mock import MagicMock, patch
 
         p = _make_decorated_pipeline()
         output = str(tmp_path / "out.yaml")
@@ -683,7 +681,7 @@ class TestTrainPragmaModeIntegration:
 
     def test_train_pragma_pipeline_mode_does_not_train(self) -> None:
         """ADR 004: train_pragma(mode='pipeline') must not execute training."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         with patch("src.workbench._api.subprocess") as mock_subp:
             mock_subp.run.return_value = MagicMock(returncode=0)
@@ -766,7 +764,8 @@ class TestLocalModeUnchanged:
     _OUT = "/tmp/pragma-local-decorator-test"
 
     def _local_run(self) -> PragmaRun:
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from src.data.dataset_manifest import DatasetManifest, DatasetShard
         from src.model.config import PRAGMAConfig
         shard = DatasetShard(uri="local/shard.csv", format="csv", rows=4)
@@ -868,4 +867,84 @@ class TestNoPvcStorage:
                        if s in src]
         assert not pvc_strings, (
             f"_intent.py contains PVC references: {pvc_strings}"
+        )
+
+
+# ===========================================================================
+# 13. TestDecoratorValidation
+#     @pragma_pipeline raises on zero or multiple train() calls.
+# ===========================================================================
+
+class TestDecoratorValidation:
+    """Verify @pragma_pipeline raises instead of silently fabricating intent.
+
+    ADR 004 hardening: a decorated function must call train() exactly once.
+    Zero calls → the decorator cannot capture intent and must not fabricate.
+    Multiple calls → ambiguous intent; the decorator must not silently pick one.
+    Both cases raise ValueError with a helpful message that mentions train().
+    """
+
+    def test_zero_train_calls_raises_value_error(self) -> None:
+        """ADR 004: @pragma_pipeline raises ValueError when train() is never called.
+
+        The decorator must not silently fabricate a TrainIntent with
+        name='unknown'. A missing train() call is a programming error
+        and must be surfaced immediately at decoration time.
+        """
+        with pytest.raises(ValueError):
+            @pragma_pipeline(name="no-train")
+            def _run():
+                dataset(_VALID_DATASET)
+                # Deliberately omit train() call
+
+    def test_zero_train_calls_error_mentions_train_function(self) -> None:
+        """ADR 004: the ValueError for zero train() calls must mention train().
+
+        The error message must guide the data scientist toward the fix:
+        adding a train() call inside the decorated function body.
+        """
+        with pytest.raises(ValueError) as exc_info:
+            @pragma_pipeline(name="no-train-message")
+            def _run():
+                dataset(_VALID_DATASET)
+                # Deliberately omit train() call
+
+        msg = str(exc_info.value).lower()
+        assert "train" in msg, (
+            f"ValueError for zero train() calls must mention 'train'. "
+            f"Got: {exc_info.value!r}"
+        )
+
+    def test_multiple_train_calls_raises(self) -> None:
+        """ADR 004: @pragma_pipeline raises when train() is called more than once.
+
+        Multiple train() calls produce ambiguous intent — it is unclear which
+        training configuration should be compiled. The decorator must reject
+        this rather than silently picking the first (or any other) call.
+        """
+        with pytest.raises((ValueError, NotImplementedError)):
+            @pragma_pipeline(name="two-trains")
+            def _run():
+                ds = dataset(_VALID_DATASET)
+                train(dataset=ds, model_size="S", epochs=1)
+                train(dataset=ds, model_size="M", epochs=2)  # second call — ambiguous
+
+    def test_multiple_train_calls_error_is_helpful(self) -> None:
+        """ADR 004: the error for multiple train() calls must be actionable.
+
+        The error message must help the data scientist understand that only
+        one train() call is allowed per @pragma_pipeline decorated function.
+        It must mention either 'train' or 'once' or 'one'.
+        """
+        with pytest.raises((ValueError, NotImplementedError)) as exc_info:
+            @pragma_pipeline(name="two-trains-message")
+            def _run():
+                ds = dataset(_VALID_DATASET)
+                train(dataset=ds, model_size="S", epochs=1)
+                train(dataset=ds, model_size="M", epochs=2)
+
+        msg = str(exc_info.value).lower()
+        assert "train" in msg or "once" in msg or "one" in msg, (
+            f"Error for multiple train() calls must mention 'train', 'once', or 'one'. "
+            f"Got: {exc_info.value!r}"
         )

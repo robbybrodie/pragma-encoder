@@ -51,8 +51,8 @@ class TextualTokenizer(BaseTokenizer):
         """
         from tokenizers import Tokenizer
         from tokenizers.models import BPE
-        from tokenizers.trainers import BpeTrainer
         from tokenizers.pre_tokenizers import Whitespace
+        from tokenizers.trainers import BpeTrainer
 
         tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
         tokenizer.pre_tokenizer = Whitespace()
@@ -80,9 +80,9 @@ class TextualTokenizer(BaseTokenizer):
         if not self._fitted:
             raise RuntimeError("Call fit() before encode().")
         if value is None:
-            return [self._tokenizer.token_to_id("[MISSING]")]
-        encoding = self._tokenizer.encode(str(value))
-        return encoding.ids[: self.max_length]
+            return [self._tokenizer.token_to_id("[MISSING]")]  # type: ignore[attr-defined]
+        encoding = self._tokenizer.encode(str(value))  # type: ignore[attr-defined]
+        return encoding.ids[: self.max_length]  # type: ignore[no-any-return]
 
     def decode(self, token_ids: Union[int, List[int]]) -> str:
         """Decode token IDs back to a text string.
@@ -96,7 +96,7 @@ class TextualTokenizer(BaseTokenizer):
         if not self._fitted:
             raise RuntimeError("Call fit() before decode().")
         ids = [token_ids] if isinstance(token_ids, int) else token_ids
-        return self._tokenizer.decode(ids)
+        return self._tokenizer.decode(ids)  # type: ignore[no-any-return, attr-defined]
 
     @property
     def vocab_size(self) -> int:

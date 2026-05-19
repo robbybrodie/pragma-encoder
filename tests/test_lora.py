@@ -30,9 +30,9 @@ import pytest
 torch = pytest.importorskip("torch", reason="torch not installed")
 peft  = pytest.importorskip("peft",  reason="peft not installed")
 
+from src.adaptation.lora import LoRAAdapter
 from src.model.config import PRAGMAConfig
 from src.model.pragma import PRAGMA
-from src.adaptation.lora import LoRAAdapter
 
 _CONFIG = PRAGMAConfig.pragma_s()
 

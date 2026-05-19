@@ -29,13 +29,14 @@ Test categories (marked in each class docstring):
 
 from __future__ import annotations
 
+import ast as _ast
+import importlib
 import importlib.util
 import inspect
 import pathlib
 import sys
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Module loading helpers
@@ -92,6 +93,76 @@ def _require_importable() -> None:
 def _src_text(path: pathlib.Path) -> str:
     """Return the raw source text of a pipeline file."""
     return path.read_text()
+
+
+def _raw_func_src(file_path: pathlib.Path, func_name: str) -> str:
+    """Return the raw source text of a specific function, immune to KFP wrapping.
+
+    Uses ast line numbers (lineno / end_lineno) to extract just the function body
+    from the source file. This avoids inspect.getsource() which breaks when KFP's
+    @dsl.pipeline wraps the function into a GraphComponent at import time.
+    """
+    source = file_path.read_text()
+    tree = _ast.parse(source)
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.FunctionDef) and node.name == func_name:
+            lines = source.splitlines()
+            return "\n".join(lines[node.lineno - 1 : node.end_lineno])
+    raise AssertionError(f"Function {func_name!r} not found in {file_path}")
+
+
+# ---------------------------------------------------------------------------
+# AST-based parameter inspection — immune to KFP decorator wrapping
+#
+# When kfp is installed, @dsl.component wraps functions and inspect.signature()
+# returns (*args, **kwargs) instead of the original parameter list.
+# @dsl.pipeline may or may not use functools.wraps — the behaviour is
+# version-dependent and must not be relied upon.
+#
+# _raw_func_params() reads the source file with ast.parse(), which is
+# completely independent of any runtime decoration applied to the function.
+# ---------------------------------------------------------------------------
+
+_EMPTY = inspect.Parameter.empty  # sentinel: parameter is required (no default)
+
+
+def _raw_func_params(
+    file_path: pathlib.Path,
+    func_name: str,
+) -> dict[str, object]:
+    """Return {param_name: default_value_or_EMPTY} by parsing source with ast.
+
+    _EMPTY (inspect.Parameter.empty) means the parameter is required (no default).
+    Non-constant defaults (e.g. [] or a class instance) use Ellipsis (...) as
+    the sentinel value.  This helper is immune to KFP @dsl.component and
+    @dsl.pipeline wrapping.
+
+    Raises AssertionError if func_name is not found in file_path.
+    """
+    source = file_path.read_text()
+    tree = _ast.parse(source)
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.FunctionDef) and node.name == func_name:
+            args = node.args.args
+            defaults = node.args.defaults
+            n_args = len(args)
+            n_defaults = len(defaults)
+            result: dict[str, object] = {}
+            for i, arg in enumerate(args):
+                name = arg.arg
+                if name == "self":
+                    continue
+                default_idx = i - (n_args - n_defaults)
+                if default_idx >= 0:
+                    d = defaults[default_idx]
+                    result[name] = d.value if isinstance(d, _ast.Constant) else ...
+                else:
+                    result[name] = _EMPTY
+            return result
+    raise AssertionError(
+        f"Function {func_name!r} not found in {file_path}. "
+        f"Has the function been renamed or removed?"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -257,24 +328,26 @@ class TestPipelineStageNames:
 class TestComponentInterfaces:
     """Verify component function signatures implement the correct contract.
 
-    When kfp is not installed, @dsl.component is not applied and the
-    functions are plain Python callables — inspect.signature() works directly.
+    Uses AST-based parameter inspection (_raw_func_params) so these tests
+    are immune to KFP decorator wrapping.  When kfp is installed,
+    @dsl.component replaces the original signature with (*args, **kwargs) —
+    inspect.signature() would silently return the wrong parameter list.
 
     Category: interface
     """
 
-    def _sig(self, func_name: str) -> inspect.Signature:
-        """Return the signature of a component function."""
+    def _params(self, func_name: str) -> dict[str, object]:
+        """Return AST-derived {param_name: default_or_EMPTY} for a component function.
+
+        _EMPTY means the parameter is required (no default).
+        Uses _raw_func_params() to parse the source — immune to KFP wrapping.
+        """
         _require_importable()
-        fn = getattr(_comp, func_name, None)
-        assert fn is not None, (
+        assert hasattr(_comp, func_name), (
             f"components_pragma has no function '{func_name}'. "
             f"Component 5 must define it."
         )
-        return inspect.signature(fn)
-
-    def _params(self, func_name: str) -> set[str]:
-        return set(self._sig(func_name).parameters)
+        return _raw_func_params(_COMPONENTS_PATH, func_name)
 
     # --- prepare component ---
 
@@ -283,7 +356,7 @@ class TestComponentInterfaces:
         params = self._params("prepare_dataset")
         assert "dataset_name" in params, (
             f"prepare_dataset must have a 'dataset_name' parameter, "
-            f"got {params}"
+            f"got {set(params)}"
         )
 
     def test_prepare_component_accepts_model_size(self) -> None:
@@ -295,7 +368,7 @@ class TestComponentInterfaces:
         """
         params = self._params("prepare_dataset")
         assert "model_size" in params, (
-            f"prepare_dataset must have a 'model_size' parameter, got {params}"
+            f"prepare_dataset must have a 'model_size' parameter, got {set(params)}"
         )
 
     def test_prepare_component_does_not_require_raw_data_path(self) -> None:
@@ -305,12 +378,9 @@ class TestComponentInterfaces:
         raw_data_path was the old scaffold's IBM-specific hardcoded path.
         Using a registry key enables future adapters without changing the interface.
         """
-        sig = self._sig("prepare_dataset")
-        params = sig.parameters
+        params = self._params("prepare_dataset")
         if "raw_data_path" in params:
-            p = params["raw_data_path"]
-            # If it exists, it must not be a required positional (must have a default)
-            assert p.default is not inspect.Parameter.empty, (
+            assert params["raw_data_path"] is not _EMPTY, (
                 "prepare_dataset must not require raw_data_path — "
                 "use dataset_name (registry key) as the canonical input."
             )
@@ -325,7 +395,7 @@ class TestComponentInterfaces:
         """
         params = self._params("upload_artifacts")
         assert "manifest_uri" in params, (
-            f"upload_artifacts must have a 'manifest_uri' parameter, got {params}"
+            f"upload_artifacts must have a 'manifest_uri' parameter, got {set(params)}"
         )
 
     # --- train component ---
@@ -338,7 +408,7 @@ class TestComponentInterfaces:
         """
         params = self._params("run_pretraining")
         assert "manifest_uri" in params, (
-            f"run_pretraining must have a 'manifest_uri' parameter, got {params}. "
+            f"run_pretraining must have a 'manifest_uri' parameter, got {set(params)}. "
             f"Training must consume a DatasetManifest, not a raw file path."
         )
 
@@ -351,7 +421,7 @@ class TestComponentInterfaces:
         params = self._params("run_pretraining")
         assert "model_size" in params, (
             f"run_pretraining must have a 'model_size' parameter (not 'config_name'), "
-            f"got {params}"
+            f"got {set(params)}"
         )
 
     def test_train_component_does_not_use_config_name(self) -> None:
@@ -362,8 +432,8 @@ class TestComponentInterfaces:
         """
         params = self._params("run_pretraining")
         assert "config_name" not in params, (
-            f"run_pretraining must not have a 'config_name' parameter. "
-            f"Use model_size='S'/'M'/'L' consistently with train_pragma()."
+            "run_pretraining must not have a 'config_name' parameter. "
+            "Use model_size='S'/'M'/'L' consistently with train_pragma()."
         )
 
     def test_train_component_accepts_nodes(self) -> None:
@@ -374,24 +444,23 @@ class TestComponentInterfaces:
         params = self._params("run_pretraining")
         assert "nodes" in params, (
             f"run_pretraining must have a 'nodes: int' parameter for two-node DDP, "
-            f"got {params}"
+            f"got {set(params)}"
         )
 
     def test_train_component_nodes_default_is_1(self) -> None:
         """ADR 003: nodes must default to 1 (single-node)."""
-        sig = self._sig("run_pretraining")
-        nodes_param = sig.parameters.get("nodes")
-        assert nodes_param is not None
-        assert nodes_param.default == 1, (
+        params = self._params("run_pretraining")
+        assert "nodes" in params
+        assert params["nodes"] == 1, (
             f"run_pretraining nodes must default to 1 (single-node), "
-            f"got default={nodes_param.default}"
+            f"got default={params['nodes']!r}"
         )
 
     def test_train_component_accepts_epochs(self) -> None:
         """§2.4: train component must accept epochs: int."""
         params = self._params("run_pretraining")
         assert "epochs" in params, (
-            f"run_pretraining must have an 'epochs' parameter, got {params}"
+            f"run_pretraining must have an 'epochs' parameter, got {set(params)}"
         )
 
     # --- export component ---
@@ -411,19 +480,18 @@ class TestComponentInterfaces:
 class TestPipelineFunction:
     """Verify the pipeline function signature implements the workbench contract.
 
+    Uses AST-based parameter inspection — immune to KFP @dsl.pipeline wrapping.
+
     Category: interface
     """
 
-    def _sig(self) -> inspect.Signature:
+    def _params(self) -> dict[str, object]:
+        """Return AST-derived {param_name: default_or_EMPTY} for pragma_pretraining_pipeline."""
         _require_importable()
-        fn = getattr(_pipe, "pragma_pretraining_pipeline", None)
-        assert fn is not None, (
+        assert hasattr(_pipe, "pragma_pretraining_pipeline"), (
             "pragma_pipeline.py must define pragma_pretraining_pipeline()."
         )
-        return inspect.signature(fn)
-
-    def _params(self) -> dict:
-        return dict(self._sig().parameters)
+        return _raw_func_params(_PIPELINE_PATH, "pragma_pretraining_pipeline")
 
     def test_pipeline_function_accepts_dataset_name(self) -> None:
         """ADR 003: pipeline must accept dataset_name (adapter registry key)."""
@@ -439,10 +507,10 @@ class TestPipelineFunction:
 
     def test_pipeline_model_size_default_is_s(self) -> None:
         """§2.4 / Table 1: model_size must default to 'S' (PRAGMA-S, ~10M params)."""
-        p = self._params().get("model_size")
-        assert p is not None
-        assert p.default == "S", (
-            f"model_size must default to 'S' (PRAGMA-S), got {p.default!r}"
+        params = self._params()
+        assert "model_size" in params
+        assert params["model_size"] == "S", (
+            f"model_size must default to 'S' (PRAGMA-S), got {params['model_size']!r}"
         )
 
     def test_pipeline_function_does_not_use_config_name(self) -> None:
@@ -461,10 +529,10 @@ class TestPipelineFunction:
 
     def test_pipeline_nodes_default_is_1(self) -> None:
         """ADR 003: nodes must default to 1 (single-node)."""
-        p = self._params().get("nodes")
-        assert p is not None
-        assert p.default == 1, (
-            f"pragma_pretraining_pipeline nodes must default to 1, got {p.default}"
+        params = self._params()
+        assert "nodes" in params
+        assert params["nodes"] == 1, (
+            f"pragma_pretraining_pipeline nodes must default to 1, got {params['nodes']!r}"
         )
 
     def test_pipeline_function_accepts_epochs(self) -> None:
@@ -475,11 +543,11 @@ class TestPipelineFunction:
 
     def test_pipeline_epochs_default_is_10(self) -> None:
         """§2.4: epochs must default to 10 (consistent with train_pragma default)."""
-        p = self._params().get("epochs")
-        assert p is not None
-        assert p.default == 10, (
+        params = self._params()
+        assert "epochs" in params
+        assert params["epochs"] == 10, (
             f"epochs must default to 10 (consistent with train_pragma), "
-            f"got {p.default}"
+            f"got {params['epochs']!r}"
         )
 
 
@@ -506,12 +574,13 @@ class TestPragmaPretrainingPipelineHonestContract:
         The skip path was never implemented.  Removing the parameter makes
         the contract honest: this pipeline always runs prepare and upload.
         Callers with an existing manifest use pragma_train_from_manifest_pipeline.
+
+        Uses AST-based inspection — immune to KFP @dsl.pipeline wrapping.
         """
         _require_importable()
-        fn = getattr(_pipe, "pragma_pretraining_pipeline", None)
-        assert fn is not None
-        sig = inspect.signature(fn)
-        assert "manifest_uri" not in sig.parameters, (
+        assert hasattr(_pipe, "pragma_pretraining_pipeline")
+        params = _raw_func_params(_PIPELINE_PATH, "pragma_pretraining_pipeline")
+        assert "manifest_uri" not in params, (
             "pragma_pretraining_pipeline must not have a manifest_uri parameter. "
             "It always runs all five stages. Use pragma_train_from_manifest_pipeline "
             "for the manifest-bypass path."
@@ -556,6 +625,8 @@ class TestPragmaPretrainingPipelineHonestContract:
 class TestTrainFromManifestPipeline:
     """pragma_train_from_manifest_pipeline: submit+train+export only.
 
+    Uses AST-based parameter inspection — immune to KFP @dsl.pipeline wrapping.
+
     Category: interface
     Paper: Section 2.4 (Training Infrastructure) stages 3-5.
     ADR 003: manifest_uri as canonical dataset contract.
@@ -576,14 +647,13 @@ class TestTrainFromManifestPipeline:
             "pragma_train_from_manifest_pipeline must be callable."
         )
 
-    def _sig(self) -> inspect.Signature:
+    def _params(self) -> dict[str, object]:
+        """Return AST-derived {param_name: default_or_EMPTY} — immune to KFP wrapping."""
         _require_importable()
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None, "pragma_train_from_manifest_pipeline must be defined."
-        return inspect.signature(fn)
-
-    def _params(self) -> dict:
-        return dict(self._sig().parameters)
+        assert hasattr(_pipe, "pragma_train_from_manifest_pipeline"), (
+            "pragma_train_from_manifest_pipeline must be defined."
+        )
+        return _raw_func_params(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
 
     def test_has_manifest_uri_required_param(self) -> None:
         """§2.4 / ADR 003: manifest_uri must be a required parameter (no default).
@@ -595,7 +665,7 @@ class TestTrainFromManifestPipeline:
         assert "manifest_uri" in params, (
             "pragma_train_from_manifest_pipeline must have a manifest_uri parameter."
         )
-        assert params["manifest_uri"].default is inspect.Parameter.empty, (
+        assert params["manifest_uri"] is _EMPTY, (
             "manifest_uri must be required (no default). "
             "Callers must always supply a prepared DatasetManifest URI."
         )
@@ -609,12 +679,7 @@ class TestTrainFromManifestPipeline:
 
     def test_source_does_not_call_prepare_dataset(self) -> None:
         """§2.4 stage 1: prepare_dataset must NOT be wired in the manifest pipeline."""
-        src = _src_text(_PIPELINE_PATH)
-        # The function body of pragma_train_from_manifest_pipeline must not call
-        # prepare_dataset.  We check the function's own source (after its def line).
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "prepare_dataset" not in fn_src, (
             "pragma_train_from_manifest_pipeline must not call prepare_dataset. "
             "Stage 1 (prepare) is skipped — the manifest already exists in S3."
@@ -622,9 +687,7 @@ class TestTrainFromManifestPipeline:
 
     def test_source_does_not_call_upload_artifacts(self) -> None:
         """§2.4 stage 2: upload_artifacts must NOT be wired in the manifest pipeline."""
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "upload_artifacts" not in fn_src, (
             "pragma_train_from_manifest_pipeline must not call upload_artifacts. "
             "Stage 2 (upload) is skipped — the data is already in S3."
@@ -632,27 +695,21 @@ class TestTrainFromManifestPipeline:
 
     def test_source_calls_submit_pytorchjob(self) -> None:
         """§2.4 stage 3: submit_pytorchjob must be wired in the manifest pipeline."""
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "submit_pytorchjob" in fn_src, (
             "pragma_train_from_manifest_pipeline must call submit_pytorchjob (stage 3)."
         )
 
     def test_source_calls_run_pretraining(self) -> None:
         """§2.4 stage 4: run_pretraining must be wired in the manifest pipeline."""
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "run_pretraining" in fn_src, (
             "pragma_train_from_manifest_pipeline must call run_pretraining (stage 4)."
         )
 
     def test_source_calls_export_checkpoint(self) -> None:
         """§2.4 stage 5: export_checkpoint must be wired in the manifest pipeline."""
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "export_checkpoint" in fn_src, (
             "pragma_train_from_manifest_pipeline must call export_checkpoint (stage 5)."
         )
@@ -663,8 +720,8 @@ class TestTrainFromManifestPipeline:
         assert "model_size" in params, (
             "pragma_train_from_manifest_pipeline must have a model_size parameter."
         )
-        assert params["model_size"].default == "S", (
-            f"model_size must default to 'S', got {params['model_size'].default!r}"
+        assert params["model_size"] == "S", (
+            f"model_size must default to 'S', got {params['model_size']!r}"
         )
 
     def test_has_epochs_with_default(self) -> None:
@@ -673,8 +730,8 @@ class TestTrainFromManifestPipeline:
         assert "epochs" in params, (
             "pragma_train_from_manifest_pipeline must have an epochs parameter."
         )
-        assert params["epochs"].default == 10, (
-            f"epochs must default to 10, got {params['epochs'].default!r}"
+        assert params["epochs"] == 10, (
+            f"epochs must default to 10, got {params['epochs']!r}"
         )
 
     def test_has_nodes_with_default(self) -> None:
@@ -683,8 +740,8 @@ class TestTrainFromManifestPipeline:
         assert "nodes" in params, (
             "pragma_train_from_manifest_pipeline must have a nodes parameter."
         )
-        assert params["nodes"].default == 1, (
-            f"nodes must default to 1 (single-node), got {params['nodes'].default!r}"
+        assert params["nodes"] == 1, (
+            f"nodes must default to 1 (single-node), got {params['nodes']!r}"
         )
 
 
@@ -694,6 +751,8 @@ class TestTrainFromManifestPipeline:
 
 class TestNoPvcStorage:
     """Verify no component or pipeline introduces PVC-based data storage.
+
+    Uses AST-based parameter inspection — immune to KFP decorator wrapping.
 
     Category: no_pvc
     ADR 003 / openshift-storage-pattern.md: canonical data lives in S3.
@@ -705,8 +764,9 @@ class TestNoPvcStorage:
         "data_pvc", "dataset_pvc", "storage_pvc",
     )
 
-    def _assert_no_pvc_param(self, sig: inspect.Signature, context: str) -> None:
-        for name in sig.parameters:
+    def _assert_no_pvc_param(self, param_names: set[str], context: str) -> None:
+        """Assert none of param_names match PVC-based naming patterns."""
+        for name in param_names:
             for pattern in self._PVC_PARAM_PATTERNS:
                 assert pattern not in name.lower(), (
                     f"'{context}' has a PVC-based parameter '{name}'. "
@@ -717,30 +777,27 @@ class TestNoPvcStorage:
     def test_prepare_component_no_pvc(self) -> None:
         """ADR 003: prepare_dataset must not have PVC storage parameters."""
         _require_importable()
-        self._assert_no_pvc_param(
-            inspect.signature(_comp.prepare_dataset), "prepare_dataset"
-        )
+        params = _raw_func_params(_COMPONENTS_PATH, "prepare_dataset")
+        self._assert_no_pvc_param(set(params), "prepare_dataset")
 
     def test_upload_component_no_pvc(self) -> None:
         """ADR 003: upload_artifacts must not have PVC storage parameters."""
         _require_importable()
-        self._assert_no_pvc_param(
-            inspect.signature(_comp.upload_artifacts), "upload_artifacts"
-        )
+        params = _raw_func_params(_COMPONENTS_PATH, "upload_artifacts")
+        self._assert_no_pvc_param(set(params), "upload_artifacts")
 
     def test_train_component_no_pvc(self) -> None:
         """ADR 003: run_pretraining must not have PVC storage parameters."""
         _require_importable()
-        self._assert_no_pvc_param(
-            inspect.signature(_comp.run_pretraining), "run_pretraining"
-        )
+        params = _raw_func_params(_COMPONENTS_PATH, "run_pretraining")
+        self._assert_no_pvc_param(set(params), "run_pretraining")
 
     def test_pipeline_function_no_pvc(self) -> None:
         """ADR 003: pragma_pretraining_pipeline must not have PVC storage parameters."""
         _require_importable()
-        fn = getattr(_pipe, "pragma_pretraining_pipeline", None)
-        assert fn is not None
-        self._assert_no_pvc_param(inspect.signature(fn), "pragma_pretraining_pipeline")
+        assert hasattr(_pipe, "pragma_pretraining_pipeline")
+        params = _raw_func_params(_PIPELINE_PATH, "pragma_pretraining_pipeline")
+        self._assert_no_pvc_param(set(params), "pragma_pretraining_pipeline")
 
     def test_components_source_no_pvc_path_string(self) -> None:
         """ADR 003: components source must not construct PVC-based paths."""
@@ -833,13 +890,20 @@ class TestNoCircularDependency:
 
     Category: structural
     ADR 003 dependency graph: pipeline/ → src/ only. Never src/ → pipeline/.
+    ADR 004 lazy-import boundary: compile() may use importlib.import_module at
+    call time only — pipeline/ must never be loaded at src/ module import time.
     """
 
     _SRC_ROOT = pathlib.Path("src")
     _PIPELINE_NAMES = ("pipeline", "components_pragma", "pragma_pipeline")
 
     def test_src_modules_do_not_import_pipeline(self) -> None:
-        """ADR 003: no src/ module may import from pipeline/.
+        """ADR 003: no src/ module may statically import from pipeline/.
+
+        Scans src/ source for 'from pipeline' and 'import pipeline' at the
+        text level.  The documented lazy-import boundary (compile() using
+        importlib.import_module at call time) is an explicit exception and
+        is validated separately by test_decorators_do_not_load_pipeline_at_import_time.
 
         A circular dependency (src → pipeline → src) would make the src/
         modules un-testable in isolation and couple the training script to
@@ -849,12 +913,33 @@ class TestNoCircularDependency:
         for py_file in self._SRC_ROOT.rglob("*.py"):
             text = py_file.read_text()
             for name in self._PIPELINE_NAMES:
-                if f"from pipeline" in text or f"import pipeline" in text:
+                if "from pipeline" in text or "import pipeline" in text:
                     offending.append(str(py_file))
                     break
         assert not offending, (
             f"The following src/ files import from pipeline/ (circular dependency): "
             f"{offending}. ADR 003: pipeline/ → src/ only."
+        )
+
+    def test_decorators_do_not_load_pipeline_at_import_time(self) -> None:
+        """ADR 004 lazy-import boundary: importing src.workbench._decorators must not
+        load any pipeline/ module as a side effect.
+
+        compile() is explicitly allowed to call importlib.import_module("pipeline.*")
+        at call time only.  This test enforces that no pipeline/ module is loaded
+        during the import of src.workbench._decorators itself.
+
+        If this test fails, a pipeline/ import has been moved from inside compile()
+        to module level — violating the lazy-import boundary.
+        """
+        pipeline_mods_before = {k for k in sys.modules if k.startswith("pipeline")}
+        importlib.import_module("src.workbench._decorators")
+        pipeline_mods_after = {k for k in sys.modules if k.startswith("pipeline")}
+        new_pipeline_mods = pipeline_mods_after - pipeline_mods_before
+        assert not new_pipeline_mods, (
+            f"Importing src.workbench._decorators loaded pipeline/ modules at import time: "
+            f"{new_pipeline_mods}. ADR 004: only compile() may lazily load pipeline/ "
+            f"via importlib.import_module at call time."
         )
 
 
@@ -873,7 +958,7 @@ class TestKfpOptionalExecution:
 
     def test_prepare_component_is_kfp_decorated_when_kfp_available(self) -> None:
         """When kfp is installed, prepare_dataset must be a KFP component task."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping KFP execution tests")
+        pytest.importorskip("kfp", reason="kfp not installed — skipping KFP execution tests")
         _require_importable()
         fn = getattr(_comp, "prepare_dataset", None)
         assert fn is not None
@@ -885,7 +970,8 @@ class TestKfpOptionalExecution:
     def test_pipeline_function_compilable_when_kfp_available(self) -> None:
         """When kfp is installed, pragma_pretraining_pipeline must compile to YAML."""
         kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping KFP execution tests")
-        import tempfile, os
+        import os
+        import tempfile
         _require_importable()
         fn = getattr(_pipe, "pragma_pretraining_pipeline", None)
         assert fn is not None
@@ -906,7 +992,8 @@ class TestKfpOptionalExecution:
     def test_manifest_pipeline_compilable_when_kfp_available(self) -> None:
         """When kfp is installed, pragma_train_from_manifest_pipeline must compile to YAML."""
         kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping KFP execution tests")
-        import tempfile, os
+        import os
+        import tempfile
         _require_importable()
         fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
         assert fn is not None, (

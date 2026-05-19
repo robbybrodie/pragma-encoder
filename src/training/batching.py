@@ -22,7 +22,7 @@ from typing import Iterator, List
 from torch.utils.data import Sampler
 
 
-class DynamicBatchSampler(Sampler):
+class DynamicBatchSampler(Sampler[List[int]]):
     """Groups sequences by length and batches by token budget.
 
     Sorts the dataset by sequence length, then groups sequences

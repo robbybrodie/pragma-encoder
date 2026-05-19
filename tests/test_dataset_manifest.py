@@ -18,14 +18,13 @@ from __future__ import annotations
 
 import pytest
 
-from src.model.config import PRAGMAConfig
 from src.data.dataset_manifest import (
     DatasetManifest,
     DatasetManifestProtocol,
     DatasetShard,
     DatasetShardProtocol,
 )
-
+from src.model.config import PRAGMAConfig
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

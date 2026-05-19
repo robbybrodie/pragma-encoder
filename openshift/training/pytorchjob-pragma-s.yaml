@@ -89,7 +89,7 @@ spec:
           #
           # Image: workbench image reused to avoid Docker Hub rate-limit risk.
           # Already pulled on GPU nodes; contains git, Python 3, and boto3
-          # (boto3 is a transitive dependency of NeMo's cloud checkpointing).
+          # (boto3 is used directly by scripts/train_pragma.py for S3 checkpoint upload/download).
           #
           # S3 is the source of truth for training data.
           # emptyDir /workspace is ephemeral local execution storage only.
