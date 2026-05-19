@@ -38,18 +38,16 @@ import sys
 
 import pytest
 
+# These already exist and must remain importable.
+from src.workbench._api import train_pragma
+from src.workbench._decorators import PragmaPipeline, pragma_pipeline
+
 # ---------------------------------------------------------------------------
 # Imports from modules that do not exist yet (red phase).
 # These will raise ImportError until implementation is provided.
 # ---------------------------------------------------------------------------
-
 from src.workbench._intent import DatasetIntent, TrainIntent, dataset, train
-from src.workbench._decorators import PragmaPipeline, pragma_pipeline
-
-# These already exist and must remain importable.
-from src.workbench._api import train_pragma
-from src.workbench._run import PragmaRun, PIPELINE_STEP_NAMES
-
+from src.workbench._run import PIPELINE_STEP_NAMES, PragmaRun
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -435,7 +433,7 @@ class TestCompileBehavior:
 
     def test_compile_kfp_available_writes_yaml(self, tmp_path) -> None:
         """ADR 004: compile() must write a non-empty YAML file when KFP is installed."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping compile test")
+        pytest.importorskip("kfp", reason="kfp not installed — skipping compile test")
 
         p = _make_decorated_pipeline()
         output = tmp_path / "pragma-s-ibm-tabformer.yaml"
@@ -447,14 +445,14 @@ class TestCompileBehavior:
 
     def test_compile_accepts_string_path(self, tmp_path) -> None:
         """ADR 004: compile() must accept a string path argument."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
+        pytest.importorskip("kfp", reason="kfp not installed")
 
         p = _make_decorated_pipeline()
         p.compile(str(tmp_path / "out.yaml"))  # must not raise TypeError
 
     def test_compile_accepts_pathlib_path(self, tmp_path) -> None:
         """ADR 004: compile() must accept a pathlib.Path argument."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
+        pytest.importorskip("kfp", reason="kfp not installed")
 
         p = _make_decorated_pipeline()
         p.compile(tmp_path / "out.yaml")  # must not raise TypeError
@@ -474,8 +472,8 @@ class TestCompileNoSideEffects:
 
     def test_compile_does_not_call_subprocess_run(self, tmp_path) -> None:
         """ADR 004: compile() must not invoke subprocess.run()."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
-        from unittest.mock import patch, MagicMock
+        pytest.importorskip("kfp", reason="kfp not installed")
+        from unittest.mock import patch
 
         p = _make_decorated_pipeline()
         output = str(tmp_path / "out.yaml")
@@ -487,7 +485,7 @@ class TestCompileNoSideEffects:
 
     def test_compile_does_not_mutate_s3(self, tmp_path, monkeypatch) -> None:
         """ADR 004: compile() must not access S3, even if creds are absent."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
+        pytest.importorskip("kfp", reason="kfp not installed")
 
         for var in ("MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET",
                     "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
@@ -499,8 +497,8 @@ class TestCompileNoSideEffects:
 
     def test_compile_does_not_call_oc_kubectl(self, tmp_path) -> None:
         """ADR 004: compile() must not invoke oc or kubectl."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
-        from unittest.mock import patch, MagicMock
+        pytest.importorskip("kfp", reason="kfp not installed")
+        from unittest.mock import patch
 
         p = _make_decorated_pipeline()
         output = str(tmp_path / "out.yaml")
@@ -520,8 +518,8 @@ class TestCompileNoSideEffects:
 
     def test_compile_does_not_call_adapter_prepare(self, tmp_path) -> None:
         """ADR 004: compile() must not call DatasetAdapter.prepare()."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed")
-        from unittest.mock import patch, MagicMock
+        pytest.importorskip("kfp", reason="kfp not installed")
+        from unittest.mock import MagicMock, patch
 
         p = _make_decorated_pipeline()
         output = str(tmp_path / "out.yaml")
@@ -683,7 +681,7 @@ class TestTrainPragmaModeIntegration:
 
     def test_train_pragma_pipeline_mode_does_not_train(self) -> None:
         """ADR 004: train_pragma(mode='pipeline') must not execute training."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         with patch("src.workbench._api.subprocess") as mock_subp:
             mock_subp.run.return_value = MagicMock(returncode=0)
@@ -766,7 +764,8 @@ class TestLocalModeUnchanged:
     _OUT = "/tmp/pragma-local-decorator-test"
 
     def _local_run(self) -> PragmaRun:
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from src.data.dataset_manifest import DatasetManifest, DatasetShard
         from src.model.config import PRAGMAConfig
         shard = DatasetShard(uri="local/shard.csv", format="csv", rows=4)
@@ -895,7 +894,7 @@ class TestDecoratorValidation:
         with pytest.raises(ValueError):
             @pragma_pipeline(name="no-train")
             def _run():
-                ds = dataset(_VALID_DATASET)
+                dataset(_VALID_DATASET)
                 # Deliberately omit train() call
 
     def test_zero_train_calls_error_mentions_train_function(self) -> None:
@@ -907,7 +906,7 @@ class TestDecoratorValidation:
         with pytest.raises(ValueError) as exc_info:
             @pragma_pipeline(name="no-train-message")
             def _run():
-                ds = dataset(_VALID_DATASET)
+                dataset(_VALID_DATASET)
                 # Deliberately omit train() call
 
         msg = str(exc_info.value).lower()

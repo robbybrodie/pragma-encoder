@@ -125,7 +125,7 @@ class RoPEEncoding(nn.Module):
         # emb: (batch, seq_len, head_dim)
         emb = torch.cat([freqs, freqs], dim=-1)
 
-        # Expand over the n_heads dimension for broadcasting with (batch, n_heads, seq_len, head_dim).
+        # Expand over the n_heads dimension for broadcasting with (batch, n_heads, seq_len, head_dim).  # noqa: E501
         cos = emb.cos().unsqueeze(1)  # (batch, 1, seq_len, head_dim)
         sin = emb.sin().unsqueeze(1)  # (batch, 1, seq_len, head_dim)
 

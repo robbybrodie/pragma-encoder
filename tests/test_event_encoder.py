@@ -28,8 +28,8 @@ import pytest
 torch = pytest.importorskip("torch", reason="torch not installed")
 nn = torch.nn
 
-from src.model.config import PRAGMAConfig
 from src.encoders.event_encoder import EventEncoder
+from src.model.config import PRAGMAConfig
 
 _CONFIG = PRAGMAConfig.pragma_s()
 
@@ -605,7 +605,7 @@ class TestWithinEventPaddingMask:
         ), (
             "DEF-005a: real token outputs must not change when padding content changes. "
             "EventEncoder must use xe_valid to mask padding positions in attention. "
-            f"Max diff: {(z_hat_e_a[:,:,:n_real,:] - z_hat_e_b[:,:,:n_real,:]).abs().max().item():.6f}"
+            f"Max diff: {(z_hat_e_a[:,:,:n_real,:] - z_hat_e_b[:,:,:n_real,:]).abs().max().item():.6f}"  # noqa: E501
         )
 
     def test_no_xe_valid_is_backward_compatible(self) -> None:

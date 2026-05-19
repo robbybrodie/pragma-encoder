@@ -26,16 +26,18 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.workbench._decorators import PragmaPipeline
 
 from src.data.adapters import get_adapter
 from src.model.config import PRAGMAConfig
 from src.workbench._run import (
-    PIPELINE_STEP_NAMES,
     STEP_DESCRIPTIONS,
     PipelineStep,
     PragmaRun,
 )
-
 
 # ---------------------------------------------------------------------------
 # Model size → PRAGMAConfig factory map (case-sensitive per §2.4)
@@ -204,7 +206,7 @@ def _build_pipeline_intent(
     model_size: str,
     epochs: int,
     max_steps: int | None,
-) -> "PragmaPipeline":
+) -> PragmaPipeline:
     """Return a PragmaPipeline capturing training intent without executing anything.
 
     No training, no S3, no cluster access. The returned PragmaPipeline can be
@@ -219,8 +221,8 @@ def _build_pipeline_intent(
     Returns:
         PragmaPipeline wrapping the captured training intent.
     """
-    from src.workbench._intent import DatasetIntent, TrainIntent
     from src.workbench._decorators import PragmaPipeline
+    from src.workbench._intent import DatasetIntent, TrainIntent
 
     pipeline_name = f"pragma-{model_size.lower()}-{dataset}"
     ds_intent = DatasetIntent(name=dataset, prepare_if_missing=True)

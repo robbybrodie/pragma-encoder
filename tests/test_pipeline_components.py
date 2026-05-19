@@ -38,7 +38,6 @@ import sys
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Module loading helpers
 # ---------------------------------------------------------------------------
@@ -417,8 +416,8 @@ class TestComponentInterfaces:
         """
         params = self._params("run_pretraining")
         assert "config_name" not in params, (
-            f"run_pretraining must not have a 'config_name' parameter. "
-            f"Use model_size='S'/'M'/'L' consistently with train_pragma()."
+            "run_pretraining must not have a 'config_name' parameter. "
+            "Use model_size='S'/'M'/'L' consistently with train_pragma()."
         )
 
     def test_train_component_accepts_nodes(self) -> None:
@@ -908,7 +907,7 @@ class TestNoCircularDependency:
         for py_file in self._SRC_ROOT.rglob("*.py"):
             text = py_file.read_text()
             for name in self._PIPELINE_NAMES:
-                if f"from pipeline" in text or f"import pipeline" in text:
+                if "from pipeline" in text or "import pipeline" in text:
                     offending.append(str(py_file))
                     break
         assert not offending, (
@@ -953,7 +952,7 @@ class TestKfpOptionalExecution:
 
     def test_prepare_component_is_kfp_decorated_when_kfp_available(self) -> None:
         """When kfp is installed, prepare_dataset must be a KFP component task."""
-        kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping KFP execution tests")
+        pytest.importorskip("kfp", reason="kfp not installed — skipping KFP execution tests")
         _require_importable()
         fn = getattr(_comp, "prepare_dataset", None)
         assert fn is not None
@@ -965,7 +964,8 @@ class TestKfpOptionalExecution:
     def test_pipeline_function_compilable_when_kfp_available(self) -> None:
         """When kfp is installed, pragma_pretraining_pipeline must compile to YAML."""
         kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping KFP execution tests")
-        import tempfile, os
+        import os
+        import tempfile
         _require_importable()
         fn = getattr(_pipe, "pragma_pretraining_pipeline", None)
         assert fn is not None
@@ -986,7 +986,8 @@ class TestKfpOptionalExecution:
     def test_manifest_pipeline_compilable_when_kfp_available(self) -> None:
         """When kfp is installed, pragma_train_from_manifest_pipeline must compile to YAML."""
         kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping KFP execution tests")
-        import tempfile, os
+        import os
+        import tempfile
         _require_importable()
         fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
         assert fn is not None, (

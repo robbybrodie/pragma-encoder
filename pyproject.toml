@@ -36,8 +36,17 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short"
 
 [tool.ruff]
-line-length = 88
+line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
+ignore = [
+    # ML convention: uppercase matrix variables (X, X_train, X_test) are standard in numpy/sklearn
+    "N806",
+    # PyTorch convention: `import torch.nn.functional as F` is universal across the ecosystem
+    "N812",
+    # Deferred imports: optional dependencies (peft, kfp) are imported inside try/except or
+    # inside methods to keep them optional. This is intentional throughout the codebase.
+    "E402",
+]
