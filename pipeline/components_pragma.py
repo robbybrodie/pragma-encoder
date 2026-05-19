@@ -1,158 +1,278 @@
 """KFP SDK v2 pipeline components for PRAGMA training.
 
-Defines Kubeflow Pipelines (KFP SDK v2) components for the PRAGMA
-pretraining and evaluation pipeline on OpenShift AI.
+Five components implementing the §2.4 training infrastructure stages:
 
-Components follow the KFP SDK v2 decorator pattern consistent with
-the adjacent transaction-foundation-model-openshiftai/ pipeline.
+  Stage 1 — prepare_dataset   : Prepare dataset via DatasetAdapter (fit tokeniser)
+  Stage 2 — upload_artifacts  : Upload prepared artifacts to S3 (idempotent)
+  Stage 3 — submit_pytorchjob : Configure and submit KFTO PyTorchJob
+  Stage 4 — run_pretraining   : Execute pretraining (MEM objective §2.3.5)
+  Stage 5 — export_checkpoint : Upload model checkpoints and outputs to S3
 
-SCAFFOLD STATUS: All four component bodies are structural scaffolds only.
-They define the correct KFP interface (inputs, outputs, types) but raise
-NotImplementedError when executed. The working training entrypoint is
-scripts/train_pragma.py; the PyTorchJob manifest is in
-openshift/training/pytorchjob-pragma-s.yaml.
+KFP is an optional dependency.  When kfp is not installed, the _KFP_AVAILABLE
+flag is False and @dsl.component is not applied — components are plain Python
+callables that can be imported and inspected without a running KFP server.
 
-Components defined here:
-    preprocess_transactions — Tokenise and pack raw transaction data
-    pretrain_pragma         — Run PRAGMA pretraining (KFTO PyTorchJob)
-    extract_embeddings      — Extract embeddings from trained model
-    evaluate_downstream     — Run downstream task evaluation
+Design (ADR 003):
+  - pipeline/ → src/ only.  No circular dependency introduced.
+  - DatasetManifest / manifest_uri is the canonical dataset contract.
+  - No PVC-backed dataset storage.  All data lives in S3.
+  - prepare_dataset delegates to DatasetAdapter (get_adapter).
+  - run_pretraining uses the same model_size → PRAGMAConfig mapping as
+    train_pragma() so config is defined in exactly one place.
 
-Deployment note:
-    These components are compiled to YAML by 00_register_pipeline.ipynb
-    and deployed to the OpenShift AI pipeline server. The compiled YAML
-    is committed intentionally (see .gitignore for pipeline/*.yaml policy).
-
-Reference: Ostroukhov et al. (2026)
-KFP SDK v2: https://www.kubeflow.org/docs/components/pipelines/
+Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
+ADR: docs/decisions/003-workbench-training-api.md
 """
 
-from kfp import dsl
-from kfp.dsl import Dataset, Input, Model, Output
+from __future__ import annotations
+
+# ---------------------------------------------------------------------------
+# KFP optional import guard
+# ---------------------------------------------------------------------------
+
+try:
+    from kfp import dsl as _dsl
+    _KFP_AVAILABLE: bool = True
+except ImportError:
+    _dsl = None
+    _KFP_AVAILABLE: bool = False
 
 
-@dsl.component(
-    base_image="image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest",
-    packages_to_install=[],
+def _component(**kwargs):
+    """Return @dsl.component decorator if KFP available; identity decorator otherwise."""
+    if _KFP_AVAILABLE:
+        return _dsl.component(**kwargs)
+    return lambda fn: fn
+
+
+# ---------------------------------------------------------------------------
+# The five §2.4 pipeline stage names
+# Must mirror PIPELINE_STEP_NAMES in src/workbench/_run.py (ADR 003).
+# ---------------------------------------------------------------------------
+
+PIPELINE_STAGE_NAMES: tuple[str, ...] = (
+    "prepare",   # Prepare dataset via DatasetAdapter; return manifest URI
+    "upload",    # Upload prepared artifacts to S3 (idempotent)
+    "submit",    # Configure and submit KFTO PyTorchJob
+    "train",     # Execute pretraining — masked event modelling (§2.3.5)
+    "export",    # Upload model checkpoints and outputs to S3
 )
-def preprocess_transactions(
-    raw_data_path: str,
-    output_dataset: Output[Dataset],
-    n_buckets: int = 100,
-    bpe_vocab_size: int = 8000,
-    max_history_len: int = 512,
-) -> None:
-    """Tokenise and pack raw transaction data for PRAGMA pretraining.
 
-    Applies the FinancialTokenizerPipeline to raw transaction records
-    and packs sequences for training efficiency (Section 2.4).
+_BASE_IMAGE = (
+    "image-registry.openshift-image-registry.svc:5000"
+    "/pragma-encoder/pragma-encoder-workbench:latest"
+)
+
+
+# ---------------------------------------------------------------------------
+# Stage 1 — prepare_dataset
+# ---------------------------------------------------------------------------
+
+@_component(base_image=_BASE_IMAGE)
+def prepare_dataset(
+    dataset_name: str,
+    model_size: str,
+    upload: bool = False,
+) -> str:
+    """Prepare a dataset via the DatasetAdapter registry.
+
+    Resolves the adapter for dataset_name via get_adapter(), builds the
+    PRAGMAConfig for model_size, runs DatasetAdapter.prepare(), and returns
+    the prepared_prefix_uri from the resulting DatasetManifest.
+
+    Does NOT hardcode IBM TabFormer logic — any registered adapter is
+    supported.  New dataset adapters register in src/data/adapters/__init__.py
+    and require no changes to this component.
 
     Args:
-        raw_data_path: Path to raw transaction parquet files.
-        output_dataset: KFP output dataset artifact.
-        n_buckets: Percentile buckets for numerical fields. Default: 100.
-        bpe_vocab_size: BPE vocabulary size for text fields. Default: 8000.
-        max_history_len: Maximum events per customer history. Default: 512.
+        dataset_name: Adapter registry key, e.g. "ibm-tabformer".
+        model_size:   Model variant "S", "M", or "L" (case-sensitive).
+                      Determines PRAGMAConfig truncation limits passed to
+                      the adapter (max_event_tokens=24, max_profile_tokens=200,
+                      max_events=6500).
+        upload:       If True, upload prepared artifacts to S3 during prepare.
+                      Default: False — S3 upload is the upload_artifacts stage.
+
+    Returns:
+        prepared_prefix_uri from the returned DatasetManifest (S3 prefix URI).
+
+    Raises:
+        KeyError:          If dataset_name is not in the adapter registry.
+        ValueError:        If model_size is not "S", "M", or "L".
+        FileNotFoundError: If source data is missing.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Preprocessing transactions from {raw_data_path}")
+    from src.data.adapters import get_adapter
+    from src.model.config import PRAGMAConfig
+
+    _config_map = {
+        "S": PRAGMAConfig.pragma_s,
+        "M": PRAGMAConfig.pragma_m,
+        "L": PRAGMAConfig.pragma_l,
+    }
+    if model_size not in _config_map:
+        raise ValueError(
+            f"model_size must be 'S', 'M', or 'L' (case-sensitive), "
+            f"got {model_size!r}"
+        )
+    config = _config_map[model_size]()
+    adapter_cls = get_adapter(dataset_name)
+    adapter = adapter_cls()
+    manifest = adapter.prepare(config, upload=upload)
+    return manifest.prepared_prefix_uri
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 — upload_artifacts
+# ---------------------------------------------------------------------------
+
+@_component(base_image=_BASE_IMAGE)
+def upload_artifacts(
+    manifest_uri: str,
+    bucket: str = "",
+) -> str:
+    """Upload prepared artifacts to S3 (idempotent).
+
+    Reads the DatasetManifest at manifest_uri and uploads all shards and the
+    vocabulary file to S3.  Idempotent: re-running does not corrupt existing
+    data.
+
+    S3 credentials come from the pragma-workbench-env Secret only
+    (openshift-storage-pattern.md rule 4).
+
+    Args:
+        manifest_uri: S3 prefix URI returned by prepare_dataset.
+        bucket:       Override S3 bucket name.  Defaults to the value of
+                      MODEL_REGISTRY_BUCKET environment variable.
+
+    Returns:
+        manifest_uri: The same manifest_uri (passed to downstream stages).
+    """
     raise NotImplementedError(
-        "Scaffold: preprocess_transactions body not yet implemented. "
-        "Fit FinancialTokenizerPipeline on raw_data_path and write "
-        "packed sequences to output_dataset."
+        "upload_artifacts: upload prepared artifacts from manifest_uri to S3. "
+        "S3 credentials from pragma-workbench-env Secret "
+        "(MODEL_REGISTRY_ENDPOINT_URL / MODEL_REGISTRY_BUCKET)."
     )
 
 
-@dsl.component(
-    base_image="image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest",
-)
-def pretrain_pragma(
-    train_dataset: Input[Dataset],
-    config_name: str,
-    output_model: Output[Model],
+# ---------------------------------------------------------------------------
+# Stage 3 — submit_pytorchjob
+# ---------------------------------------------------------------------------
+
+@_component(base_image=_BASE_IMAGE)
+def submit_pytorchjob(
+    manifest_uri: str,
+    model_size: str = "S",
+    nodes: int = 1,
     epochs: int = 10,
-    batch_size: int = 32,
-    learning_rate: float = 1e-4,
-    mask_prob: float = 0.15,
-) -> None:
-    """Run PRAGMA pretraining using the masked event modelling objective.
+    namespace: str = "pragma-encoder",
+) -> str:
+    """Configure and submit a KFTO PyTorchJob to OpenShift AI.
 
-    Submits a KFTO PyTorchJob to OpenShift AI for distributed training.
-    Single-node training runs locally within the component.
+    Logical/configuration stage — no real cluster mutation in unit tests.
+
+    Selects the correct PyTorchJob manifest based on nodes:
+        nodes=1 → openshift/training/pytorchjob-pragma-s.yaml
+        nodes=2 → openshift/training/pytorchjob-pragma-s-2node.yaml (ADR 003)
+
+    No PVC-backed canonical dataset storage is introduced.  Data is sourced
+    from S3 via the init container (openshift-storage-pattern.md).
 
     Args:
-        train_dataset: Tokenised training data from preprocess_transactions.
-        config_name: Model size: 'pragma_s', 'pragma_m', or 'pragma_l'.
-        output_model: KFP output model artifact (checkpoint path).
-        epochs: Number of training epochs. Default: 10.
-        batch_size: Per-device batch size. Default: 32.
-        learning_rate: AdamW learning rate. Default: 1e-4.
-        mask_prob: Masking probability for MLM. Default: 0.15.
+        manifest_uri: DatasetManifest URI — passed as DATA_URI env var to job.
+        model_size:   Model variant "S", "M", or "L".  Default: "S".
+        nodes:        Number of training nodes.  1 = single-node,
+                      2 = two-node DDP.  Default: 1.
+        epochs:       Number of pretraining epochs.  Default: 10.
+        namespace:    OpenShift namespace for the PyTorchJob.
+                      Default: "pragma-encoder".
+
+    Returns:
+        job_name: The submitted PyTorchJob name (for monitoring).
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Pretraining PRAGMA ({config_name}) for {epochs} epochs")
     raise NotImplementedError(
-        "Scaffold: pretrain_pragma body not yet implemented. "
-        "Working training entrypoint: scripts/train_pragma.py. "
-        "For distributed training, apply openshift/training/pytorchjob-pragma-s.yaml."
+        "submit_pytorchjob: apply the correct PyTorchJob manifest via oc apply. "
+        "nodes=1 → pytorchjob-pragma-s.yaml; "
+        "nodes=2 → pytorchjob-pragma-s-2node.yaml."
     )
 
 
-@dsl.component(
-    base_image="image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest",
-)
-def extract_embeddings(
-    model: Input[Model],
-    dataset: Input[Dataset],
-    output_embeddings: Output[Dataset],
-    pooling: str = "hist",
-    batch_size: int = 64,
-) -> None:
-    """Extract PRAGMA embeddings from a trained model.
+# ---------------------------------------------------------------------------
+# Stage 4 — run_pretraining
+# ---------------------------------------------------------------------------
+
+@_component(base_image=_BASE_IMAGE)
+def run_pretraining(
+    manifest_uri: str,
+    model_size: str = "S",
+    nodes: int = 1,
+    epochs: int = 10,
+) -> str:
+    """Execute PRAGMA pretraining and return the checkpoint URI.
+
+    Monitors the PyTorchJob submitted in submit_pytorchjob until completion,
+    then returns the S3 URI of the final checkpoint.
+
+    Uses the same model_size → PRAGMAConfig mapping as train_pragma() in
+    src/workbench/_api.py so configuration is defined in exactly one place.
+    Specifically, the same _config_map {"S": PRAGMAConfig.pragma_s, ...}
+    is used to ensure consistency.
 
     Args:
-        model: Trained PRAGMA model checkpoint.
-        dataset: Input transaction dataset.
-        output_embeddings: Output embedding dataset (numpy arrays).
-        pooling: Pooling strategy: 'hist', 'mean', or 'last'. Default: 'hist'.
-        batch_size: Inference batch size. Default: 64.
+        manifest_uri: DatasetManifest URI for the prepared training dataset.
+                      Canonical §2.4 training contract — not a raw file path.
+        model_size:   Model variant "S", "M", or "L".  Maps to PRAGMAConfig.
+        nodes:        Number of training nodes (1 or 2).
+        epochs:       Number of pretraining epochs.
+
+    Returns:
+        checkpoint_uri: S3 URI of the final model checkpoint.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Extracting embeddings with pooling={pooling}")
+    from src.model.config import PRAGMAConfig
+
+    # Same model_size → PRAGMAConfig mapping as train_pragma()
+    # (src/workbench/_api.py::_MODEL_SIZE_MAP) — no second implementation.
+    _config_map = {
+        "S": PRAGMAConfig.pragma_s,
+        "M": PRAGMAConfig.pragma_m,
+        "L": PRAGMAConfig.pragma_l,
+    }
+    if model_size not in _config_map:
+        raise ValueError(
+            f"model_size must be 'S', 'M', or 'L', got {model_size!r}"
+        )
     raise NotImplementedError(
-        "Scaffold: extract_embeddings body not yet implemented. "
-        "Load model checkpoint, run inference over dataset, write "
-        "numpy embedding arrays to output_embeddings."
+        "run_pretraining: monitor PyTorchJob and return checkpoint URI. "
+        "Working training entrypoint: scripts/train_pragma.py."
     )
 
 
-@dsl.component(
-    base_image="image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest",
-)
-def evaluate_downstream(
-    model: Input[Model],
-    embeddings: Input[Dataset],
-    labelled_dataset: Input[Dataset],
-    task_name: str,
-    output_metrics: Output[Dataset],
-) -> None:
-    """Evaluate PRAGMA embeddings on downstream tasks.
+# ---------------------------------------------------------------------------
+# Stage 5 — export_checkpoint
+# ---------------------------------------------------------------------------
+
+@_component(base_image=_BASE_IMAGE)
+def export_checkpoint(
+    checkpoint_uri: str,
+    model_size: str = "S",
+    export_prefix: str = "pragma-encoder/checkpoints/",
+) -> str:
+    """Export model checkpoints and vocabulary to S3.
+
+    Copies the final checkpoint to the canonical S3 export prefix.
+    S3 path format follows openshift-storage-pattern.md:
+        pragma-encoder/checkpoints/pragma-s/checkpoint_epoch<NNNN>.pt
 
     Args:
-        model: Trained PRAGMA model checkpoint.
-        embeddings: Pre-extracted embeddings (optional shortcut).
-        labelled_dataset: Labelled dataset for the downstream task.
-        task_name: Task name: 'fraud_detection', 'churn', 'credit_risk'.
-        output_metrics: Output metrics JSON artifact.
+        checkpoint_uri:  S3 URI of the final checkpoint from run_pretraining.
+        model_size:      Model variant ("S", "M", "L").  Sets the S3 key prefix.
+        export_prefix:   Override S3 export prefix.
+                         Default: "pragma-encoder/checkpoints/".
+
+    Returns:
+        export_uri: S3 URI of the exported model directory.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Evaluating downstream task: {task_name}")
     raise NotImplementedError(
-        "Scaffold: evaluate_downstream body not yet implemented. "
-        "Run downstream task evaluation on embeddings/labelled_dataset "
-        "and write metrics JSON to output_metrics."
+        "export_checkpoint: copy checkpoint to S3 canonical export prefix "
+        "and return the export URI. "
+        "Format: pragma-encoder/checkpoints/pragma-{s,m,l}/checkpoint_epoch<NNNN>.pt"
     )

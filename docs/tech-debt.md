@@ -192,3 +192,53 @@ the comment in `strategy.py` to remove the "TODO" framing.
 - Paper: Section 2.3.5 (masking corruption)
 - Code: `src/masking/strategy.py` — `_UNK_TOKEN_ID` constant
 - Code: `src/tokenizer/pipeline.py` — special token IDs
+
+---
+
+## TD-006: Multi-node checkpoint resume assumes shared filesystem
+
+**Date:** 2026-05-19
+**Severity:** Medium (blocks fault-tolerant multi-node training; does not affect fresh runs)
+**Status:** Known limitation — safe for demo, must resolve before production
+
+### Description
+`scripts/train_pragma.py` supports `--resume` to restart training from the
+latest checkpoint. The resume logic (lines 419–437) works as follows:
+
+1. Rank 0 searches locally, then downloads from S3 if `--s3-checkpoint-prefix` is set.
+2. Rank 0 broadcasts a `found` flag (0 or 1) to all ranks via `dist.broadcast`.
+3. Non-rank-0 workers then call `_find_latest_local_checkpoint(output_dir)` locally.
+
+Step 3 assumes all ranks share the same filesystem (e.g. a shared NFS PVC).
+In the two-node PyTorchJob manifests (`pytorchjob-pragma-s-2node.yaml`), each
+pod has its own independent `emptyDir` for `/workspace`. The Worker pod's
+`output_dir` is empty on startup, so `_find_latest_local_checkpoint` returns
+`None` and the Worker begins from a randomly initialised model state.
+
+Result: rank 0 resumes from a checkpoint; rank 1 starts from scratch.
+DDP averages gradients across ranks but does not re-synchronise starting
+weights. Training continues with diverged model states.
+
+### Impact on demo manifest
+Low for the `--max-steps 20` smoke run. On a fresh first run no checkpoint
+exists anywhere; `--resume` is a no-op for all ranks and training proceeds
+correctly. The bug only activates on a genuine restart where a checkpoint has
+already been saved (i.e. at least one full epoch completed before the job was
+interrupted).
+
+### Resolution
+Option A (preferred): All ranks download the checkpoint from S3 independently.
+Replace the broadcast + local-find pattern with a direct S3 download on every
+rank, guarded by whether the checkpoint key exists.
+
+Option B: Use a shared ReadWriteMany PVC for `/workspace/outputs` so all pods
+see the same checkpoint file. This reintroduces a PVC and the associated
+scheduling constraint (all pods must schedule on nodes with access to the PVC).
+Contradicts the no-PVC-as-canonical-storage rule in ADR 003.
+
+Option A is consistent with the S3-as-durable-store principle.
+
+### References
+- Code: `scripts/train_pragma.py` lines 419–437 (`_resume` block)
+- Manifest: `openshift/training/pytorchjob-pragma-s-2node.yaml`
+- ADR 003: docs/decisions/003-workbench-training-api.md (no PVC canonical storage)

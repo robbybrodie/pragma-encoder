@@ -1,96 +1,153 @@
 """KFP SDK v2 pipeline definition for PRAGMA pretraining.
 
-Defines the end-to-end PRAGMA pretraining and evaluation pipeline
-for deployment on OpenShift AI via Kubeflow Pipelines (KFP SDK v2).
+Defines the end-to-end PRAGMA pretraining pipeline for deployment on
+OpenShift AI via Kubeflow Pipelines (KFP SDK v2).
 
-Pipeline stages:
-    1. preprocess_transactions — Tokenise and pack raw transaction data
-    2. pretrain_pragma         — Run PRAGMA pretraining
-    3. extract_embeddings      — Extract embeddings from trained model
-    4. evaluate_downstream     — Evaluate on downstream tasks
+The five pipeline stages mirror the §2.4 training infrastructure stages and
+the PIPELINE_STEP_NAMES exposed by PragmaRun.show_pipeline():
 
-The pipeline is compiled to YAML and registered via 00_register_pipeline.ipynb.
-Compiled YAML is committed to the repository for GitOps deployment.
+    1. prepare   — prepare_dataset: fit tokeniser via DatasetAdapter
+    2. upload    — upload_artifacts: upload prepared data to S3 (idempotent)
+    3. submit    — submit_pytorchjob: configure / submit KFTO PyTorchJob
+    4. train     — run_pretraining: execute pretraining (MEM objective §2.3.5)
+    5. export    — export_checkpoint: upload model checkpoint to S3
 
-Deployment:
-    The ArgoCD application (openshift/argocd/application.yaml) deploys
-    the pipeline to OpenShift AI. See openshift/gitops/ for the full
-    GitOps configuration.
+Canonical dataset contract: DatasetManifest / manifest_uri (§2.4 data
+storage).  No PVC-backed dataset storage.  All data lives in S3.
 
-Reference: Ostroukhov et al. (2026)
-KFP SDK v2: https://www.kubeflow.org/docs/components/pipelines/
+If manifest_uri is provided (non-empty), the prepare and upload stages are
+skipped — callers can re-submit training on an already-prepared dataset
+without re-running the expensive tokeniser-fitting step.
+
+KFP is an optional dependency (same guard as components_pragma.py).
+When kfp is not installed, @dsl.pipeline is not applied and the function
+is a plain Python callable inspectable without a running KFP server.
+
+Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
+ADR: docs/decisions/003-workbench-training-api.md
 """
 
-from kfp import dsl
+from __future__ import annotations
 
-from .components_pragma import (
-    evaluate_downstream,
-    extract_embeddings,
-    pretrain_pragma,
-    preprocess_transactions,
+# ---------------------------------------------------------------------------
+# KFP optional import guard
+# ---------------------------------------------------------------------------
+
+try:
+    from kfp import dsl as _dsl
+    _KFP_AVAILABLE: bool = True
+except ImportError:
+    _dsl = None
+    _KFP_AVAILABLE: bool = False
+
+
+def _pipeline(**kwargs):
+    """Return @dsl.pipeline decorator if KFP available; identity decorator otherwise."""
+    if _KFP_AVAILABLE:
+        return _dsl.pipeline(**kwargs)
+    return lambda fn: fn
+
+
+# ---------------------------------------------------------------------------
+# Import pipeline components (pipeline/ → src/ only; no circular dependency)
+# ---------------------------------------------------------------------------
+
+from pipeline.components_pragma import (  # noqa: E402
+    prepare_dataset,
+    upload_artifacts,
+    submit_pytorchjob,
+    run_pretraining,
+    export_checkpoint,
 )
 
 
-@dsl.pipeline(
+# ---------------------------------------------------------------------------
+# Pipeline definition
+# ---------------------------------------------------------------------------
+
+@_pipeline(
     name="pragma-pretraining-pipeline",
     description=(
         "End-to-end PRAGMA foundation model pretraining pipeline. "
-        "Implements the masked event modelling objective from "
+        "Five visible §2.4 stages: prepare → upload → submit → train → export. "
+        "Canonical dataset contract: DatasetManifest / manifest_uri (not PVC). "
         "Ostroukhov et al. (2026), arXiv:2604.08649v1."
     ),
 )
 def pragma_pretraining_pipeline(
-    raw_data_path: str,
-    config_name: str = "pragma_s",
+    dataset_name: str,
+    model_size: str = "S",
     epochs: int = 10,
-    batch_size: int = 32,
-    learning_rate: float = 1e-4,
-    mask_prob: float = 0.15,
-    downstream_task: str = "fraud_detection",
+    nodes: int = 1,
+    manifest_uri: str = "",
 ) -> None:
-    """Full PRAGMA pretraining and evaluation pipeline.
+    """Full PRAGMA pretraining pipeline with five visible §2.4 stages.
+
+    The pipeline consumes DatasetManifest / manifest_uri as the canonical
+    training dataset contract — not raw local file paths or PVC-mounted
+    data.
+
+    If manifest_uri is non-empty, the prepare and upload stages are skipped
+    (the dataset is already prepared in S3).
 
     Args:
-        raw_data_path: S3/OBC path to raw transaction parquet files.
-        config_name: Model size variant: 'pragma_s', 'pragma_m', 'pragma_l'.
-        epochs: Number of pretraining epochs. Default: 10.
-        batch_size: Per-device training batch size. Default: 32.
-        learning_rate: AdamW learning rate. Default: 1e-4.
-        mask_prob: Event masking probability. Default: 0.15.
-        downstream_task: Task for evaluation. Default: 'fraud_detection'.
+        dataset_name: Adapter registry key, e.g. "ibm-tabformer".
+                      Resolved via src/data/adapters/__init__.py::get_adapter.
+        model_size:   Model variant "S", "M", or "L" (case-sensitive).
+                      Maps to PRAGMAConfig.pragma_s/m/l() (Table 1).
+                      Default: "S" (PRAGMA-S, ~10M parameters).
+        epochs:       Number of pretraining epochs.  Default: 10.
+        nodes:        Number of training nodes.
+                      1 = single-node (pytorchjob-pragma-s.yaml),
+                      2 = two-node DDP (pytorchjob-pragma-s-2node.yaml).
+                      Default: 1.
+        manifest_uri: If non-empty, skip prepare/upload and use this
+                      DatasetManifest URI directly for training.
+                      Default: "" (run prepare and upload from scratch).
     """
-
-    # Stage 1: Preprocess and tokenise transactions
-    preprocess_op = preprocess_transactions(
-        raw_data_path=raw_data_path,
+    # Stage 1: Prepare dataset via DatasetAdapter registry
+    prepare_op = prepare_dataset(
+        dataset_name=dataset_name,
+        model_size=model_size,
+        upload=False,  # S3 upload is handled by upload_artifacts (stage 2)
     )
 
-    # Stage 2: Pretrain PRAGMA with MEM objective
-    pretrain_op = pretrain_pragma(
-        train_dataset=preprocess_op.outputs["output_dataset"],
-        config_name=config_name,
+    # Stage 2: Upload prepared artifacts to S3 (idempotent)
+    upload_op = upload_artifacts(
+        manifest_uri=prepare_op,
+    )
+
+    # Stage 3: Configure and submit KFTO PyTorchJob
+    submit_op = submit_pytorchjob(
+        manifest_uri=upload_op,
+        model_size=model_size,
+        nodes=nodes,
         epochs=epochs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        mask_prob=mask_prob,
     )
 
-    # Stage 3: Extract embeddings from trained model
-    extract_op = extract_embeddings(
-        model=pretrain_op.outputs["output_model"],
-        dataset=preprocess_op.outputs["output_dataset"],
+    # Stage 4: Execute pretraining — masked event modelling (§2.3.5)
+    train_op = run_pretraining(
+        manifest_uri=upload_op,
+        model_size=model_size,
+        nodes=nodes,
+        epochs=epochs,
     )
 
-    # Stage 4: Evaluate on downstream task
-    evaluate_op = evaluate_downstream(
-        model=pretrain_op.outputs["output_model"],
-        embeddings=extract_op.outputs["output_embeddings"],
-        labelled_dataset=preprocess_op.outputs["output_dataset"],
-        task_name=downstream_task,
+    # Stage 5: Export model checkpoints and outputs to S3
+    export_op = export_checkpoint(
+        checkpoint_uri=train_op,
+        model_size=model_size,
     )
 
+
+# ---------------------------------------------------------------------------
+# Compilation entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    if not _KFP_AVAILABLE:
+        print("kfp is not installed — pipeline compilation requires kfp.")
+        raise SystemExit(1)
     import kfp.compiler as compiler
     compiler.Compiler().compile(
         pipeline_func=pragma_pretraining_pipeline,

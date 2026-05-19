@@ -129,26 +129,46 @@ oc get events -n pragma-encoder --sort-by=.lastTimestamp | tail -20
 
 ---
 
+## Storage model
+
+Training data, checkpoints, and outputs are stored in S3. Training pods use
+`emptyDir` scratch volumes — no dataset PVCs. See:
+
+**[docs/openshift-storage-pattern.md](openshift-storage-pattern.md)**
+
+That document is the canonical reference for all storage decisions (S3 paths,
+credential management, failure semantics, RWO PVC prohibition, emptyDir usage).
+
+---
+
 ## Running a Training Job
 
 The PyTorchJob is **not** auto-synced by ArgoCD (it's a one-shot job, not
-a long-running resource). Apply manually when ready:
+a long-running resource). Apply manually when ready.
+
+For the full procedure (data upload, monitoring, checkpoint resilience) see
+**[docs/training-guide.md](training-guide.md)**. Quick reference:
 
 ```bash
-# Verify the workbench image and PVCs exist first
-oc get istag pragma-encoder-workbench:latest -n pragma-encoder
-oc get pvc -n pragma-encoder
+# 1. Upload training data to S3 (once, idempotent):
+python scripts/upload_training_data.py \
+  --csv-path  data/tabformer/card_transaction.v1.csv \
+  --vocab-path data/tabformer/vocab.pkl
 
-# Submit the PRAGMA-S training job (single GPU)
+# 2. Verify the workbench image exists:
+oc get istag pragma-encoder-workbench:latest -n pragma-encoder
+
+# 3. Submit the PRAGMA-S training job (single GPU):
 oc apply -f openshift/training/pytorchjob-pragma-s.yaml -n pragma-encoder
 
-# Monitor
+# 4. Monitor:
 oc get pytorchjob pragma-s-pretrain -n pragma-encoder
 oc logs -f -l job-name=pragma-s-pretrain,replica-type=master -n pragma-encoder
 ```
 
-Note: `pragma-encoder-training-data` PVC must be provisioned and populated with
-transaction data before submitting the job.
+The job uses no dataset PVCs. The init container downloads data from S3 into
+`emptyDir`. On restart, it re-downloads everything and resumes from the latest
+S3 checkpoint.
 
 ---
 

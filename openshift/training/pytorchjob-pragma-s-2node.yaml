@@ -1,0 +1,469 @@
+# PRAGMA-S two-node PyTorchJob — S3 data source, distributed DDP demo
+# -----------------------------------------------------------------------
+# DEMONSTRATION MANIFEST — not a production sizing recommendation.
+# Two pods × 1 GPU each = 2 GPUs total, WORLD_SIZE=2.
+# Recommended for integration testing of the distributed training path.
+# For single-node smoke runs use pytorchjob-pragma-s.yaml instead.
+#
+# Known limitation (TD-006): --resume does not work correctly on restart.
+#   The training script resumes rank 0 from the S3 checkpoint and expects other
+#   ranks to find the same checkpoint locally.  With per-pod emptyDir, worker
+#   pods have an empty output directory and start from scratch, diverging from
+#   rank 0.  On a fresh first run (no prior checkpoint) this is a no-op and
+#   harmless.  See docs/tech-debt.md TD-006 for the fix (all ranks download
+#   from S3 independently).  The --max-steps 20 demo limit means a full epoch
+#   is unlikely to complete before the job exits, so --resume is always a no-op
+#   in practice for this manifest.
+#
+# Apply manually when ready to train (NOT auto-synced by ArgoCD):
+#   oc apply -f openshift/training/pytorchjob-pragma-s-2node.yaml -n pragma-encoder
+#
+# RHOAI 3.3 supports PyTorchJob (kubeflow.org/v1) only.
+# The KFTO v2 TrainJob (trainer.kubeflow.org/v1alpha1) is NOT supported.
+#
+# Distributed topology:
+#   Master (rank 0) ── pytorchReplicaSpecs.Master, replicas: 1
+#   Worker (rank 1) ── pytorchReplicaSpecs.Worker, replicas: 1
+#
+#   KFTO injects into every replica:
+#     MASTER_ADDR — hostname of the Master pod
+#     MASTER_PORT — TCP port for the rendezvous (default 23456)
+#     RANK        — global replica rank (0 = master, 1 = worker)
+#     WORLD_SIZE  — total replica count (2)
+#
+#   torchrun is used (not plain python) so PyTorch's distributed process
+#   group is initialised with the correct rank and rendezvous coordinates.
+#
+# Data flow:
+#   S3 (source of truth) ──init-container──► /workspace/data/   (emptyDir)
+#   Training outputs      ──rank-0 upload──► S3
+#
+# PVC is intentionally absent:
+#   - No PVC mounts on either replica; each pod has its own emptyDir /workspace.
+#   - Each pod runs the same init container and downloads training data
+#     independently from S3 — no shared NFS or RWX PVC required.
+#   - emptyDir /workspace is ephemeral local execution storage only; it is
+#     destroyed when the pod exits. S3 is the durable store for all artifacts.
+#   - Eliminating PVCs removes the RWO/RWX node-affinity constraint and allows
+#     the two pods to schedule on any two available GPU nodes.
+#
+# S3 credentials:
+#   All S3 access uses pragma-workbench-env (sealed via gitops/secrets/).
+#   Keys: MODEL_REGISTRY_ACCESS_KEY, MODEL_REGISTRY_SECRET_KEY,
+#         MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT.
+#   Do not hardcode credentials here.
+#
+# Python scripts in env vars:
+#   S3_STAGE_SCRIPT and S3_UPLOAD_SCRIPT are stored in env vars so they can
+#   be passed to python3 -c "$VAR" without heredoc syntax, which would break
+#   YAML parsing (zero-indented heredoc body terminates the block scalar).
+#
+# Prerequisites:
+#   oc get crd pytorchjobs.kubeflow.org                  # KFTO installed
+#   oc get secret pragma-workbench-env -n pragma-encoder  # credentials exist
+#   # card_transaction.v1.csv and vocab.pkl must already be in S3:
+#   #   s3://<bucket>/pragma-encoder/data/tabformer/card_transaction.v1.csv
+#   #   s3://<bucket>/pragma-encoder/data/tabformer/vocab.pkl
+#   # Upload them from the workbench before submitting this job.
+#
+# Monitor:
+#   oc get pytorchjob pragma-s-pretrain-2node -n pragma-encoder
+#   oc logs -f -l job-name=pragma-s-pretrain-2node,replica-type=master -n pragma-encoder
+#   oc logs -f -l job-name=pragma-s-pretrain-2node,replica-type=worker -n pragma-encoder
+#   # Init container logs (data staging — master pod):
+#   oc logs -c stage-data \
+#     $(oc get pod -n pragma-encoder -l job-name=pragma-s-pretrain-2node,replica-type=master -o name | head -1) \
+#     -n pragma-encoder
+#
+# Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, PRAGMA-S (~10M params)
+---
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: pragma-s-pretrain-2node
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+    variant: pragma-s
+    topology: two-node
+spec:
+  pytorchReplicaSpecs:
+
+    # -------------------------------------------------------------------------
+    # Master: rank-0 process — always exactly 1 replica.
+    # torchrun uses MASTER_ADDR=localhost / MASTER_PORT when only one process
+    # group member is on this host; KFTO sets MASTER_ADDR to the pod hostname
+    # so the Worker can reach it.
+    # -------------------------------------------------------------------------
+    Master:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          labels:
+            app: pragma-s-pretrain-2node
+        spec:
+          # ServiceAccount with anyuid SCC grant — required because the training
+          # container may run as root (uid 0), which OpenShift's restricted-v2
+          # SCC does not permit. Created by openshift/gitops/rbac/service-accounts.yaml.
+          serviceAccountName: pragma-encoder-training
+
+          # GPU node selector. The nvidia.com/gpu resource request already
+          # constrains scheduling to GPU nodes; this is retained for explicitness.
+          nodeSelector:
+            nvidia.com/gpu.present: "true"
+
+          # ----------------------------------------------------------------
+          # Init container — data staging (Master pod)
+          #
+          # Identical to the Worker init container below.
+          # Each pod downloads training data independently from S3 into its
+          # own emptyDir — no shared volume or NFS needed.
+          # ----------------------------------------------------------------
+          initContainers:
+            - name: stage-data
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
+              env:
+                # Python script stored in an env var to avoid heredoc syntax.
+                - name: S3_STAGE_SCRIPT
+                  value: |
+                    import boto3, os, pathlib
+                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
+                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
+                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
+                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    dest = pathlib.Path('/workspace/data/tabformer')
+                    dest.mkdir(parents=True, exist_ok=True)
+                    s3 = boto3.client(
+                        's3',
+                        endpoint_url=endpoint,
+                        aws_access_key_id=access,
+                        aws_secret_access_key=secret,
+                        region_name='us-west-2',
+                    )
+                    files = [
+                        ('pragma-encoder/data/tabformer/card_transaction.v1.csv', 'card_transaction.v1.csv'),
+                        ('pragma-encoder/data/tabformer/vocab.pkl',               'vocab.pkl'),
+                    ]
+                    for s3_key, fname in files:
+                        local = dest / fname
+                        print(f'  s3://{bucket}/{s3_key} -> {local}', flush=True)
+                        s3.download_file(bucket, s3_key, str(local))
+                        print(f'  ok ({local.stat().st_size:,} bytes)', flush=True)
+                    print('Data staging complete.', flush=True)
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  # ---- Clone repository ---------------------------------
+                  echo "==> Cloning pragma-encoder (pragma-implementation) ..."
+                  git clone \
+                    https://github.com/robbybrodie/pragma-encoder.git \
+                    /workspace/repo \
+                    --branch pragma-implementation \
+                    --depth 1
+                  echo "==> Repo cloned: $(ls /workspace/repo)"
+
+                  # ---- Stage training data from S3 ----------------------
+                  echo "==> Staging training data from S3 ..."
+                  python3 -c "$S3_STAGE_SCRIPT"
+                  echo "==> Init complete."
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+
+          # ----------------------------------------------------------------
+          # Main training container — Master (rank 0)
+          #
+          # torchrun is used instead of plain python so that PyTorch's
+          # distributed process group is initialised correctly.
+          # --nnodes=2            total nodes in this job
+          # --nproc_per_node=1    one GPU process per node
+          # --node_rank=${RANK}   KFTO injects 0 for Master
+          # --master_addr / --master_port  KFTO-injected rendezvous point
+          #
+          # Rank 0 uploads outputs to S3 after training; rank > 0 skips.
+          # ----------------------------------------------------------------
+          containers:
+            - name: pytorch
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
+              env:
+                # Post-training S3 upload script — rank 0 only.
+                - name: S3_UPLOAD_SCRIPT
+                  value: |
+                    import boto3, os, pathlib
+                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
+                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
+                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
+                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    s3 = boto3.client(
+                        's3',
+                        endpoint_url=endpoint,
+                        aws_access_key_id=access,
+                        aws_secret_access_key=secret,
+                        region_name='us-west-2',
+                    )
+                    src_dir   = pathlib.Path('/workspace/outputs/pragma-s')
+                    s3_prefix = 'pragma-encoder/outputs/pragma-s'
+                    uploaded  = 0
+                    for local in sorted(src_dir.rglob('*')):
+                        if not local.is_file():
+                            continue
+                        key = f'{s3_prefix}/{local.relative_to(src_dir).as_posix()}'
+                        print(f'  {local} -> s3://{bucket}/{key}', flush=True)
+                        s3.upload_file(str(local), bucket, key)
+                        uploaded += 1
+                    print(f'Upload complete: {uploaded} file(s).', flush=True)
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  # ---- Distributed PRAGMA-S pretraining ------------------
+                  echo "==> Starting PRAGMA-S 2-node pretraining (rank=${RANK:-0}) ..."
+                  cd /workspace/repo
+                  torchrun \
+                    --nnodes=2 \
+                    --nproc_per_node=1 \
+                    --node_rank=${RANK:-0} \
+                    --master_addr=${MASTER_ADDR:-localhost} \
+                    --master_port=${MASTER_PORT:-23456} \
+                    scripts/train_pragma.py \
+                      --model-variant pragma-s \
+                      --csv-path   /workspace/data/tabformer/card_transaction.v1.csv \
+                      --vocab-path /workspace/data/tabformer/vocab.pkl \
+                      --output-dir /workspace/outputs/pragma-s \
+                      --s3-checkpoint-prefix pragma-encoder/checkpoints/pragma-s \
+                      --resume \
+                      --epochs     1 \
+                      --batch-size 16 \
+                      --max-steps  20 \
+                      --log-every  10
+                  echo "==> Training complete (rank=${RANK:-0})."
+
+                  # ---- Post-training upload — rank 0 only ----------------
+                  # RANK is injected by the KFTO launcher into every replica.
+                  # Workers at rank > 0 skip the upload silently.
+                  if [ "${RANK:-0}" = "0" ]; then
+                    echo "==> Rank 0: uploading outputs to S3 ..."
+                    python3 -c "$S3_UPLOAD_SCRIPT"
+                    echo "==> Upload done."
+                  else
+                    echo "==> Rank ${RANK}: skipping upload (rank 0 handles it)."
+                  fi
+              resources:
+                requests:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
+                limits:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+                - name: dshm
+                  mountPath: /dev/shm
+
+          volumes:
+            - name: workspace
+              emptyDir:
+                sizeLimit: 100Gi
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 8Gi
+
+          imagePullSecrets:
+            - name: pragma-registry
+
+    # -------------------------------------------------------------------------
+    # Worker: rank-1 process — exactly 1 replica for two-node DDP.
+    # Identical spec to Master except for the RANK injected by KFTO.
+    # Each Worker pod runs the same init container to stage its own local copy
+    # of the training data from S3 (no shared PVC required).
+    # -------------------------------------------------------------------------
+    Worker:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          labels:
+            app: pragma-s-pretrain-2node
+        spec:
+          serviceAccountName: pragma-encoder-training
+
+          nodeSelector:
+            nvidia.com/gpu.present: "true"
+
+          # ----------------------------------------------------------------
+          # Init container — data staging (Worker pod)
+          # Identical to Master init container above.
+          # ----------------------------------------------------------------
+          initContainers:
+            - name: stage-data
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: S3_STAGE_SCRIPT
+                  value: |
+                    import boto3, os, pathlib
+                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
+                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
+                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
+                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    dest = pathlib.Path('/workspace/data/tabformer')
+                    dest.mkdir(parents=True, exist_ok=True)
+                    s3 = boto3.client(
+                        's3',
+                        endpoint_url=endpoint,
+                        aws_access_key_id=access,
+                        aws_secret_access_key=secret,
+                        region_name='us-west-2',
+                    )
+                    files = [
+                        ('pragma-encoder/data/tabformer/card_transaction.v1.csv', 'card_transaction.v1.csv'),
+                        ('pragma-encoder/data/tabformer/vocab.pkl',               'vocab.pkl'),
+                    ]
+                    for s3_key, fname in files:
+                        local = dest / fname
+                        print(f'  s3://{bucket}/{s3_key} -> {local}', flush=True)
+                        s3.download_file(bucket, s3_key, str(local))
+                        print(f'  ok ({local.stat().st_size:,} bytes)', flush=True)
+                    print('Data staging complete.', flush=True)
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  echo "==> Cloning pragma-encoder (pragma-implementation) ..."
+                  git clone \
+                    https://github.com/robbybrodie/pragma-encoder.git \
+                    /workspace/repo \
+                    --branch pragma-implementation \
+                    --depth 1
+                  echo "==> Repo cloned: $(ls /workspace/repo)"
+
+                  echo "==> Staging training data from S3 ..."
+                  python3 -c "$S3_STAGE_SCRIPT"
+                  echo "==> Init complete."
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+
+          # ----------------------------------------------------------------
+          # Main training container — Worker (rank 1)
+          # Same torchrun invocation as Master; KFTO sets RANK=1 for Worker.
+          # S3 upload is skipped (rank != 0).
+          # ----------------------------------------------------------------
+          containers:
+            - name: pytorch
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              imagePullPolicy: IfNotPresent
+              env:
+                # S3_UPLOAD_SCRIPT is defined on all replicas; only rank 0 executes it.
+                - name: S3_UPLOAD_SCRIPT
+                  value: |
+                    import boto3, os, pathlib
+                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
+                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
+                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
+                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    s3 = boto3.client(
+                        's3',
+                        endpoint_url=endpoint,
+                        aws_access_key_id=access,
+                        aws_secret_access_key=secret,
+                        region_name='us-west-2',
+                    )
+                    src_dir   = pathlib.Path('/workspace/outputs/pragma-s')
+                    s3_prefix = 'pragma-encoder/outputs/pragma-s'
+                    uploaded  = 0
+                    for local in sorted(src_dir.rglob('*')):
+                        if not local.is_file():
+                            continue
+                        key = f'{s3_prefix}/{local.relative_to(src_dir).as_posix()}'
+                        print(f'  {local} -> s3://{bucket}/{key}', flush=True)
+                        s3.upload_file(str(local), bucket, key)
+                        uploaded += 1
+                    print(f'Upload complete: {uploaded} file(s).', flush=True)
+              envFrom:
+                - secretRef:
+                    name: pragma-workbench-env
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  echo "==> Starting PRAGMA-S 2-node pretraining (rank=${RANK:-1}) ..."
+                  cd /workspace/repo
+                  torchrun \
+                    --nnodes=2 \
+                    --nproc_per_node=1 \
+                    --node_rank=${RANK:-1} \
+                    --master_addr=${MASTER_ADDR} \
+                    --master_port=${MASTER_PORT:-23456} \
+                    scripts/train_pragma.py \
+                      --model-variant pragma-s \
+                      --csv-path   /workspace/data/tabformer/card_transaction.v1.csv \
+                      --vocab-path /workspace/data/tabformer/vocab.pkl \
+                      --output-dir /workspace/outputs/pragma-s \
+                      --s3-checkpoint-prefix pragma-encoder/checkpoints/pragma-s \
+                      --resume \
+                      --epochs     1 \
+                      --batch-size 16 \
+                      --max-steps  20 \
+                      --log-every  10
+                  echo "==> Training complete (rank=${RANK:-1})."
+
+                  # Worker (rank > 0) always skips the upload.
+                  if [ "${RANK:-1}" = "0" ]; then
+                    echo "==> Rank 0: uploading outputs to S3 ..."
+                    python3 -c "$S3_UPLOAD_SCRIPT"
+                    echo "==> Upload done."
+                  else
+                    echo "==> Rank ${RANK}: skipping upload (rank 0 handles it)."
+                  fi
+              resources:
+                requests:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
+                limits:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: "1"
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+                - name: dshm
+                  mountPath: /dev/shm
+
+          volumes:
+            - name: workspace
+              emptyDir:
+                sizeLimit: 100Gi
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 8Gi
+
+          imagePullSecrets:
+            - name: pragma-registry

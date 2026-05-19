@@ -21,6 +21,18 @@ No code change is needed between local and cluster runs.
 
 ---
 
+## Storage model
+
+For cluster training, all storage decisions — S3 vs emptyDir vs PVC — are
+governed by a single rule set. Before modifying any training manifest, read:
+
+**[docs/openshift-storage-pattern.md](openshift-storage-pattern.md)**
+
+Short version: S3 is the source of truth. emptyDir is runtime scratch only.
+No dataset PVCs. Credentials come from `pragma-workbench-env` only.
+
+---
+
 ## Model sizes
 
 | Variant | Parameters | Nodes × GPUs | Use case |
