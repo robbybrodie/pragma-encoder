@@ -18,10 +18,11 @@ from __future__ import annotations
 import datetime
 import os
 import uuid
+from collections.abc import Generator
 
 import pytest
 
-from tests.openshift.oc import oc, label_selector
+from tests.openshift.oc import label_selector, oc
 
 # ---------------------------------------------------------------------------
 # Suite-wide skip guard
@@ -134,7 +135,7 @@ def timeout_seconds() -> int:
 def cleanup_labelled_resources(
     test_id: str,
     runtime_namespace: str,
-) -> "Generator[None, None, None]":
+) -> Generator[None, None, None]:
     """Yield, then clean up all labelled resources created during the test.
 
     After each test, deletes only resources in the safe cleanup list that
@@ -149,7 +150,6 @@ def cleanup_labelled_resources(
     Yields:
         None — the test body runs between setup and teardown.
     """
-    from typing import Generator  # local import avoids top-level cycle
     yield  # --- test body runs here ---
 
     selector = label_selector(test_id)
