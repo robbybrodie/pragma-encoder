@@ -95,6 +95,22 @@ def _src_text(path: pathlib.Path) -> str:
     return path.read_text()
 
 
+def _raw_func_src(file_path: pathlib.Path, func_name: str) -> str:
+    """Return the raw source text of a specific function, immune to KFP wrapping.
+
+    Uses ast line numbers (lineno / end_lineno) to extract just the function body
+    from the source file. This avoids inspect.getsource() which breaks when KFP's
+    @dsl.pipeline wraps the function into a GraphComponent at import time.
+    """
+    source = file_path.read_text()
+    tree = _ast.parse(source)
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.FunctionDef) and node.name == func_name:
+            lines = source.splitlines()
+            return "\n".join(lines[node.lineno - 1 : node.end_lineno])
+    raise AssertionError(f"Function {func_name!r} not found in {file_path}")
+
+
 # ---------------------------------------------------------------------------
 # AST-based parameter inspection — immune to KFP decorator wrapping
 #
@@ -663,9 +679,7 @@ class TestTrainFromManifestPipeline:
 
     def test_source_does_not_call_prepare_dataset(self) -> None:
         """§2.4 stage 1: prepare_dataset must NOT be wired in the manifest pipeline."""
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "prepare_dataset" not in fn_src, (
             "pragma_train_from_manifest_pipeline must not call prepare_dataset. "
             "Stage 1 (prepare) is skipped — the manifest already exists in S3."
@@ -673,9 +687,7 @@ class TestTrainFromManifestPipeline:
 
     def test_source_does_not_call_upload_artifacts(self) -> None:
         """§2.4 stage 2: upload_artifacts must NOT be wired in the manifest pipeline."""
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "upload_artifacts" not in fn_src, (
             "pragma_train_from_manifest_pipeline must not call upload_artifacts. "
             "Stage 2 (upload) is skipped — the data is already in S3."
@@ -683,27 +695,21 @@ class TestTrainFromManifestPipeline:
 
     def test_source_calls_submit_pytorchjob(self) -> None:
         """§2.4 stage 3: submit_pytorchjob must be wired in the manifest pipeline."""
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "submit_pytorchjob" in fn_src, (
             "pragma_train_from_manifest_pipeline must call submit_pytorchjob (stage 3)."
         )
 
     def test_source_calls_run_pretraining(self) -> None:
         """§2.4 stage 4: run_pretraining must be wired in the manifest pipeline."""
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "run_pretraining" in fn_src, (
             "pragma_train_from_manifest_pipeline must call run_pretraining (stage 4)."
         )
 
     def test_source_calls_export_checkpoint(self) -> None:
         """§2.4 stage 5: export_checkpoint must be wired in the manifest pipeline."""
-        fn = getattr(_pipe, "pragma_train_from_manifest_pipeline", None)
-        assert fn is not None
-        fn_src = inspect.getsource(fn)
+        fn_src = _raw_func_src(_PIPELINE_PATH, "pragma_train_from_manifest_pipeline")
         assert "export_checkpoint" in fn_src, (
             "pragma_train_from_manifest_pipeline must call export_checkpoint (stage 5)."
         )
