@@ -841,6 +841,17 @@ PRAGMA_TEST_NAMESPACE=pragma-encoder \
 pytest tests/openshift/test_03_pipeline_smoke_run.py -q
 ```
 
+Training container smoke — Level 3b (creates ConfigMap + batch/v1 Job, opt-in):
+This proves the PRAGMA training image runs correctly in-cluster before DSPA/KFP
+is attempted. Not a PyTorchJob — a single-pod batch/v1 Job with no DDP.
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder:latest \
+pytest tests/openshift/test_03b_training_job_smoke.py -q
+```
+
 Future PyTorchJob smoke (creates labelled PyTorchJob, opt-in):
 ```bash
 RUN_OPENSHIFT_TESTS=1 \

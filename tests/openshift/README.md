@@ -62,6 +62,7 @@ Tests never write to S3 unless explicitly authorised.
 | 1 | Argo-managed substrate verification | Implemented | `test_01_cluster_prereqs.py` |
 | 2 | Decorated pipeline compile | Implemented | `test_02_pipeline_compile.py` |
 | 3 | OpenShift Pipelines smoke run | Future / xfail | `test_03_pipeline_smoke_run.py` |
+| 3b | Training container batch/v1 Job smoke | Implemented | `test_03b_training_job_smoke.py` |
 | 4 | PyTorchJob / two-node smoke | Future / xfail | `test_04_pytorchjob_smoke.py` |
 | 5 | S3-backed checkpoint/resume | Future | — |
 | 6 | Scaled training validation | Future | — |
@@ -87,6 +88,8 @@ Tests never write to S3 unless explicitly authorised.
 | `PRAGMA_TRAINING_SERVICE_ACCOUNT` | `pragma-encoder-training` | Name of the training ServiceAccount to verify. |
 | `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset) | Name of the image pull Secret. Test verifies existence only; data is never read. |
 | `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 PipelineRun smoke tests. |
+| `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1` | (unset) | Opt-in for Level 3b training container smoke. Requires `PRAGMA_TRAINING_IMAGE`. |
+| `PRAGMA_TRAINING_IMAGE` | (unset) | Image URI for the Level 3b batch/v1 Job smoke. Must have PRAGMA code baked in at WORKDIR. |
 | `RUN_PYTORCHJOB_TESTS=1` | (unset) | Opt-in for Level 4 PyTorchJob tests. |
 | `PRAGMA_TEST_TIMEOUT_SECONDS` | `300` | Timeout for cluster wait loops (minimum 30s). |
 
@@ -197,6 +200,37 @@ PRAGMA_TEST_NAMESPACE=pragma-encoder \
 pytest tests/openshift/test_03_pipeline_smoke_run.py -q
 ```
 
+### Training container smoke (Level 3b — requires built image)
+
+This is a diagnostic step that proves the PRAGMA training image and command
+work correctly inside the cluster, before DSPA/KFP pipeline runtime is attempted.
+
+It is **not** a PyTorchJob. It is a single-pod `batch/v1 Job` with no DDP.
+
+Prerequisites:
+- A built PRAGMA training image pushed to a registry accessible from the cluster
+- The image must have the PRAGMA code baked in at its WORKDIR with all Python
+  dependencies installed
+- `oc` logged into the cluster
+
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder:latest \
+pytest tests/openshift/test_03b_training_job_smoke.py -q
+```
+
+What it creates (all label-scoped, cleaned up automatically):
+- `ConfigMap` `pragma-smoke-csv-<test_id>` — 15-row synthetic IBM TabFormer CSV
+- `batch/v1 Job` `pragma-smoke-job-<test_id>` — runs fit_tokenizer + PRAGMA-S --max-steps 1
+- `Pod` created by the Job controller (auto-labelled by the Job)
+
+What it asserts:
+- Job reaches `Complete` status within `PRAGMA_TEST_TIMEOUT_SECONDS`
+- Pod logs contain `"pragma-s"` (model variant confirmed at startup)
+- Pod logs contain `"Reached --max-steps"` (early-stop confirmed)
+
 ### Future: PyTorchJob smoke (Level 4, xfail until implemented)
 
 ```bash
@@ -244,6 +278,19 @@ in the environment). Only unit tests run.
 - `test_generated_pipeline_yaml_exists_after_compile` — YAML is non-empty
 - `test_generated_pipeline_yaml_contains_expected_stages` — all 5 stages present
 - `test_compile_does_not_require_oc_or_cluster` — monkeypatched safety check
+
+### Level 3b — Training container smoke (opt-in, creates cluster resources)
+
+Gated by `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1`. Also requires `PRAGMA_TRAINING_IMAGE`.
+
+**`TestTrainingJobSmokePrereqs`** (local validation, no cluster needed):
+- `test_training_image_env_is_set` — `PRAGMA_TRAINING_IMAGE` is set and looks like an image URI; FAILS (not skips) when smoke flag is set but image is missing
+- `test_smoke_csv_fixture_has_required_columns` — embedded CSV has all 12 required IBM TabFormer column names
+- `test_smoke_csv_fixture_has_enough_users` — CSV has ≥3 unique User IDs for a valid 80/20 train/val split
+- `test_smoke_shell_command_contains_expected_steps` — `_SMOKE_SHELL` contains all four required step markers
+
+**`TestTrainingJobSmoke`** (creates cluster resources):
+- `test_training_job_smoke` — creates ConfigMap + `batch/v1 Job`, waits for completion, asserts log markers, cleanup via `cleanup_labelled_resources`
 
 ### Level 4 — Manifest structure (read-only, gated by RUN_PYTORCHJOB_TESTS=1)
 - `test_two_node_manifest_exists`
