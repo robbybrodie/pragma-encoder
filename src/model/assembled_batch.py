@@ -157,7 +157,7 @@ class AssembledBatch:
                 f"Only IGNORE_INDEX ({self.IGNORE_INDEX}) is permitted as a negative target."
             )
             assert valid_targets.max() < config.value_vocab_size, (
-                f"ADR 002: targets must be value-vocab-local IDs in [0, value_vocab_size={config.value_vocab_size}). "
+                f"ADR 002: targets must be value-vocab-local IDs in [0, value_vocab_size={config.value_vocab_size}). "  # noqa: E501
                 f"Found max = {valid_targets.max().item()}. "
                 f"Pass value_vocab_id (global_token_id - value_start), not global_token_id."
             )

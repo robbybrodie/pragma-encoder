@@ -18,7 +18,6 @@ import pytest
 
 from src.model.config import PRAGMAConfig
 
-
 VARIANTS = ["pragma_s", "pragma_m", "pragma_l"]
 
 

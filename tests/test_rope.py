@@ -22,8 +22,8 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="torch not installed")
 
-from src.model.config import PRAGMAConfig
 from src.encoders.rope import RoPEEncoding
+from src.model.config import PRAGMAConfig
 
 _CONFIG = PRAGMAConfig.pragma_s()
 _HEAD_DIM = _CONFIG.d_model // _CONFIG.n_heads  # 64 — key-numbers.md: head_dimension, Table 1

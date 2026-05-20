@@ -38,7 +38,6 @@ from src.tokenizer.numerical import NumericalTokenizer
 from src.tokenizer.pipeline import TokenizerPipeline
 from src.tokenizer.vocabulary import VocabularyMap, VocabularySpec
 
-
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
@@ -281,7 +280,7 @@ class TestVocabularyMap:
         special_ids = torch.tensor([0, 1, 2, 3])
         result = vmap.is_key_id(special_ids)
         assert not result.any(), (
-            f"is_key_id must be False for special IDs [0,1,2,3]"
+            "is_key_id must be False for special IDs [0,1,2,3]"
         )
 
     def test_is_key_id_false_for_value_ids(self) -> None:

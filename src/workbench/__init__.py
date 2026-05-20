@@ -11,10 +11,10 @@ ADR: docs/decisions/003-workbench-training-api.md
 
 from src.workbench._api import train_pragma
 from src.workbench._run import (
+    PIPELINE_STEP_NAMES,
+    PipelineStep,
     PragmaRun,
     PragmaRunProtocol,
-    PipelineStep,
-    PIPELINE_STEP_NAMES,
 )
 
 __all__ = [

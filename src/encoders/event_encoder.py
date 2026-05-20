@@ -290,9 +290,9 @@ class EventEncoder(nn.Module):
 
     def forward(
         self,
-        xe: torch.Tensor,                          # (batch, ne, ni, d_model) — pre-embedded; [EVT] at pos 0
+        xe: torch.Tensor,                          # (batch, ne, ni, d_model) — pre-embedded; [EVT] at pos 0  # noqa: E501
         xt: torch.Tensor,                          # (batch, ne, 3) — calendar features (integers)
-        xe_valid: Optional[torch.Tensor] = None,   # (batch, ne, ni) bool — True=real token, False=padding
+        xe_valid: Optional[torch.Tensor] = None,   # (batch, ne, ni) bool — True=real token, False=padding  # noqa: E501
     ) -> Tuple[torch.Tensor, torch.Tensor]:        # (z_hat_e, ze)
         """Encode event token sequences independently with calendar augmentation.
 

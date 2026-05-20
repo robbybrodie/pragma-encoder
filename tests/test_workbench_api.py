@@ -24,16 +24,16 @@ Test types:
 from __future__ import annotations
 
 import os
+
 import pytest
 
 from src.model.config import PRAGMAConfig
 from src.workbench._api import train_pragma
 from src.workbench._run import (
+    PIPELINE_STEP_NAMES,
     PragmaRun,
     PragmaRunProtocol,
-    PIPELINE_STEP_NAMES,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -476,7 +476,7 @@ class TestLocalModeContract:
 
     def _local_run(self, returncode: int = 0, **kwargs) -> PragmaRun:
         """Call train_pragma(mode='local') with subprocess and adapter mocked."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
         manifest = self._make_manifest()
         mock_adapter = MagicMock()
         mock_adapter.prepare.return_value = manifest
@@ -644,7 +644,7 @@ class TestLocalModeContract:
         upload=False prevents any S3 connection — the adapter writes vocab
         locally only. S3 credentials are not required for local mode.
         """
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
         manifest = self._make_manifest()
         mock_adapter = MagicMock()
         mock_adapter.prepare.return_value = manifest
@@ -676,8 +676,7 @@ class TestLocalModeContract:
         adapter.prepare(upload=False) ensures no boto3 connection is made.
         No MODEL_REGISTRY_* env vars are required for local mode.
         """
-        import os
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
         manifest = self._make_manifest()
         mock_adapter = MagicMock()
         mock_adapter.prepare.return_value = manifest
@@ -716,7 +715,7 @@ class TestLocalModeContract:
         Cluster tools must not be called — local mode is intentionally
         cluster-free. Any subprocess call to 'oc' or 'kubectl' is a bug.
         """
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
         manifest = self._make_manifest()
         mock_adapter = MagicMock()
         mock_adapter.prepare.return_value = manifest
@@ -776,7 +775,7 @@ class TestLocalModeContract:
             --num-workers 0             (single-process, no DataLoader workers)
             --max-steps 1               (from max_steps param)
         """
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
         manifest = self._make_manifest()
         mock_adapter = MagicMock()
         mock_adapter.prepare.return_value = manifest

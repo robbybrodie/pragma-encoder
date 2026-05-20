@@ -29,7 +29,6 @@ from typing import Dict, Iterable, List, Tuple
 
 import pandas as pd
 
-
 # Mapping from "Use Chip" values to a normalised channel label
 _CHIP_TO_CHANNEL: Dict[str, str] = {
     "Chip Transaction": "chip",

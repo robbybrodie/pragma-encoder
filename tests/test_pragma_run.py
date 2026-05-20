@@ -21,15 +21,14 @@ from __future__ import annotations
 
 import pytest
 
-from src.model.config import PRAGMAConfig
 from src.data.dataset_manifest import DatasetManifest, DatasetShard
+from src.model.config import PRAGMAConfig
 from src.workbench._run import (
+    PIPELINE_STEP_NAMES,
+    PipelineStep,
     PragmaRun,
     PragmaRunProtocol,
-    PipelineStep,
-    PIPELINE_STEP_NAMES,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

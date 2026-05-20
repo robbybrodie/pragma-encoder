@@ -28,11 +28,10 @@ import pytest
 torch   = pytest.importorskip("torch",   reason="torch not installed")
 sklearn = pytest.importorskip("sklearn", reason="sklearn not installed")
 
-import torch
 import numpy as np
 
-from src.model.config import PRAGMAConfig
 from src.adaptation.probe import EmbeddingProbe
+from src.model.config import PRAGMAConfig
 
 _CONFIG = PRAGMAConfig.pragma_s()
 

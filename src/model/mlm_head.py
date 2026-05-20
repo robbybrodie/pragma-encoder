@@ -56,7 +56,6 @@ import torch.nn.functional as F
 
 from src.model.config import PRAGMAConfig
 
-
 # Label smoothing epsilon — implementation choice.
 # The paper (§2.3.5) specifies cross-entropy with label smoothing but does
 # not give the exact epsilon. 0.1 is standard in the MLM literature.
