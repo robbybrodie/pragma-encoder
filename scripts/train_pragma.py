@@ -266,7 +266,9 @@ def parse_args() -> argparse.Namespace:
 
 def get_device(device_arg: str, local_rank: int, distributed: bool) -> torch.device:
     if distributed:
-        return torch.device(f"cuda:{local_rank}")
+        if torch.cuda.is_available():
+            return torch.device(f"cuda:{local_rank}")
+        return torch.device("cpu")
     if device_arg == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda")
