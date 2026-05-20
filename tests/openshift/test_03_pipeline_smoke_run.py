@@ -126,12 +126,16 @@ def _compile_pipeline(tmp_path: pathlib.Path, pipeline_name: str) -> pathlib.Pat
 
     Uses the PragmaPipeline decorator API. Returns the path to the YAML.
     Raises RuntimeError if kfp is not installed (propagated to skip the test).
+
+    Uses "ibm-tabformer-smoke" — a synthetic 15-row dataset that requires no
+    real data files or S3 credentials. Proves KFP component execution works.
+    Real IBM TabFormer ingestion is a separate milestone ("ibm-tabformer").
     """
     from src.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
 
     @pragma_pipeline(name=pipeline_name)
     def _smoke():
-        ds = dataset("ibm-tabformer", prepare_if_missing=True)
+        ds = dataset("ibm-tabformer-smoke", prepare_if_missing=True)
         train(dataset=ds, model_size="S", epochs=1, max_steps=1)
 
     yaml_path = tmp_path / f"{pipeline_name}.yaml"
@@ -306,7 +310,7 @@ class TestOpenShiftPipelineSmoke:
                 client=client,
                 pipeline_id=pipeline_id,
                 run_name=run_name,
-                arguments={"dataset_name": "ibm-tabformer", "model_size": "S"},
+                arguments={"dataset_name": "ibm-tabformer-smoke", "model_size": "S"},
                 experiment_name="pragma-smoke",
             )
         except Exception as exc:  # noqa: BLE001
