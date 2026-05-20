@@ -455,7 +455,7 @@ def _diagnostics(
 
     # pod logs
     logs = _collect_pod_logs(namespace, label_selector)
-    lines.append(f"\n--- pod logs (last 200 lines each) ---")
+    lines.append("\n--- pod logs (last 200 lines each) ---")
     lines.append(logs)
 
     return "\n".join(lines)
@@ -708,7 +708,7 @@ class TestTrainingJobSmoke:
             namespace=runtime_namespace,
             label_selector=label_selector,
         )
-        print(f"[Level 3b] Log excerpt (last ~50 lines):")
+        print("[Level 3b] Log excerpt (last ~50 lines):")
         log_lines = all_logs.splitlines()
         for line in log_lines[-50:]:
             print(f"  {line}")
@@ -743,4 +743,4 @@ class TestTrainingJobSmoke:
         print("\n[Level 3b] === PASSED: PRAGMA training container smoke complete ===")
         print(f"  Job:    {job_name}  →  {terminal_state}")
         print(f"  Image:  {image_uri}")
-        print(f"  Markers confirmed: 'PRAGMA-S' ✓  'Reached --max-steps' ✓")
+        print("  Markers confirmed: 'PRAGMA-S' ✓  'Reached --max-steps' ✓")

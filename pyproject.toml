@@ -52,3 +52,6 @@ ignore = ["N806", "N812"]
 "tests/test_*.py" = ["E402"]
 # The IBM TabFormer smoke CSV header is a fixed-format string that cannot be wrapped.
 "src/data/adapters/ibm_tabformer_smoke.py" = ["E501"]
+# The Level 3b smoke test embeds a TabFormer CSV header and assertion messages that
+# cannot be wrapped without altering the fixed IBM format or test clarity.
+"tests/openshift/test_03b_training_job_smoke.py" = ["E501"]
