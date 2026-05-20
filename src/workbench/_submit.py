@@ -45,6 +45,7 @@ from __future__ import annotations
 import os
 import pathlib
 import time
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -269,7 +270,7 @@ class DSPAConfig:
 # ---------------------------------------------------------------------------
 
 
-def make_kfp_client(endpoint: str, token: str | None = None):  # type: ignore[return]
+def make_kfp_client(endpoint: str, token: str | None = None) -> Any:
     """Construct a kfp.Client for the given DSPA endpoint.
 
     kfp is imported lazily so this module can be loaded without kfp installed.
@@ -310,7 +311,7 @@ def make_kfp_client(endpoint: str, token: str | None = None):  # type: ignore[re
 
 
 def upload_pipeline(
-    client,
+    client: Any,
     yaml_path: str | pathlib.Path,
     pipeline_name: str,
 ) -> str:
@@ -341,7 +342,7 @@ def upload_pipeline(
         )
 
     response = client.upload_pipeline(str(path), pipeline_name=pipeline_name)
-    return response.pipeline_id
+    return str(response.pipeline_id)
 
 
 # ---------------------------------------------------------------------------
@@ -350,10 +351,10 @@ def upload_pipeline(
 
 
 def submit_pipeline_run(
-    client,
+    client: Any,
     pipeline_id: str,
     run_name: str,
-    arguments: dict | None = None,
+    arguments: dict[str, Any] | None = None,
     experiment_name: str | None = None,
 ) -> str:
     """Create a KFP pipeline run on the DSPA.
@@ -390,7 +391,7 @@ def submit_pipeline_run(
         version_id=version_id,
         params=arguments,
     )
-    return response.run_id
+    return str(response.run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +399,7 @@ def submit_pipeline_run(
 # ---------------------------------------------------------------------------
 
 
-def get_run_status(client, run_id: str) -> str:
+def get_run_status(client: Any, run_id: str) -> str:
     """Return the current state of a KFP v2 run as an uppercase string.
 
     Wraps kfp.Client.get_run() and normalises the state to a plain uppercase
@@ -431,7 +432,7 @@ def get_run_status(client, run_id: str) -> str:
 
 
 def wait_for_run_terminal(
-    client,
+    client: Any,
     run_id: str,
     timeout: int = 300,
     poll_interval: int = 10,
