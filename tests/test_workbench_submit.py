@@ -660,14 +660,29 @@ class TestSubmitNoSideEffects:
             train(dataset=ds, model_size="S", epochs=1)
 
         # Patch _submit to raise if called — it must NOT be called by compile().
+        import importlib as _importlib
         import src.workbench._submit as submit_mod
+        kfp_available = _importlib.util.find_spec("kfp") is not None
         with mock.patch.object(
             submit_mod, "make_kfp_client", side_effect=AssertionError("submit called!")
         ):
-            # compile() will fail because kfp is not installed, but it must
-            # fail with RuntimeError (kfp missing), NOT AssertionError (submit called).
-            with pytest.raises((RuntimeError, ImportError)):
-                _p.compile("/tmp/test-no-cluster.yaml")
+            if kfp_available:
+                # kfp is installed: compile() should succeed without calling _submit.
+                # If make_kfp_client is called, AssertionError propagates — test fails.
+                import tempfile
+                import os
+                with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
+                    tmp_path = tmp.name
+                try:
+                    _p.compile(tmp_path)
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+            else:
+                # kfp not installed: compile() must fail with RuntimeError/ImportError,
+                # NOT AssertionError (which would mean _submit.make_kfp_client was called).
+                with pytest.raises((RuntimeError, ImportError)):
+                    _p.compile("/tmp/test-no-cluster.yaml")
 
     def test_no_token_printed_in_submit_flow(
         self,
