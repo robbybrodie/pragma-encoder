@@ -48,6 +48,7 @@ Test 7 additionally requires RUN_PYTORCHJOB_SMOKE=1 (creates a short-lived PyTor
 
 from __future__ import annotations
 
+import base64
 import os
 import pathlib
 import time
@@ -133,6 +134,13 @@ User,Card,Year,Month,Day,Time,Amount,Use Chip,Merchant Name,Merchant City,Mercha
 9,0,2023,1,6,11:30,$41.00,Chip Transaction,Auto Parts,Adelaide,SA,5533,,No
 9,0,2023,1,7,20:30,$16.75,Swipe Transaction,Sushi Bar,Hobart,TAS,5812,,No"""
 
+# Base64-encoded CSV — avoids heredoc indentation issues in YAML block scalars.
+# A heredoc terminator must appear at the start of a line; when a shell script is
+# embedded in a YAML block scalar at N-space indent, the terminator would also be
+# indented N spaces and the shell would never see it as a terminator.
+# echo "<b64>" | base64 -d is a single line — no indentation dependency.
+_SMOKE_CSV_B64: str = base64.b64encode(_SMOKE_CSV_ROWS.encode()).decode()
+
 
 def _render_smoke_manifest(test_id: str, namespace: str, image: str) -> str:
     """Render the smoke PyTorchJob YAML manifest with test-specific values.
@@ -179,11 +187,9 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str) -> str:
         "fi",
         "echo \"[Level 4 smoke] PRAGMA root: $PRAGMA_ROOT\"",
         "",
-        "# Write inline 30-row TabFormer CSV to /tmp/pragma-smoke/.",
+        "# Write inline 30-row TabFormer CSV — base64 avoids heredoc/YAML indent issues.",
         "mkdir -p /tmp/pragma-smoke/data/tabformer",
-        "cat > /tmp/pragma-smoke/data/tabformer/card_transaction.v1.csv << 'CSVEOF'",
-        _SMOKE_CSV_ROWS,
-        "CSVEOF",
+        f"echo '{_SMOKE_CSV_B64}' | base64 -d > /tmp/pragma-smoke/data/tabformer/card_transaction.v1.csv",
         "echo \"[Level 4 smoke] CSV written ($(wc -l < /tmp/pragma-smoke/data/tabformer/card_transaction.v1.csv) lines)\"",
         "",
         "# Fit tokenizer — must run from /tmp/pragma-smoke/ (hardcoded relative paths).",
