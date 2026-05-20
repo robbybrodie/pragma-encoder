@@ -64,7 +64,9 @@ Prerequisites (when enabled):
   - RUN_OPENSHIFT_TESTS=1
   - RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1
   - PRAGMA_TEST_NAMESPACE=<namespace>
-  - PRAGMA_TRAINING_IMAGE=<image-uri>  (e.g. image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest)
+  - PRAGMA_TRAINING_IMAGE=<image-uri>
+    e.g. image-registry.openshift-image-registry.svc:5000/
+         pragma-encoder/pragma-encoder-training:latest
   - Level 0 and Level 1 (DSPA/KFP v2) tests passing
   - Training container image accessible in the cluster registry
 """
@@ -74,7 +76,6 @@ from __future__ import annotations
 import os
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Suite-level skip guard
