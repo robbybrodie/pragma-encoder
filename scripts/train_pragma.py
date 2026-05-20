@@ -95,12 +95,18 @@ def _is_distributed() -> bool:
 
 
 def _init_distributed() -> tuple[int, int, int]:
-    """Initialise NCCL process group. Returns (rank, local_rank, world_size)."""
-    dist.init_process_group(backend="nccl")
+    """Initialise distributed process group. Returns (rank, local_rank, world_size).
+
+    Uses nccl backend when CUDA GPUs are available (production), gloo otherwise
+    (CPU-only smoke tests and development runs without GPUs).
+    """
+    backend = "nccl" if torch.cuda.is_available() else "gloo"
+    dist.init_process_group(backend=backend)
     rank = dist.get_rank()
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     world_size = dist.get_world_size()
-    torch.cuda.set_device(local_rank)
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
     return rank, local_rank, world_size
 
 
@@ -438,8 +444,9 @@ def main() -> None:
 
     # ---- DDP wrap (after loading checkpoint, before training) -------------
     if distributed:
-        model    = DDP(model,    device_ids=[local_rank])
-        assembler = DDP(assembler, device_ids=[local_rank])
+        _ddp_ids = [local_rank] if torch.cuda.is_available() else None
+        model    = DDP(model,    device_ids=_ddp_ids)
+        assembler = DDP(assembler, device_ids=_ddp_ids)
 
     # ---- Masker -----------------------------------------------------------
     masker = MaskingStrategy(config)

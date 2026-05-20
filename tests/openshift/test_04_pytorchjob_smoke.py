@@ -176,7 +176,7 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str) -> str:
         "",
         "# Locate PRAGMA project root baked into the training image.",
         "PRAGMA_ROOT=''",
-        "for CANDIDATE in /opt/app-root/src/pragma-encoder /pragma-encoder .; do",
+        "for CANDIDATE in /opt/app-root/src/pragma-encoder /opt/app-root/src /pragma-encoder .; do",
         "  if [ -f $CANDIDATE/src/data/fit_tokenizer.py ]; then",
         "    PRAGMA_ROOT=$CANDIDATE",
         "    break",
