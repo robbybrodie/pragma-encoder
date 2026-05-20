@@ -744,6 +744,47 @@ Lives in `tests/openshift/`. See `tests/openshift/README.md` for full docs.
 
 ---
 
+### OpenShift Integration Test Ladder
+
+The cluster tests follow a maturity ladder. Each level builds on the
+previous one and has a distinct scope boundary.
+
+| Level | Name | Path | Status |
+|-------|------|------|--------|
+| 0 | oc access + namespace | read-only oc checks | Implemented |
+| 1 | DSPA/KFP v2 substrate | read-only substrate checks | Implemented |
+| 2 | Pipeline compile | local, no cluster | Implemented |
+| 3b | batch/v1 Job smoke | **diagnostic only** — not the product path | Implemented |
+| 3 | DSPA/KFP v2 pipeline smoke | product pipeline path | In progress / xfail |
+| 4 | PyTorchJob execution | DDP distributed training | Future / xfail |
+| 5 | S3 checkpoint/resume | durable artifact storage | Future |
+| 6 | Scaled training | multi-node at scale | Future |
+| 7 | Bank-data adapter | production data validation | Future |
+
+**Architecture boundary — do not confuse these three paths:**
+
+```
+batch/v1 Job (Level 3b)
+  ├── diagnostic only: one pod, no DDP, no S3, no KFP orchestration
+  ├── proves: image pullable, imports OK, training runs --max-steps 1
+  └── does NOT prove: KFP pipeline orchestration works
+
+DSPA/KFP v2 (Level 3)
+  ├── product pipeline path: compile → upload → Run → poll → Succeeded
+  ├── proves: full KFP v2 execution via DataSciencePipelinesApplication
+  └── the correct gate for "is the product pipeline path working?"
+
+PyTorchJob (Level 4)
+  ├── distributed training: multi-node DDP via KFTO kubeflow.org/v1
+  ├── requires: KFTO operator, GPU nodes, multi-pod scheduling
+  └── NOT required before proving Level 3 works
+```
+
+Level 3b PASS does not imply Level 3 PASS. They are independent gates.
+Level 3 PASS is required before claiming "the PRAGMA product pipeline works."
+
+---
+
 ### When OpenShift tests are required
 
 OpenShift integration tests are required before merging any change that affects:
