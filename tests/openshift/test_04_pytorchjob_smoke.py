@@ -233,7 +233,7 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str) -> str:
 apiVersion: kubeflow.org/v1
 kind: PyTorchJob
 metadata:
-  name: pragma-pytorchjob-smoke-{test_id}
+  name: pragma-smoke-{test_id}
   namespace: {namespace}
   labels:
     pragma.redhat.com/test-run: "true"
@@ -599,7 +599,7 @@ class TestPyTorchJobSmoke:
                 ".svc:5000/pragma-encoder/pragma-encoder-training:latest"
             )
 
-        job_name = f"pragma-pytorchjob-smoke-{test_id}"
+        job_name = f"pragma-smoke-{test_id}"
         selector = label_selector(test_id)
 
         print(f"\n[Level 4] job_name={job_name!r}")
