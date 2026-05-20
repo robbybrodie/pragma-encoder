@@ -26,11 +26,11 @@ Submit path (src/workbench/_submit.py — fully implemented):
   6. get_run_status()            — normalise run state to uppercase string
   7. wait_for_run_terminal()     — poll until terminal state or TimeoutError
 
-Current xfail blocker:
-  No KFP component exists that runs fit_tokenizer + train_pragma --max-steps 1
-  directly in a component pod (without S3 or PyTorchJob). Production components
-  (pipeline/components_pragma.py) require both. A new pragma_smoke_training_pipeline
-  + smoke_training component must be approved before implementation.
+Smoke pipeline:
+  pipeline/pragma_smoke_pipeline.py — pragma_smoke_training_pipeline.
+  Single @dsl.component that runs fit_tokenizer + train_pragma --max-steps N
+  directly in the component pod (no S3, no distributed training, no persistent
+  volumes). Separate from production components (pipeline/components_pragma.py).
 
 Safety rules:
   - Skip unless RUN_OPENSHIFT_PIPELINE_SMOKE=1.
@@ -54,7 +54,10 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import pathlib
+import subprocess
 import sys
+import tempfile
 import unittest.mock as mock
 
 import pytest
@@ -220,30 +223,44 @@ class TestKFPPipelineSmokePrereqs:
             f"TimeoutError must include the last observed state. Got: {msg!r}"
         )
 
-    def test_smoke_component_does_not_exist_in_production_pipelines(self) -> None:
-        """pragma_smoke_training_pipeline must not exist in production pipeline module.
+    def test_smoke_pipeline_module_contract(self) -> None:
+        """pragma_smoke_training_pipeline must exist in pragma_smoke_pipeline, NOT pragma_pipeline.
 
-        This is a living assertion of the current xfail condition: the smoke
-        component has not been approved or implemented. The full smoke test
-        (TestKFPPipelineSmoke.test_kfp_pipeline_smoke_run) xfails until
-        pragma_smoke_training_pipeline is added to pipeline/pragma_pipeline.py.
+        Two invariants must hold simultaneously:
 
-        When this test starts FAILING: the smoke component was implemented.
-        Update TestKFPPipelineSmoke.test_kfp_pipeline_smoke_run — remove the
-        pytest.xfail() call and implement the full smoke flow documented there.
+        1. pipeline.pragma_smoke_pipeline defines pragma_smoke_training_pipeline.
+           This is the module that supplies the KFP v2 component for Level 3 smoke.
+           If this fails: the smoke component was removed or renamed — restore it.
+
+        2. pipeline.pragma_pipeline does NOT define pragma_smoke_training_pipeline.
+           Production pipeline must stay clean of smoke/test components.
+           If this fails: the smoke component was accidentally added to production.
+           Move it back to pragma_smoke_pipeline.py.
         """
+        # Invariant 1 — smoke module has the pipeline function.
+        try:
+            import pipeline.pragma_smoke_pipeline as smp
+            has_smoke_in_smoke_module = hasattr(smp, "pragma_smoke_training_pipeline")
+        except ImportError:
+            has_smoke_in_smoke_module = False
+
+        assert has_smoke_in_smoke_module, (
+            "pipeline.pragma_smoke_pipeline must define pragma_smoke_training_pipeline. "
+            "This is required for the Level 3 DSPA/KFP v2 smoke test. "
+            "Check pipeline/pragma_smoke_pipeline.py."
+        )
+
+        # Invariant 2 — production pipeline does NOT have the smoke pipeline.
         try:
             import pipeline.pragma_pipeline as pp
-            has_smoke_pipeline = hasattr(pp, "pragma_smoke_training_pipeline")
+            has_smoke_in_production = hasattr(pp, "pragma_smoke_training_pipeline")
         except ImportError:
-            # kfp not installed or pipeline module not importable — treat as not implemented.
-            has_smoke_pipeline = False
+            has_smoke_in_production = False
 
-        assert not has_smoke_pipeline, (
-            "pragma_smoke_training_pipeline is now defined in pipeline/pragma_pipeline.py. "
-            "The Level 3 smoke xfail condition no longer holds. "
-            "Update TestKFPPipelineSmoke.test_kfp_pipeline_smoke_run: "
-            "remove pytest.xfail() and implement the full smoke flow."
+        assert not has_smoke_in_production, (
+            "pragma_smoke_training_pipeline must NOT be defined in pipeline/pragma_pipeline.py. "
+            "The production pipeline must remain clean of smoke/test components. "
+            "Keep pragma_smoke_training_pipeline in pipeline/pragma_smoke_pipeline.py only."
         )
 
 
@@ -352,40 +369,22 @@ class TestKFPDSPAConnectivity:
 # ===========================================================================
 # 3. TestKFPPipelineSmoke
 #    Full DSPA/KFP v2 pipeline smoke.
-#    Xfails until pragma_smoke_training_pipeline is implemented.
+#    Requires RUN_OPENSHIFT_PIPELINE_SMOKE=1 and kfp installed.
 # ===========================================================================
 
 
 class TestKFPPipelineSmoke:
     """Level 3: OpenShift AI KFP v2 pipeline runtime smoke.
 
-    Compiles a minimal PRAGMA pipeline, uploads to the DSPA KFP v2 API,
-    creates a Run, polls until Succeeded, and asserts log markers.
+    Compiles pragma_smoke_training_pipeline, uploads to the DSPA KFP v2 API,
+    creates a Run with max_steps=1, polls until SUCCEEDED, and asserts log markers.
 
-    Current state: XFAIL.
-    Blocker: pragma_smoke_training_pipeline is not implemented. Production
-    pipeline components (pipeline/components_pragma.py) require S3 and
-    KFTO PyTorchJob infrastructure — neither is available in a simple
-    component pod smoke test. A new single-component pipeline is needed.
-
-    When pragma_smoke_training_pipeline is implemented, remove the
-    pytest.xfail() call inside test_kfp_pipeline_smoke_run and implement
-    the full flow documented in the method docstring.
+    Requires RUN_OPENSHIFT_PIPELINE_SMOKE=1 and kfp installed.
+    Skips if kfp is not installed (optional dependency).
+    Cleanup via cleanup_labelled_resources fixture (label-scoped, automatic).
     """
 
     @_require_smoke
-    @pytest.mark.xfail(
-        reason=(
-            "pragma_smoke_training_pipeline is not yet implemented. "
-            "A new single-component KFP pipeline is required that runs "
-            "fit_tokenizer + train_pragma --max-steps 1 directly in the "
-            "component pod (no S3, no PyTorchJob). "
-            "Production components (pipeline/components_pragma.py) require "
-            "S3 and KFTO PyTorchJob infrastructure. "
-            "Approve and implement the smoke component before enabling this test."
-        ),
-        strict=False,
-    )
     def test_kfp_pipeline_smoke_run(
         self,
         test_namespace: str,
@@ -395,67 +394,177 @@ class TestKFPPipelineSmoke:
         timeout_seconds: int,
         cleanup_labelled_resources: None,
     ) -> None:
-        """Compile, upload, and run a minimal PRAGMA-S KFP v2 pipeline.
+        """Compile, upload, and run pragma_smoke_training_pipeline via DSPA KFP v2.
 
-        Full implementation steps (do not implement until pragma_smoke_training_pipeline
-        is approved — see module docstring and TestKFPPipelineSmokePrereqs):
-
-        1. Compile pragma_smoke_training_pipeline to a KFP v2 YAML:
-               from pipeline.pragma_pipeline import pragma_smoke_training_pipeline
-               import tempfile, pathlib
-               with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
-                   pragma_smoke_training_pipeline.compile(tmp.name)
-                   yaml_path = pathlib.Path(tmp.name)
-
-        2. Resolve DSPA endpoint from runtime_namespace:
-               endpoint = get_dspa_endpoint(namespace=runtime_namespace)
-
-        3. Read SA token (never printed, never in repr):
-               token = get_service_account_token()
-
-        4. Construct kfp.Client:
-               client = make_kfp_client(endpoint=endpoint, token=token)
-
-        5. Upload compiled pipeline YAML:
-               pipeline_id = upload_pipeline(
-                   client=client,
-                   yaml_path=yaml_path,
-                   pipeline_name=f"pragma-smoke-{test_id}",
-               )
-
-        6. Create a KFP v2 Run with max_steps=1 and test labels:
-               run_id = submit_pipeline_run(
-                   client=client,
-                   pipeline_id=pipeline_id,
-                   run_name=f"pragma-smoke-run-{test_id}",
-                   arguments={"max_steps": 1},
-                   experiment_name="pragma-smoke",
-               )
-
-        7. Poll until terminal state:
-               final_state = wait_for_run_terminal(
-                   client=client,
-                   run_id=run_id,
-                   timeout=timeout_seconds,
-                   poll_interval=15,
-               )
-
-        8. Assert SUCCEEDED + log markers:
-               assert final_state == "SUCCEEDED", ...
-               # collect pod logs via oc logs (diagnostics only)
-               # assert "PRAGMA-S" in logs
-               # assert "Reached --max-steps" in logs
-
-        9. Cleanup via cleanup_labelled_resources fixture (automatic).
-
-        Currently xfails because pragma_smoke_training_pipeline does not exist.
-        An xpass means the smoke component has landed — update this test accordingly.
+        Steps:
+          1. Skip if kfp is not installed.
+          2. Compile pragma_smoke_training_pipeline → temp YAML.
+          3. Resolve DSPA endpoint from runtime_namespace.
+          4. Read SA token (never printed, never in repr).
+          5. Construct kfp.Client.
+          6. Upload compiled YAML as f"pragma-smoke-{test_id}".
+          7. Submit KFP v2 Run (max_steps=1, experiment="pragma-smoke").
+          8. Poll until terminal state (timeout=timeout_seconds, poll_interval=15).
+          9. Assert SUCCEEDED. Collect pod logs via oc; assert log markers if available.
+          Cleanup via cleanup_labelled_resources fixture (automatic).
         """
-        pytest.xfail(
-            "pragma_smoke_training_pipeline not yet implemented. "
-            "A new KFP component is required that runs "
-            "fit_tokenizer + train_pragma --max-steps 1 directly in the component pod "
-            "(no S3, no PyTorchJob). "
-            "Production components (pipeline/components_pragma.py) require both. "
-            "Approve the smoke component before implementing this test."
+        # ------------------------------------------------------------------
+        # Step 1 — skip if kfp is not installed.
+        # ------------------------------------------------------------------
+        if importlib.util.find_spec("kfp") is None:
+            pytest.skip(
+                "kfp is not installed. Install with: pip install 'pragma-encoder[workbench]'. "
+                "kfp is available in the workbench image."
+            )
+
+        import kfp  # noqa: PLC0415 — guarded by find_spec above
+
+        from pipeline.pragma_smoke_pipeline import (  # noqa: PLC0415
+            pragma_smoke_training_pipeline,
         )
+
+        # ------------------------------------------------------------------
+        # Step 2 — compile pragma_smoke_training_pipeline to a KFP v2 YAML.
+        # ------------------------------------------------------------------
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            yaml_path = pathlib.Path(tmp_dir) / f"pragma-smoke-{test_id}.yaml"
+            kfp.compiler.Compiler().compile(
+                pipeline_func=pragma_smoke_training_pipeline,
+                package_path=str(yaml_path),
+            )
+            assert yaml_path.exists(), (
+                "kfp.compiler.Compiler().compile() did not produce a YAML file. "
+                "Check pragma_smoke_training_pipeline definition."
+            )
+            print(f"\n[Level 3] Compiled pipeline YAML: {yaml_path} ({yaml_path.stat().st_size} bytes)")
+
+            # ---------------------------------------------------------------
+            # Step 3 — resolve DSPA endpoint.
+            # ---------------------------------------------------------------
+            endpoint = get_dspa_endpoint(namespace=runtime_namespace)
+            print(f"[Level 3] DSPA endpoint: {endpoint}")
+
+            # ---------------------------------------------------------------
+            # Step 4 — read SA token (never printed, never in repr).
+            # ---------------------------------------------------------------
+            token = get_service_account_token()
+            print(f"[Level 3] SA token present in pod: {token is not None}")
+
+            # ---------------------------------------------------------------
+            # Step 5 — construct kfp.Client.
+            # ---------------------------------------------------------------
+            client = make_kfp_client(endpoint=endpoint, token=token)
+            assert client is not None, "make_kfp_client() must return a non-None kfp.Client."
+
+            # ---------------------------------------------------------------
+            # Step 6 — upload compiled pipeline YAML to DSPA.
+            # ---------------------------------------------------------------
+            pipeline_name = f"pragma-smoke-{test_id}"
+            pipeline_id = upload_pipeline(
+                client=client,
+                yaml_path=yaml_path,
+                pipeline_name=pipeline_name,
+            )
+            assert pipeline_id, (
+                f"upload_pipeline() returned empty pipeline_id for {pipeline_name!r}. "
+                "Check DSPA connectivity and pipeline YAML validity."
+            )
+            print(f"[Level 3] Uploaded pipeline: name={pipeline_name!r}  id={pipeline_id!r}")
+
+            # ---------------------------------------------------------------
+            # Step 7 — submit KFP v2 Run.
+            # ---------------------------------------------------------------
+            run_name = f"pragma-smoke-run-{test_id}"
+            run_id = submit_pipeline_run(
+                client=client,
+                pipeline_id=pipeline_id,
+                run_name=run_name,
+                arguments={"max_steps": 1},
+                experiment_name="pragma-smoke",
+            )
+            assert run_id, (
+                f"submit_pipeline_run() returned empty run_id for {run_name!r}. "
+                "Check DSPA connectivity and pipeline upload."
+            )
+            print(f"[Level 3] Submitted run: name={run_name!r}  id={run_id!r}")
+            print(f"[Level 3] Polling until terminal state (timeout={timeout_seconds}s) ...")
+
+            # ---------------------------------------------------------------
+            # Step 8 — poll until terminal state.
+            # ---------------------------------------------------------------
+            try:
+                final_state = wait_for_run_terminal(
+                    client=client,
+                    run_id=run_id,
+                    timeout=timeout_seconds,
+                    poll_interval=15,
+                )
+            except TimeoutError as exc:
+                pytest.fail(
+                    f"KFP Run {run_id!r} did not reach a terminal state within "
+                    f"{timeout_seconds}s: {exc}"
+                )
+
+            print(f"[Level 3] Run terminal state: {final_state}")
+
+            # ---------------------------------------------------------------
+            # Step 9 — assert SUCCEEDED + log markers.
+            # Collect pod logs via oc (best-effort; skip marker assertion if unavailable).
+            # ---------------------------------------------------------------
+            assert final_state == "SUCCEEDED", (
+                f"KFP Run {run_id!r} did not SUCCEED. "
+                f"Final state: {final_state!r}. "
+                f"Check the DSPA KFP v2 UI for pod logs: run_name={run_name!r}."
+            )
+
+            # Attempt pod log collection via oc (best-effort — requires in-cluster access).
+            log_result = subprocess.run(
+                [
+                    "oc", "logs",
+                    "-n", runtime_namespace,
+                    "-l", f"pipeline/runid={run_id}",
+                    "--tail", "200",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            all_logs = log_result.stdout.strip()
+
+            if all_logs:
+                print("[Level 3] Log excerpt (last ~30 lines):")
+                for line in all_logs.splitlines()[-30:]:
+                    print(f"  {line}")
+
+                assert "PRAGMA-S" in all_logs, (
+                    "Pod logs must contain 'PRAGMA-S' — the model variant confirmation. "
+                    f"Run: {run_id!r}  state: {final_state}. "
+                    f"Full logs:\n{all_logs}"
+                )
+                assert "Reached --max-steps" in all_logs, (
+                    "Pod logs must contain 'Reached --max-steps' — the early-stop marker. "
+                    f"Run: {run_id!r}  state: {final_state}. "
+                    f"Full logs:\n{all_logs}"
+                )
+                assert "PRAGMA smoke training completed" in all_logs, (
+                    "Pod logs must contain 'PRAGMA smoke training completed'. "
+                    f"Run: {run_id!r}  state: {final_state}. "
+                    f"Full logs:\n{all_logs}"
+                )
+                print("[Level 3] Log markers confirmed: 'PRAGMA-S' ✓  'Reached --max-steps' ✓  'PRAGMA smoke training completed' ✓")
+            else:
+                # oc logs may not reach KFP pods from outside the cluster.
+                # SUCCEEDED state is the definitive pass criterion — log markers
+                # are supplementary validation. Warn but do not fail.
+                print(
+                    f"[Level 3] WARNING: pod logs not available via oc "
+                    f"(label: pipeline/runid={run_id}). "
+                    "Run SUCCEEDED — log markers not verified. "
+                    "Check the DSPA KFP v2 UI for pod-level logs."
+                )
+
+        print("\n[Level 3] === PASSED: PRAGMA KFP v2 pipeline smoke complete ===")
+        print(f"  Run:      {run_name}  →  {final_state}")
+        print(f"  Pipeline: {pipeline_name}")
+        print(f"  Endpoint: {endpoint}")
