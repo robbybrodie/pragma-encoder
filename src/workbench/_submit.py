@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import time
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -58,6 +59,17 @@ _DEFAULT_SA_TOKEN_PATH = pathlib.Path(
 _DEFAULT_SA_NAMESPACE_PATH = pathlib.Path(
     "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 )
+
+# KFP v2 run terminal states (V2beta1RuntimeState string constants).
+# These are the only states where polling should stop.
+# Source: kfp_server_api.V2beta1RuntimeState.allowable_values
+_TERMINAL_RUN_STATES: frozenset[str] = frozenset({
+    "SUCCEEDED",
+    "FAILED",
+    "CANCELED",
+    "SKIPPED",
+})
+_SUCCESS_RUN_STATES: frozenset[str] = frozenset({"SUCCEEDED"})
 
 
 # ---------------------------------------------------------------------------
@@ -335,3 +347,86 @@ def submit_pipeline_run(
         params=arguments,
     )
     return response.run_id
+
+
+# ---------------------------------------------------------------------------
+# get_run_status
+# ---------------------------------------------------------------------------
+
+
+def get_run_status(client, run_id: str) -> str:
+    """Return the current state of a KFP v2 run as an uppercase string.
+
+    Wraps kfp.Client.get_run() and normalises the state to a plain uppercase
+    string regardless of whether the SDK returns a string constant or an
+    enum-like object.
+
+    Args:
+        client: kfp.Client from make_kfp_client().
+        run_id: Run ID returned by submit_pipeline_run().
+
+    Returns:
+        Uppercase state string, e.g. "PENDING", "RUNNING", "SUCCEEDED",
+        "FAILED", "CANCELED", "SKIPPED".
+        Returns "UNKNOWN" if the state cannot be determined.
+    """
+    run = client.get_run(run_id=run_id)
+    state = getattr(run, "state", None)
+    if state is None:
+        return "UNKNOWN"
+    # state is a plain string constant in kfp 2.7.0 (V2beta1RuntimeState).
+    # Handle enum-like objects defensively for forward compatibility.
+    if hasattr(state, "value"):
+        return str(state.value).upper()
+    return str(state).upper()
+
+
+# ---------------------------------------------------------------------------
+# wait_for_run_terminal
+# ---------------------------------------------------------------------------
+
+
+def wait_for_run_terminal(
+    client,
+    run_id: str,
+    timeout: int = 300,
+    poll_interval: int = 10,
+) -> str:
+    """Poll a KFP v2 run until it reaches a terminal state or timeout.
+
+    Terminal states: SUCCEEDED, FAILED, CANCELED, SKIPPED.
+    Non-terminal states (PENDING, RUNNING, CANCELING, PAUSED,
+    RUNTIME_STATE_UNSPECIFIED) are polled every poll_interval seconds.
+
+    The token value is never accessed or printed by this function.
+
+    Args:
+        client:        kfp.Client from make_kfp_client().
+        run_id:        Run ID returned by submit_pipeline_run().
+        timeout:       Maximum seconds to wait before raising TimeoutError.
+                       Default: 300. Set PRAGMA_TEST_TIMEOUT_SECONDS in the
+                       environment to override in cluster tests.
+        poll_interval: Seconds between status polls. Default: 10.
+
+    Returns:
+        Terminal state string, e.g. "SUCCEEDED", "FAILED".
+
+    Raises:
+        TimeoutError: If the run has not reached a terminal state within
+                      the timeout period. The message includes the last
+                      observed state and a diagnostic hint.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        state = get_run_status(client=client, run_id=run_id)
+        if state in _TERMINAL_RUN_STATES:
+            return state
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Run {run_id!r} did not reach a terminal state within {timeout}s. "
+                f"Last observed state: {state!r}. "
+                "Check the OpenShift AI dashboard or:\n"
+                f"  oc get pods -n <namespace> -l pipeline/runid={run_id}"
+            )
+        time.sleep(min(poll_interval, max(0.1, remaining)))

@@ -1,9 +1,10 @@
-"""Level 3 — DSPA / KFP v2 pipeline upload and run creation smoke.
+"""Level 3 / 3.1 — DSPA / KFP v2 pipeline upload, run creation, and status polling.
 
 Purpose:
   Verify end-to-end PRAGMA pipeline submission via OpenShift AI Data Science
   Pipelines (DSPA) / KFP v2. A PRAGMA-S pipeline is compiled to YAML,
-  uploaded to the DSPA registry, and a run is created.
+  uploaded to the DSPA registry, a run is created, and the run is polled
+  until it reaches a terminal state.
 
 Pipeline runtime context:
   This environment uses OpenShift AI Data Science Pipelines (DSPA) / KFP v2.
@@ -12,16 +13,15 @@ Pipeline runtime context:
     1. Compile KFP v2 pipeline to YAML (local, no cluster needed).
     2. Upload/import pipeline to DSPA via the KFP v2 API.
     3. Create a pipeline run via the DSPA / KFP v2 API.
-    4. Verify run was created (run_id returned).
-  Waiting for run completion and verifying training logs is a future step
-  that requires PyTorchJob execution (Level 4).
+    4. Poll run state via get_run() until terminal (SUCCEEDED/FAILED/CANCELED).
+    5. Report terminal state and diagnostics. Fail if not SUCCEEDED.
 
 Tekton PipelineRun/TaskRun are NOT part of this execution path.
 
 Implementation status:
   Upload + run creation: IMPLEMENTED (src/workbench/_submit.py)
-  Wait for completion:   FUTURE (requires PyTorchJob Level 4)
-  Log verification:      FUTURE (requires running training container)
+  Run status polling:    IMPLEMENTED (wait_for_run_terminal, get_run_status)
+  Log verification:      FUTURE (requires running training container Level 4)
 
 Safety rules:
   - Skip unless RUN_OPENSHIFT_TESTS=1 (conftest gate) + RUN_OPENSHIFT_PIPELINE_SMOKE=1.
@@ -81,11 +81,12 @@ _require_smoke = pytest.mark.skipif(
 _KFP_AVAILABLE = importlib.util.find_spec("kfp") is not None
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Constants
 # ---------------------------------------------------------------------------
 
 _KFP_API_PORT = 8888
 _KFP_API_BASE_PATH = "/apis/v2beta1"
+_POLL_INTERVAL_SECONDS = 10  # seconds between get_run() polls
 
 
 def _endpoint_reachable(endpoint: str, timeout: int = 5) -> bool:
@@ -132,14 +133,16 @@ def _compile_pipeline(tmp_path: pathlib.Path, pipeline_name: str) -> pathlib.Pat
 
 
 class TestOpenShiftPipelineSmoke:
-    """Level 3: DSPA / KFP v2 pipeline upload and run creation.
+    """Level 3 / 3.1: DSPA / KFP v2 pipeline upload, run creation, and polling.
 
     Compiles the PRAGMA pretraining pipeline to KFP v2 YAML, uploads it
-    to the DSPA registry, and creates a pipeline run. Verifies that the
-    DSPA API accepted the submission (run_id returned).
+    to the DSPA registry, creates a pipeline run, then polls the run state
+    via wait_for_run_terminal() until it reaches SUCCEEDED, FAILED, CANCELED,
+    or SKIPPED — or times out.
 
-    Does NOT wait for run completion or inspect training logs — that
-    requires PyTorchJob execution (Level 4).
+    The test fails if the terminal state is not SUCCEEDED, collecting
+    redacted diagnostics from the run error field and logging diagnostic
+    oc commands for investigation. Token is never printed.
 
     Skips (not fails) when:
       - kfp is not installed (run from PRAGMA workbench image)
@@ -153,7 +156,7 @@ class TestOpenShiftPipelineSmoke:
         test_id: str,
         tmp_path: pathlib.Path,
     ) -> None:
-        """Upload a compiled PRAGMA-S pipeline to DSPA and create a run.
+        """Upload a compiled PRAGMA-S pipeline to DSPA, create a run, and poll to terminal.
 
         Steps:
           1. Compile the decorated pipeline to a KFP v2 YAML in tmp_path.
@@ -162,17 +165,18 @@ class TestOpenShiftPipelineSmoke:
           4. Construct a kfp.Client.
           5. Upload the YAML to DSPA → assert pipeline_id returned.
           6. Create a pipeline run → assert run_id returned.
-          7. Print diagnostics for confirmation.
-
-        This test is the implementation of test_pipeline_smoke_run_future.
-        It xpasses once the full environment is available (workbench pod).
+          7. Poll run state via wait_for_run_terminal() until terminal or timeout.
+          8. Collect diagnostics from run.error field.
+          9. Pass if SUCCEEDED. Fail with diagnostics if any other terminal state.
         """
         from src.workbench._submit import (  # noqa: PLC0415
             get_dspa_endpoint,
+            get_run_status,
             get_service_account_token,
             make_kfp_client,
             submit_pipeline_run,
             upload_pipeline,
+            wait_for_run_terminal,
         )
 
         # --- Step 1: kfp guard ---
@@ -291,24 +295,93 @@ class TestOpenShiftPipelineSmoke:
             f"Got: {run_id!r}"
         )
 
+        print(f"  Run created: run_id={run_id}")
+        print(f"    oc get pods -n {test_namespace} -l pipeline/runid={run_id}")
+
+        # --- Step 9: Poll run to terminal state ---
+        poll_timeout = int(os.environ.get("PRAGMA_TEST_TIMEOUT_SECONDS", "300"))
         print(
-            f"\n{'=' * 60}\n"
-            f"  Level 3 pipeline smoke: SUCCESS\n"
-            f"{'=' * 60}\n"
-            f"  Pipeline name: {pipeline_name}\n"
-            f"  Pipeline ID:   {pipeline_id}\n"
-            f"  Run name:      {run_name}\n"
-            f"  Run ID:        {run_id}\n"
-            f"  Endpoint:      {endpoint}\n"
-            f"  Auth:          {'SA token' if token else 'no token (port 8888 direct)'}\n"
-            f"\n"
-            f"  Monitor run in OpenShift AI dashboard or via:\n"
-            f"    oc get pods -n {test_namespace} -l pipeline/runid={run_id}\n"
-            f"{'=' * 60}"
+            f"\n  Polling run status (timeout={poll_timeout}s, "
+            f"interval={_POLL_INTERVAL_SECONDS}s)..."
         )
 
-        # Note: run completion and log verification are Level 4 (PyTorchJob).
-        # This test verifies only that the DSPA API accepted the submission.
+        try:
+            terminal_state = wait_for_run_terminal(
+                client=client,
+                run_id=run_id,
+                timeout=poll_timeout,
+                poll_interval=_POLL_INTERVAL_SECONDS,
+            )
+        except TimeoutError as exc:
+            pytest.fail(
+                f"Run timed out before reaching a terminal state.\n"
+                f"  run_id:      {run_id}\n"
+                f"  pipeline_id: {pipeline_id}\n"
+                f"  timeout:     {poll_timeout}s\n"
+                f"  {exc}\n"
+                "Diagnostics:\n"
+                f"  oc get pods -n {test_namespace}\n"
+                f"  oc get pods -n {test_namespace} -l pipeline/runid={run_id}\n"
+                "Check the OpenShift AI dashboard for run status."
+            )
+
+        print(f"  Terminal state: {terminal_state}")
+
+        # --- Step 10: Collect diagnostics for non-success terminal states ---
+        run_error_message: str = "(none)"
+        run_error_code: object = None
+        run_display_name: str = run_name
+        try:
+            final_run = client.get_run(run_id=run_id)
+            run_display_name = getattr(final_run, "display_name", run_name) or run_name
+            error_obj = getattr(final_run, "error", None)
+            if error_obj is not None:
+                run_error_message = str(getattr(error_obj, "message", error_obj))[:600]
+                run_error_code = getattr(error_obj, "code", None)
+        except Exception:  # noqa: BLE001
+            run_error_message = "(could not retrieve run details)"
+
+        # --- Step 11: Assess terminal state ---
+        if terminal_state == "SUCCEEDED":
+            print(
+                f"\n{'=' * 60}\n"
+                f"  Level 3.1 pipeline smoke: SUCCESS\n"
+                f"{'=' * 60}\n"
+                f"  Pipeline name:  {pipeline_name}\n"
+                f"  Pipeline ID:    {pipeline_id}\n"
+                f"  Run name:       {run_display_name}\n"
+                f"  Run ID:         {run_id}\n"
+                f"  Terminal state: {terminal_state}\n"
+                f"  Endpoint:       {endpoint}\n"
+                f"  Auth:           {'SA token' if token else 'no token (port 8888 direct)'}\n"
+                f"\n"
+                f"  All pipeline components completed successfully.\n"
+                f"  Log verification is Level 4 (PyTorchJob execution).\n"
+                f"{'=' * 60}"
+            )
+        else:
+            # Non-success terminal state — collect diagnostics and fail.
+            pytest.fail(
+                f"Run reached non-success terminal state: {terminal_state!r}\n"
+                f"  run_id:         {run_id}\n"
+                f"  pipeline_id:    {pipeline_id}\n"
+                f"  run_name:       {run_display_name}\n"
+                f"  error_code:     {run_error_code}\n"
+                f"  error_message:  {run_error_message}\n"
+                f"\n"
+                "Diagnostic commands (run from workbench pod or locally with oc):\n"
+                f"  oc get pods -n {test_namespace}\n"
+                f"  oc get pods -n {test_namespace} -l pipeline/runid={run_id}\n"
+                f"  oc logs -n {test_namespace} -l pipeline/runid={run_id} --tail=80\n"
+                f"\n"
+                "If this is FAILED because pipeline component stubs raise NotImplementedError:\n"
+                "  Implement the component body in pipeline/components_pragma.py.\n"
+                "  Components currently expected to have working implementations:\n"
+                "    prepare_dataset, upload_artifacts, submit_pytorchjob,\n"
+                "    run_pretraining, export_checkpoint\n"
+                "If this is CANCELED: run was cancelled externally.\n"
+                "If this is SKIPPED: check pipeline condition logic.\n"
+            )
 
     @_require_smoke
     def test_pipeline_compile_produces_valid_yaml(

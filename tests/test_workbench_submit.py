@@ -47,10 +47,12 @@ import pytest
 from src.workbench._submit import (
     DSPAConfig,
     get_dspa_endpoint,
+    get_run_status,
     get_service_account_token,
     make_kfp_client,
     submit_pipeline_run,
     upload_pipeline,
+    wait_for_run_terminal,
 )
 
 # ---------------------------------------------------------------------------
@@ -711,4 +713,214 @@ class TestSubmitNoSideEffects:
         )
         assert sentinel not in repr(config), (
             "Token must not appear in repr(DSPAConfig)"
+        )
+
+
+# ===========================================================================
+# 8. TestGetRunStatus
+#    get_run_status() wraps client.get_run() and returns an uppercase string.
+# ===========================================================================
+
+
+class TestGetRunStatus:
+    """get_run_status() — normalises KFP v2 run state to uppercase string."""
+
+    def _make_run_mock(self, state: object) -> mock.MagicMock:
+        """Return a mock V2beta1Run with the given state."""
+        run = mock.MagicMock()
+        run.state = state
+        return run
+
+    def test_returns_uppercase_string_state(self) -> None:
+        """Returns the state as an uppercase string when state is a plain string."""
+        client = mock.MagicMock()
+        client.get_run.return_value = self._make_run_mock("RUNNING")
+
+        result = get_run_status(client=client, run_id="test-run-id")
+
+        assert result == "RUNNING"
+        client.get_run.assert_called_once_with(run_id="test-run-id")
+
+    def test_uppercases_lowercase_state(self) -> None:
+        """Lowercased state strings are normalised to uppercase."""
+        client = mock.MagicMock()
+        client.get_run.return_value = self._make_run_mock("succeeded")
+
+        result = get_run_status(client=client, run_id="test-run-id")
+
+        assert result == "SUCCEEDED"
+
+    def test_returns_unknown_when_state_is_none(self) -> None:
+        """Returns 'UNKNOWN' when run.state is None."""
+        run = mock.MagicMock()
+        run.state = None
+        client = mock.MagicMock()
+        client.get_run.return_value = run
+
+        result = get_run_status(client=client, run_id="test-run-id")
+
+        assert result == "UNKNOWN"
+
+    def test_handles_enum_like_state_with_value_attr(self) -> None:
+        """Handles enum-like state objects that have a .value attribute."""
+        state_obj = mock.MagicMock()
+        state_obj.value = "FAILED"
+        run = mock.MagicMock()
+        run.state = state_obj
+        client = mock.MagicMock()
+        client.get_run.return_value = run
+
+        result = get_run_status(client=client, run_id="test-run-id")
+
+        assert result == "FAILED"
+
+    def test_succeeded_state(self) -> None:
+        """Returns 'SUCCEEDED' for a succeeded run."""
+        client = mock.MagicMock()
+        client.get_run.return_value = self._make_run_mock("SUCCEEDED")
+
+        assert get_run_status(client=client, run_id="abc") == "SUCCEEDED"
+
+    def test_failed_state(self) -> None:
+        """Returns 'FAILED' for a failed run."""
+        client = mock.MagicMock()
+        client.get_run.return_value = self._make_run_mock("FAILED")
+
+        assert get_run_status(client=client, run_id="abc") == "FAILED"
+
+
+# ===========================================================================
+# 9. TestWaitForRunTerminal
+#    wait_for_run_terminal() polls until terminal state or raises TimeoutError.
+# ===========================================================================
+
+
+class TestWaitForRunTerminal:
+    """wait_for_run_terminal() — polling loop with timeout and token safety."""
+
+    def _make_client_returning_states(self, states: list[str]) -> mock.MagicMock:
+        """Return a mock client whose get_run returns each state in sequence."""
+        client = mock.MagicMock()
+        runs = []
+        for state in states:
+            run = mock.MagicMock()
+            run.state = state
+            runs.append(run)
+        client.get_run.side_effect = runs
+        return client
+
+    def test_returns_immediately_when_already_terminal(self) -> None:
+        """Returns the state at once when first poll returns a terminal state."""
+        client = self._make_client_returning_states(["SUCCEEDED"])
+
+        result = wait_for_run_terminal(
+            client=client, run_id="abc", timeout=30, poll_interval=0
+        )
+
+        assert result == "SUCCEEDED"
+        client.get_run.assert_called_once()
+
+    def test_polls_until_succeeded(self) -> None:
+        """Polls through non-terminal states until SUCCEEDED."""
+        client = self._make_client_returning_states(
+            ["PENDING", "RUNNING", "RUNNING", "SUCCEEDED"]
+        )
+
+        result = wait_for_run_terminal(
+            client=client, run_id="abc", timeout=30, poll_interval=0
+        )
+
+        assert result == "SUCCEEDED"
+        assert client.get_run.call_count == 4
+
+    def test_returns_failed_state(self) -> None:
+        """Returns 'FAILED' when the run fails (not an exception)."""
+        client = self._make_client_returning_states(["RUNNING", "FAILED"])
+
+        result = wait_for_run_terminal(
+            client=client, run_id="abc", timeout=30, poll_interval=0
+        )
+
+        assert result == "FAILED"
+
+    def test_returns_canceled_state(self) -> None:
+        """Returns 'CANCELED' when the run is cancelled."""
+        client = self._make_client_returning_states(["CANCELING", "CANCELED"])
+
+        # CANCELING is non-terminal; CANCELED is terminal.
+        result = wait_for_run_terminal(
+            client=client, run_id="abc", timeout=30, poll_interval=0
+        )
+
+        assert result == "CANCELED"
+
+    def test_returns_skipped_state(self) -> None:
+        """Returns 'SKIPPED' when the run is skipped."""
+        client = self._make_client_returning_states(["SKIPPED"])
+
+        result = wait_for_run_terminal(
+            client=client, run_id="abc", timeout=30, poll_interval=0
+        )
+
+        assert result == "SKIPPED"
+
+    def test_raises_timeout_error_when_stuck_in_running(self) -> None:
+        """Raises TimeoutError when the run stays RUNNING past the timeout.
+
+        Uses a very short timeout (0.1s) and immediate poll (0s interval).
+        The TimeoutError message must include the run_id and last state.
+        """
+        # Always returns RUNNING — never reaches terminal.
+        run = mock.MagicMock()
+        run.state = "RUNNING"
+        client = mock.MagicMock()
+        client.get_run.return_value = run
+
+        with pytest.raises(TimeoutError) as exc_info:
+            wait_for_run_terminal(
+                client=client, run_id="stuck-run-id", timeout=0, poll_interval=0
+            )
+
+        msg = str(exc_info.value)
+        assert "stuck-run-id" in msg, "TimeoutError must include the run_id"
+        assert "RUNNING" in msg, "TimeoutError must include the last observed state"
+
+    def test_timeout_error_message_contains_timeout_seconds(self) -> None:
+        """TimeoutError message includes the timeout duration."""
+        run = mock.MagicMock()
+        run.state = "PENDING"
+        client = mock.MagicMock()
+        client.get_run.return_value = run
+
+        with pytest.raises(TimeoutError) as exc_info:
+            wait_for_run_terminal(
+                client=client, run_id="run-abc", timeout=0, poll_interval=0
+            )
+
+        assert "0s" in str(exc_info.value), (
+            "TimeoutError must mention the timeout duration"
+        )
+
+    def test_token_not_in_timeout_error_message(self) -> None:
+        """Token value must not appear in TimeoutError message.
+
+        wait_for_run_terminal() does not accept a token argument — confirmed
+        by checking it only operates on client and run_id. This test guards
+        against accidental token leakage via the client mock repr.
+        """
+        run = mock.MagicMock()
+        run.state = "RUNNING"
+        sentinel = "SENTINEL_TOKEN_MUST_NOT_LEAK"
+        client = mock.MagicMock(name=f"kfp.Client[{sentinel}]")
+        client.get_run.return_value = run
+
+        with pytest.raises(TimeoutError) as exc_info:
+            wait_for_run_terminal(
+                client=client, run_id="run-abc", timeout=0, poll_interval=0
+            )
+
+        # The sentinel must NOT appear because wait_for_run_terminal()
+        # constructs its own message using only run_id and state.
+        assert sentinel not in str(exc_info.value), (
+            "Token must not appear in TimeoutError message"
         )

@@ -35,10 +35,12 @@ from src.workbench._run import (
 from src.workbench._submit import (
     DSPAConfig,
     get_dspa_endpoint,
+    get_run_status,
     get_service_account_token,
     make_kfp_client,
     submit_pipeline_run,
     upload_pipeline,
+    wait_for_run_terminal,
 )
 
 __all__ = [
@@ -58,4 +60,6 @@ __all__ = [
     "make_kfp_client",
     "upload_pipeline",
     "submit_pipeline_run",
+    "get_run_status",
+    "wait_for_run_terminal",
 ]
