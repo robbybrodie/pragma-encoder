@@ -140,7 +140,7 @@ class _CalendarMLP(nn.Module):
             [torch.sin(xt_normed), torch.cos(xt_normed)],
             dim=-1,
         )  # (batch, ne, 6)
-        return self.mlp(sincos)  # type: ignore[no-any-return]  # (batch, ne, d_model)
+        return self.mlp(sincos)  # type: ignore[no-any-return]
 
 
 class _EventAttention(nn.Module):

@@ -47,7 +47,7 @@ Compares full PRAGMA-S vs variant with Profile State Encoder removed entirely.
 > where static signals such as account tenure and onboarding characteristics provide
 > discriminative context that event sequences alone cannot fully capture."
 
-**Validates ADR 002:** The dedicated Profile State Encoder adds significant value
+**Validates ADR 001 §2:** The dedicated Profile State Encoder adds significant value
 for static-signal-dependent tasks, while the architecture degrades gracefully when
 those signals are less relevant (Communication Engagement).
 
@@ -110,8 +110,8 @@ Ablation 3.4.2 is the most important for our architecture:
 The +31.8% PR-AUC gain from profile state on Credit Scoring confirms that the
 Profile State Encoder is not optional. It must be implemented correctly.
 
-The clean ablation is possible precisely because of ADR 002 (three separate encoders):
+The clean ablation is possible precisely because of ADR 001 §2 (three separate encoders):
 removing the profile branch requires only removing the ProfileStateEncoder input to
 the HistoryEncoder — no other changes needed.
 
-If the profile branch cannot be ablated cleanly, the implementation violates ADR 002.
+If the profile branch cannot be ablated cleanly, the implementation violates ADR 001 §2.

@@ -86,11 +86,23 @@ class IBMTabFormerAdapter:
         manifest = adapter.prepare(PRAGMAConfig.pragma_s(), upload=True)
     """
 
+    #: Environment variable that overrides the default csv_path.
+    #: Set this before instantiating IBMTabFormerAdapter (e.g. in a KFP pipeline
+    #: component pod) to control which CSV file is used without changing call sites.
+    ENV_DATA_PATH = "IBM_TABFORMER_DATA_PATH"
+
+    #: Default local path used when neither csv_path nor IBM_TABFORMER_DATA_PATH
+    #: is provided.  Matches the conventional working-directory layout used by
+    #: scripts/upload_training_data.py and the Level 3b batch/v1 Job smoke.
+    DEFAULT_CSV_PATH = "data/tabformer/card_transaction.v1.csv"
+
     def __init__(
         self,
-        csv_path: Path | str,
+        csv_path: Path | str | None = None,
         vocab_path: Path | str | None = None,
     ) -> None:
+        if csv_path is None:
+            csv_path = os.environ.get(self.ENV_DATA_PATH, self.DEFAULT_CSV_PATH)
         self._csv_path = Path(csv_path)
         self._vocab_path = (
             Path(vocab_path) if vocab_path is not None

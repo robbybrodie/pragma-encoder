@@ -129,7 +129,7 @@ class PragmaRunProtocol(Protocol):
         """
         ...
 
-    def artifacts(self) -> dict[str, Any]:
+    def artifacts(self) -> dict[str, str]:
         """Return S3 artifact URI dict.
 
         Keys (present when available):
@@ -172,7 +172,7 @@ class PragmaRun:
     manifest: DatasetManifest
     steps: list[PipelineStep] = field(default_factory=list)
     _metrics: dict[str, Any] = field(default_factory=dict, repr=False)
-    _artifacts: dict[str, Any] = field(default_factory=dict, repr=False)
+    _artifacts: dict[str, str] = field(default_factory=dict, repr=False)
     kfp_run_url: str | None = None
     run_mode: str | None = None
 
@@ -201,6 +201,6 @@ class PragmaRun:
         """Return current training metrics dict."""
         return dict(self._metrics)
 
-    def artifacts(self) -> dict[str, Any]:
+    def artifacts(self) -> dict[str, str]:
         """Return current S3 artifact URI dict."""
         return dict(self._artifacts)

@@ -12,9 +12,9 @@ The PRAGMA paper (Section 2.4) describes training infrastructure
 at Revolut scale: LMDB user index, Parquet event shards, dynamic
 batching, varlen FlashAttention, and 16–32× H100 distributed runs.
 
-For this open-source implementation, training is orchestrated via
-KFTO PyTorchJob on OpenShift AI (ADR 005). Two interaction modes
-existed before this ADR:
+For this open-source implementation, training uses a custom PyTorch loop
+(`scripts/train_pragma.py`) with torchrun/DDP on KFTO PyTorchJob (ADR 005).
+Two interaction modes existed before this ADR:
 
 1. **Script mode** — `python scripts/train_pragma.py` (local and
    cluster runs, already implemented)
@@ -34,19 +34,33 @@ Expose a `train_pragma()` Python function as the primary workbench
 entry point for launching PRAGMA pretraining:
 
 ```python
-from pragma.workbench import train_pragma
+from src.workbench import train_pragma
 
 run = train_pragma(
     dataset="ibm-tabformer",
     model_size="S",
     epochs=10,
-    nodes=2,
+    nodes=1,
+    mode="dry_run",        # or "local", "pipeline", "auto", "cluster"
+    local_csv_path=None,   # required for mode="local"
+    output_dir=None,       # optional; defaults to outputs/pragma-local/<ts>
+    max_steps=None,        # optional cap on training steps
     prepare_if_missing=True,
 )
 run.show_pipeline()   # prints the 5 pipeline steps and their status
 run.metrics()         # returns training metrics dict
 run.artifacts()       # returns S3 artifact URIs dict
 ```
+
+### Execution modes
+
+| Mode | Status | Behaviour |
+|------|--------|-----------|
+| `"dry_run"` | Implemented | Returns a `PragmaRun` preview immediately. No side effects: no adapter.prepare(), no subprocess, no S3. Useful for previewing pipeline shape and validating configuration. |
+| `"local"` | Implemented | Runs `scripts/train_pragma.py` as a subprocess via `torchrun`. Requires `local_csv_path`. Writes checkpoints to `output_dir`. `nodes > 1` is not supported for local mode (raises `NotImplementedError`). |
+| `"pipeline"` | Implemented | Returns a `PragmaPipeline` object capturing training intent. No training, no S3, no cluster at call time. Use `.compile(path)` to produce KFP YAML, `.show_pipeline()` to inspect stages. |
+| `"auto"` | Implemented | Detects environment: if running inside an OpenShift pod, delegates to `"cluster"`; otherwise delegates to `"local"`. |
+| `"cluster"` | **Not yet implemented** | Will submit a KFTO PyTorchJob via `oc apply`. Currently raises `NotImplementedError` directing users to `dry_run` or `local`. |
 
 This is an implementation decision. The paper does not prescribe a
 Python API. The design is guided by Section 2.4's pipeline stages:
@@ -171,6 +185,6 @@ Section 2.4 block to add:
 
 - Paper: Section 2.4 (Training Infrastructure)
 - Paper: Section 2.1 (Dataset)
-- ADR 005: NeMo for Training Orchestration
+- ADR 005: Training Orchestration (`docs/decisions/005-training-orchestration.md`)
 - docs/openshift-storage-pattern.md
 - docs/training-guide.md

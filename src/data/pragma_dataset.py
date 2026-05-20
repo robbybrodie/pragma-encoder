@@ -56,7 +56,7 @@ _EVENT_FIELDS = [
 ]
 
 
-class PragmaDataset(Dataset[Any]):
+class PragmaDataset(Dataset[Dict[str, Any]]):
     """torch.utils.data.Dataset over tokenised TabFormer customer sequences.
 
     Args:

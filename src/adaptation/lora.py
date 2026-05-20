@@ -43,8 +43,6 @@ LoRA paper: Hu et al. (2022), arXiv:2106.09685
 PEFT library: https://github.com/huggingface/peft
 """
 
-from typing import List
-
 from src.model.config import PRAGMAConfig
 
 # ---------------------------------------------------------------------------
@@ -54,7 +52,7 @@ from src.model.config import PRAGMAConfig
 # These strings are suffix-matched by PEFT against the full named_modules() paths.
 # Verified against PRAGMA-S: 221,184 LoRA params / 9,334,432 total = 2.37%.
 # Do not change these without re-verifying the parameter fraction.
-_TARGET_MODULES: List[str] = [
+_TARGET_MODULES: list[str] = [
     "q_proj",    # Q projection  — Linear(d_model, d_model)
     "k_proj",    # K projection  — Linear(d_model, d_model)
     "v_proj",    # V projection  — Linear(d_model, d_model)
@@ -112,7 +110,7 @@ class LoRAAdapter:
             r=config.lora_rank,              # key-numbers.md: lora_rank=8, §3.1.2
             lora_alpha=config.lora_alpha,    # key-numbers.md: lora_alpha=8, §3.1.2
             target_modules=_TARGET_MODULES,  # QKV + FFN — see module docstring
-            lora_dropout=_LORA_DROPOUT,      # implementation choice: 0.0 (paper unspecified)
+            lora_dropout=_LORA_DROPOUT,      # 0.0; paper does not specify dropout
             bias="none",                     # standard PEFT default
             task_type=TaskType.FEATURE_EXTRACTION,  # PRAGMA is encoder-only
         )

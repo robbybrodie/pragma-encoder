@@ -93,6 +93,7 @@ def _make_inputs(spec: VocabularySpec, with_mask: bool = True, seed: int = 0) ->
     torch.manual_seed(seed)
     val_lo, val_hi = spec.value_start, spec.value_start + spec.value_size
     key_lo, key_hi = spec.key_start, spec.key_start + spec.key_size
+    _ = _CONFIG.max_event_tokens  # max_event_tokens = 24
 
     d = dict(
         xa_key_ids = torch.randint(key_lo, key_hi, (_BATCH, _NA)),

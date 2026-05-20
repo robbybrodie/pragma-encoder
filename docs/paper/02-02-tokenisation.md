@@ -3,7 +3,7 @@
 Paper: "PRAGMA: Revolut Foundation Model"
 Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.2
 
-**This section is critical for implementation.** ADR 007 is derived entirely from it.
+**This section is critical for implementation.** ADR 001 §5 is derived entirely from it.
 Do not reuse the NVIDIA blueprint tokeniser.
 
 ---
@@ -134,5 +134,5 @@ The tokeniser produces:
 - Temporal coordinates (log-seconds, one per event)
 - Calendar features (3 per event, for EventEncoder only)
 
-**ADR 007:** Do not reuse the NVIDIA blueprint tokeniser. Do not serialise records as text strings.
+**ADR 001 §5:** Do not reuse the NVIDIA blueprint tokeniser. Do not serialise records as text strings.
 Keys and values must be separate embedding lookups. Within-field positions index values within one field only.

@@ -714,3 +714,148 @@ They are not theoretical. They prevented real refactors.
    That is actually a gift. They tell you immediately
    that the dependency graph is wrong.
    Fix the graph. Do not work around the import error.
+
+---
+
+## OpenShift Integration Test Gate
+
+The repo has two separate test layers.
+
+### Layer 1 — Unit / local tests (default)
+
+```
+pytest tests/ -q
+```
+
+Always runs. No cluster required. Covers model logic, tokeniser, assembler,
+workbench API, dry_run, local training, decorated pipeline authoring, and
+pipeline compilation.
+
+### Layer 2 — OpenShift integration tests (opt-in)
+
+```
+RUN_OPENSHIFT_TESTS=1 \
+PRAGMA_TEST_NAMESPACE=<namespace> \
+pytest tests/openshift/ -q
+```
+
+Skipped by default. Requires `oc` access and a running OpenShift cluster.
+Lives in `tests/openshift/`. See `tests/openshift/README.md` for full docs.
+
+---
+
+### When OpenShift tests are required
+
+OpenShift integration tests are required before merging any change that affects:
+
+- `openshift/` manifests (PyTorchJob YAML, namespace config, RBAC)
+- OpenShift AI Pipelines / DSPA / KFP v2 runtime execution
+- PyTorchJob manifests or distributed training configuration
+- Service account, RBAC, image pull, or S3 secret assumptions
+- Cluster-side dataset staging or S3-backed artefact paths
+- Two-node or multi-node distributed execution on OpenShift
+- `src/workbench/` submit or compile behaviour when it touches cluster runtime
+
+OpenShift tests are **not** required for:
+
+- Model-only changes (encoders, masking, MLM head, config)
+- Tokeniser-only changes
+- Local-only workbench behaviour (dry_run, local mode)
+- Documentation-only changes
+
+...unless those changes alter cluster-facing behaviour.
+
+---
+
+### Safety rules for the OpenShift test suite
+
+1. Skip unless `RUN_OPENSHIFT_TESTS=1`.
+2. Require `PRAGMA_TEST_NAMESPACE`.
+3. Argo CD deploys the long-lived platform substrate. Tests verify it but
+   do not deploy or mutate Argo-managed resources.
+4. Tests create only short-lived resources labelled with:
+   ```
+   pragma.redhat.com/test-run=true
+   pragma.redhat.com/test-id=<unique-test-id>
+   ```
+5. Cleanup must be label-scoped. Never use `--all` or kind-wide deletes.
+6. Never delete or patch ServiceAccounts, Secrets, namespaces, or
+   Argo CD Applications.
+7. Never print secret data, tokens, or kubeconfig values.
+
+---
+
+### Cluster-facing development flow
+
+When implementing or changing anything that touches OpenShift:
+
+1. Write / update unit tests (Layer 1).
+2. Write / update OpenShift integration tests (Layer 2).
+3. Show tests for review before implementation (same rule as model components).
+4. Implement.
+5. Run unit tests: `pytest tests/ -q`
+6. Run workbench examples: `PYTHONPATH=. .venv/bin/python examples/workbench/05_decorated_pipeline.py`
+7. Run OpenShift tests if `oc` access is available:
+   ```
+   RUN_OPENSHIFT_TESTS=1 \
+   PRAGMA_TEST_NAMESPACE=<namespace> \
+   pytest tests/openshift/ -q
+   ```
+8. If cluster access is not available, report the exact command and the
+   reason it was not run (e.g. "no VPN / no cluster credentials").
+
+---
+
+### Required report for cluster-facing changes
+
+When submitting a PR for cluster-facing work, include:
+
+```
+Unit tests:          <pass count> passed, <skip count> skipped
+OpenShift tests:     <result> OR "not run — <reason>"
+Namespace used:      <namespace>
+Resources created:   <list or "none">
+Cleanup result:      <success / warnings / not applicable>
+xfail / future:      <list of xfail tests and their expected trigger>
+Argo mutations:      none (confirmed)
+```
+
+---
+
+### Quick reference commands
+
+Read-only cluster checks (safe, no resources created):
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+pytest tests/openshift/test_00_oc_access.py \
+       tests/openshift/test_01_cluster_prereqs.py \
+       tests/openshift/test_02_pipeline_compile.py -q
+```
+
+Future DSPA / KFP v2 pipeline smoke (submits pipeline run via OpenShift AI DSPA API, opt-in):
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_OPENSHIFT_PIPELINE_SMOKE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+pytest tests/openshift/test_03_pipeline_smoke_run.py -q
+```
+
+Training container smoke — Level 3b (creates ConfigMap + batch/v1 Job, opt-in):
+This proves the PRAGMA training image runs correctly in-cluster before DSPA/KFP
+is attempted. Not a PyTorchJob — a single-pod batch/v1 Job with no DDP.
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder:latest \
+pytest tests/openshift/test_03b_training_job_smoke.py -q
+```
+
+Future PyTorchJob smoke (creates labelled PyTorchJob, opt-in):
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_PYTORCHJOB_TESTS=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+pytest tests/openshift/test_04_pytorchjob_smoke.py -q
+```

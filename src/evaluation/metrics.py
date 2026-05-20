@@ -22,7 +22,7 @@ ArrayLike = Union[np.ndarray, list[Any]]
 def _to_numpy(x: ArrayLike) -> np.ndarray:
     """Coerce input to numpy array."""
     if hasattr(x, "cpu"):  # PyTorch tensor
-        return x.detach().cpu().numpy()  # type: ignore[union-attr, no-any-return]
+        return x.detach().cpu().numpy()  # type: ignore[no-any-return, union-attr]
     return np.asarray(x)
 
 

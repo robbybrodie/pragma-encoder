@@ -36,7 +36,7 @@ spec:
 
   source:
     repoURL: https://github.com/robbybrodie/pragma-encoder.git
-    targetRevision: pragma-implementation
+    targetRevision: main
     path: openshift/gitops
     directory:
       recurse: true

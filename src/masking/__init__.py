@@ -47,7 +47,7 @@ class MaskingStrategyProtocol(Protocol):
         key_ids:   torch.Tensor,  # (batch, ne, ni)
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Apply three-strategy masking in a single forward pass (§2.3.5)."""
-        ...
+        ...  # noqa: D102
 
 
 __all__ = [
