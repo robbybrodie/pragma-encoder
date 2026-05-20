@@ -93,7 +93,6 @@ def _make_inputs(spec: VocabularySpec, with_mask: bool = True, seed: int = 0) ->
     torch.manual_seed(seed)
     val_lo, val_hi = spec.value_start, spec.value_start + spec.value_size
     key_lo, key_hi = spec.key_start, spec.key_start + spec.key_size
-    max_pos = _CONFIG.max_event_tokens  # 24
 
     d = dict(
         xa_key_ids = torch.randint(key_lo, key_hi, (_BATCH, _NA)),
@@ -511,7 +510,8 @@ class TestPaperSpecifications:
         batch.validate(_CONFIG)
 
     def test_pos_emb_covers_profile_positions(self) -> None:
-        """§2.4: sinusoidal table must cover max_profile_tokens (200), not just max_event_tokens (24).
+        """§2.4: sinusoidal table must cover max_profile_tokens (200),
+        not just max_event_tokens (24).
 
         Profile tokens (xa path) may have position IDs up to max_profile_tokens - 1.
         If the sinusoidal table is sized to max_event_tokens only, positions >= 24

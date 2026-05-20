@@ -46,8 +46,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.model.config import PRAGMAConfig
 from src.encoders.rope import RoPEEncoding
+from src.model.config import PRAGMAConfig
 
 
 class _RoPEMultiheadAttention(nn.Module):

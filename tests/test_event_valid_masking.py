@@ -10,11 +10,10 @@ with TypeError (unexpected keyword argument).  Run them again after
 adding event_valid to PRAGMA.forward() to confirm correctness.
 """
 
-import torch
 import pytest
+import torch
 
 from src.model import PRAGMA, PRAGMAConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers

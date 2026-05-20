@@ -19,16 +19,13 @@ Test types:
 
 from __future__ import annotations
 
-import csv
-import textwrap
 from pathlib import Path
 
 import pytest
 
-from src.model.config import PRAGMAConfig
+from src.data.adapters import DatasetAdapterProtocol, IBMTabFormerAdapter, get_adapter
 from src.data.dataset_manifest import DatasetManifest, DatasetManifestProtocol
-from src.data.adapters import IBMTabFormerAdapter, DatasetAdapterProtocol, get_adapter
-
+from src.model.config import PRAGMAConfig
 
 # ---------------------------------------------------------------------------
 # Fixtures — minimal TabFormer CSV for local (upload=False) testing

@@ -18,7 +18,6 @@ torch = pytest.importorskip("torch", reason="torch not installed")
 from src.masking import MaskingStrategy
 from src.model import PRAGMA, PRAGMAConfig
 from src.model.assembler import EmbeddingAssembler
-from src.model.assembled_batch import AssembledBatch
 from src.tokenizer.vocabulary import VocabularySpec
 
 

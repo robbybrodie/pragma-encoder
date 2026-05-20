@@ -19,11 +19,10 @@ ADR: docs/decisions/003-workbench-training-api.md
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Mapping, Protocol, Sequence, runtime_checkable
 
 from src.model.config import PRAGMAConfig
-
 
 # ---------------------------------------------------------------------------
 # DatasetShard — one prepared data file within a manifest

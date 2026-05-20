@@ -26,12 +26,10 @@ from pathlib import Path
 from src.data.adapters import get_adapter
 from src.model.config import PRAGMAConfig
 from src.workbench._run import (
-    PIPELINE_STEP_NAMES,
     STEP_DESCRIPTIONS,
     PipelineStep,
     PragmaRun,
 )
-
 
 # ---------------------------------------------------------------------------
 # Model size → PRAGMAConfig factory map (case-sensitive per §2.4)

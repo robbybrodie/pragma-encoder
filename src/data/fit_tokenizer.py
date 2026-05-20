@@ -30,8 +30,8 @@ from pathlib import Path
 # Allow running as a script from the repo root
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.tokenizer import FinancialTokenizerPipeline
 from src.data.tabformer_adapter import TabFormerAdapter
+from src.tokenizer import FinancialTokenizerPipeline
 
 CSV_PATH = Path("data/tabformer/card_transaction.v1.csv")
 VOCAB_PATH = Path("data/tabformer/vocab.pkl")
@@ -98,10 +98,10 @@ def main() -> None:
     pipeline._build_vocabulary_layout()
 
     vocab_spec = pipeline.vocabulary_spec()
-    print(f"\nVocabulary layout:")
+    print("\nVocabulary layout:")
     print(f"  special_tokens : 0..{pipeline.N_SPECIAL_TOKENS - 1}")
-    print(f"  key tokens     : {vocab_spec.key_start}..{vocab_spec.key_start + vocab_spec.key_size - 1}  ({vocab_spec.key_size} keys)")
-    print(f"  value tokens   : {vocab_spec.value_start}..{vocab_spec.value_start + vocab_spec.value_size - 1}  ({vocab_spec.value_size} values)")
+    print(f"  key tokens     : {vocab_spec.key_start}..{vocab_spec.key_start + vocab_spec.key_size - 1}  ({vocab_spec.key_size} keys)")  # noqa: E501
+    print(f"  value tokens   : {vocab_spec.value_start}..{vocab_spec.value_start + vocab_spec.value_size - 1}  ({vocab_spec.value_size} values)")  # noqa: E501
     print(f"  total_embedding_vocab_size = {vocab_spec.total_embedding_vocab_size}")
 
     VOCAB_PATH.parent.mkdir(parents=True, exist_ok=True)
