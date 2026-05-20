@@ -11,11 +11,9 @@ requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 
 [project.optional-dependencies]
-# kfp and kfp-kubernetes are optional: only needed in the workbench/compile
-# environment. Core training and the workbench API work without them installed.
-# kfp-kubernetes: Kubernetes-native KFP features (secret injection, PVC mount,
-#   tolerations). Used at pipeline compile time only — not in component pods.
-#   See docs/openshift-image-contract.md.
+# kfp is optional: pipeline components and pragma_pipeline.py import it
+# conditionally (_KFP_AVAILABLE guard). Core training and the workbench API
+# work without kfp installed.
 workbench = ["kfp>=2", "kfp-kubernetes>=1.2"]
 
 [tool.mypy]
@@ -43,21 +41,14 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
-ignore = [
-    # ML convention: uppercase matrix variables (X, X_train, X_test) are standard in numpy/sklearn
-    "N806",
-    # PyTorch convention: `import torch.nn.functional as F` is universal across the ecosystem
-    "N812",
-    # Deferred imports: optional dependencies (peft, kfp) are imported inside try/except or
-    # inside methods to keep them optional. This is intentional throughout the codebase.
-    "E402",
-]
+# N806: X/X_scaled are standard ML variable names (scikit-learn convention).
+# N812: import torch.nn as nn is established Python convention.
+ignore = ["N806", "N812"]
 
 [tool.ruff.lint.per-file-ignores]
-# Files containing IBM TabFormer CSV headers (110 chars) inside triple-quoted strings.
-# noqa comments inside multi-line string literals become part of the string data and
-# break the CSV parser, so E501 must be suppressed at the file level.
+# Test files use pytest.importorskip("torch") before src imports, which is the
+# standard pattern for skipping entire modules when torch is unavailable.
+# E402 (module-level import not at top) is intentional here.
+"tests/test_*.py" = ["E402"]
+# The IBM TabFormer smoke CSV header is a fixed-format string that cannot be wrapped.
 "src/data/adapters/ibm_tabformer_smoke.py" = ["E501"]
-"tests/openshift/test_03b_training_job_smoke.py" = ["E501"]
-# Docstring contains long image URI examples that cannot be shortened without losing clarity.
-"tests/openshift/test_03_pipeline_smoke_run.py" = ["E501"]
