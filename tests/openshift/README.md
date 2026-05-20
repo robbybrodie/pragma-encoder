@@ -13,9 +13,9 @@ The local/unit test suite (`tests/`) has strong coverage of:
 - decorated pipeline authoring
 - pipeline compilation
 
-The gap is the transition from workbench authoring to **real OpenShift / OpenShift
-Pipelines / PyTorchJob execution**. This suite fills that gap with a safe, opt-in
-TDD loop for cluster-facing behaviour.
+The gap is the transition from workbench authoring to **real OpenShift AI DSPA /
+KFP v2 pipeline execution and PyTorchJob distributed training**. This suite fills
+that gap with a safe, opt-in TDD loop for cluster-facing behaviour.
 
 ---
 
@@ -43,7 +43,28 @@ by default and are not required for PRAGMA pipeline execution.
 
 - **Default pipeline target**: OpenShift AI DSPA / KFP v2
 - **Tekton**: optional legacy/alternate runtime — checks gated by `RUN_TEKTON_TESTS=1`
-- **Level 3b batch/v1 Job smoke**: proves training image execution in-cluster, not pipeline runtime
+- **Level 3b batch/v1 Job smoke**: proves training image execution in-cluster; it is **not** pipeline runtime
+
+### Documented OpenShift AI Pipeline pattern
+
+The supported PRAGMA pipeline execution path is:
+
+1. **Author** — write a Python pipeline using PRAGMA workbench decorators or the KFP SDK.
+2. **Compile** — call `.compile()` to produce a KFP v2 YAML file.
+3. **Upload / import** — upload the compiled YAML to OpenShift AI Data Science Pipelines via the DSPA API or the OpenShift AI dashboard.
+4. **Create a pipeline run** — trigger a run from the uploaded pipeline, passing dataset and model parameters.
+5. **Track** — monitor the run via the OpenShift AI dashboard or the DSPA / KFP v2 API.
+
+Training steps inside the pipeline run as PyTorchJob workers launched by the pipeline component.
+
+### What `oc exec` is — and is not
+
+`oc exec` (running commands directly inside existing pods) is a **diagnostic tool only**.
+It is not a pipeline engine and not the product execution path.
+
+- Use `oc exec` to inspect the workbench pod or a running training pod for debugging.
+- Do **not** use `oc exec` to launch training runs in production.
+- Do **not** use `oc exec` in tests as a substitute for the DSPA pipeline submission path.
 
 ---
 
@@ -76,12 +97,19 @@ Tests never write to S3 unless explicitly authorised.
 | 0 | oc access + namespace checks | Implemented | `test_00_oc_access.py` |
 | 1 | Argo-managed substrate verification | Implemented | `test_01_cluster_prereqs.py` |
 | 2 | Decorated pipeline compile | Implemented | `test_02_pipeline_compile.py` |
-| 3 | OpenShift Pipelines smoke run | Future / xfail | `test_03_pipeline_smoke_run.py` |
+| 3 | DSPA/KFP v2 pipeline import + run smoke | Future / xfail | `test_03_pipeline_smoke_run.py` |
+| 3d | DSPA/KFP v2 runtime discovery (read-only) | Implemented | `test_03_dspa_runtime_discovery.py` |
 | 3b | Training container batch/v1 Job smoke | Implemented | `test_03b_training_job_smoke.py` |
 | 4 | PyTorchJob / two-node smoke | Future / xfail | `test_04_pytorchjob_smoke.py` |
 | 5 | S3-backed checkpoint/resume | Future | — |
 | 6 | Scaled training validation | Future | — |
 | 7 | Bank-data adapter validation | Future | — |
+
+> **Level 3b warning:** The training job smoke proves the PRAGMA training image
+> and command execute correctly inside the cluster. It does **not** prove OpenShift AI
+> Pipelines runtime. The image executes as a standalone `batch/v1 Job`, not as a
+> DSPA-managed pipeline run. Level 3d (discovery) maps the DSPA seam. Level 3
+> (future) will prove end-to-end pipeline runtime via the DSPA API.
 
 ---
 
@@ -200,6 +228,28 @@ PRAGMA_TEST_NAMESPACE=pragma-encoder \
 pytest tests/openshift/test_00_oc_access.py \
        tests/openshift/test_01_cluster_prereqs.py \
        tests/openshift/test_02_pipeline_compile.py -q
+```
+
+### DSPA/KFP v2 runtime discovery (Level 3d, read-only, cluster needed)
+
+Discovers DSPA objects, pods, services, routes, and candidate KFP endpoints.
+Does not create any resources. Does not attempt pipeline submission.
+
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+pytest tests/openshift/test_03_dspa_runtime_discovery.py -v
+```
+
+### Full read-only suite including DSPA discovery (Levels 0–2, 3d)
+
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+pytest tests/openshift/test_00_oc_access.py \
+       tests/openshift/test_01_cluster_prereqs.py \
+       tests/openshift/test_02_pipeline_compile.py \
+       tests/openshift/test_03_dspa_runtime_discovery.py -v
 ```
 
 ### With optional substrate checks
@@ -349,6 +399,32 @@ in the environment). Only unit tests run.
 - `test_generated_pipeline_yaml_exists_after_compile` — YAML is non-empty
 - `test_generated_pipeline_yaml_contains_expected_stages` — all 5 stages present
 - `test_compile_does_not_require_oc_or_cluster` — monkeypatched safety check
+
+### Level 3d — DSPA/KFP v2 runtime discovery (read-only, no cluster mutation)
+
+All tests are read-only. No resources are created. Cluster access required.
+
+**`TestDSPAObjectDiscovery`**:
+- `test_dspa_object_discovered` — finds DataSciencePipelinesApplication(s) in namespace; reports name, API version, and dspVersion
+
+**`TestDSPAPodsRunning`**:
+- `test_dspa_pods_running` — finds all `ds-pipeline-*` pods, asserts all are Running/Ready; reports pod names and phases
+
+**`TestDSPAServicesDiscovery`**:
+- `test_dspa_services_discovered` — finds services with KFP API port (8888); asserts at least one candidate exists
+
+**`TestDSPARoutesDiscovery`**:
+- `test_dspa_routes_discovered` — finds routes with `ds-pipeline` prefix; reports external HTTPS endpoints; skips if none found
+
+**`TestKFPSDK`**:
+- `test_kfp_sdk_import_optional` — passes if kfp is installed and reports version; skips if not installed
+- `test_compiled_pipeline_yaml_exists_or_can_be_generated` — if kfp installed, compiles decorated pipeline to temp YAML and asserts non-empty; skips if kfp not installed
+
+**`TestKFPEndpointDiscovery`**:
+- `test_kfp_client_candidate_endpoint_documented` — documents candidate in-cluster and external KFP endpoints from discovered services/routes; does not attempt connection
+
+**`TestDSPARuntimeFuture`**:
+- `test_dspa_runtime_submission_marked_future` — xfail: pipeline upload/run submission not yet implemented; marks the known gap
 
 ### Level 3b — Training container smoke (opt-in, creates cluster resources)
 
