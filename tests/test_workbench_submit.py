@@ -661,6 +661,7 @@ class TestSubmitNoSideEffects:
 
         # Patch _submit to raise if called — it must NOT be called by compile().
         import importlib as _importlib
+
         import src.workbench._submit as submit_mod
         kfp_available = _importlib.util.find_spec("kfp") is not None
         with mock.patch.object(
@@ -669,8 +670,8 @@ class TestSubmitNoSideEffects:
             if kfp_available:
                 # kfp is installed: compile() should succeed without calling _submit.
                 # If make_kfp_client is called, AssertionError propagates — test fails.
-                import tempfile
                 import os
+                import tempfile
                 with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
                     tmp_path = tmp.name
                 try:
