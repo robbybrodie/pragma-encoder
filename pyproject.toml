@@ -14,7 +14,7 @@ license = {text = "Apache-2.0"}
 # kfp is optional: pipeline components and pragma_pipeline.py import it
 # conditionally (_KFP_AVAILABLE guard). Core training and the workbench API
 # work without kfp installed.
-workbench = ["kfp>=2"]
+workbench = ["kfp>=2", "kfp-kubernetes>=1.2"]
 
 [tool.mypy]
 strict = true
@@ -48,5 +48,7 @@ ignore = ["N806", "N812"]
 [tool.ruff.lint.per-file-ignores]
 # Test files use pytest.importorskip("torch") before src imports, which is the
 # standard pattern for skipping entire modules when torch is unavailable.
-# E402 (module import not at top) is intentional here.
+# E402 (module-level import not at top) is intentional here.
 "tests/test_*.py" = ["E402"]
+# The IBM TabFormer smoke CSV header is a fixed-format string that cannot be wrapped.
+"src/data/adapters/ibm_tabformer_smoke.py" = ["E501"]

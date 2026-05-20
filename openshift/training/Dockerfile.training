@@ -1,0 +1,83 @@
+# PRAGMA training image — extends workbench image with source code baked in.
+#
+# The Level 3b smoke test (tests/openshift/test_03b_training_job_smoke.py)
+# requires PRAGMA_TRAINING_IMAGE to be built from this Dockerfile.
+#
+# The smoke test validates at runtime that:
+#   scripts/train_pragma.py  — present at WORKDIR
+#   src/data/fit_tokenizer.py — present at WORKDIR
+#   python -c "import src.workbench" — succeeds from WORKDIR
+#
+# A dependency-only image (e.g. the workbench notebook image alone) will
+# fail the smoke with a clear error message and a reference to this file.
+#
+# -----------------------------------------------------------------------
+# Build via oc new-build (recommended — uses cluster internal registry):
+#
+#   # One-time setup (creates ImageStream and kick off build):
+#   oc new-build --strategy=docker \
+#     --binary \
+#     --name=pragma-encoder-training \
+#     -n pragma-encoder
+#
+#   # Build and push (run from repo root):
+#   oc start-build pragma-encoder-training \
+#     --from-dir=. \
+#     --follow \
+#     -n pragma-encoder
+#
+#   # Verify:
+#   oc get istag pragma-encoder-training:latest -n pragma-encoder
+#
+#   # Set for smoke test:
+#   export PRAGMA_TRAINING_IMAGE=\
+#     image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
+#
+# -----------------------------------------------------------------------
+# Build locally with Podman (requires pull access to internal registry):
+#
+#   podman build -f openshift/training/Dockerfile.training \
+#     -t image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest \
+#     .
+#   podman push image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
+#
+# -----------------------------------------------------------------------
+# Base image:
+#   The workbench image provides the full Python runtime:
+#     - Python 3.x (matching cluster Python version)
+#     - PyTorch, pandas, boto3, and all PRAGMA dependencies from requirements.txt
+#     - git (used by init containers in PyTorchJob)
+#
+# WORKDIR:
+#   Inherited from the base image (/opt/app-root/src).
+#   src/ and scripts/ are placed at WORKDIR so the smoke test can reference
+#   them as relative paths without cd or PYTHONPATH manipulation.
+#
+# Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
+FROM image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+
+# Copy PRAGMA source code into the image at WORKDIR.
+# WORKDIR is /opt/app-root/src (inherited from S2I base).
+# --chown=1001:0 matches the S2I base image's uid:gid convention so the
+# build's RUN steps (which execute as UID 1001) can read the copied files.
+# After this COPY:
+#   scripts/train_pragma.py        -> accessible as 'scripts/train_pragma.py'
+#   src/data/fit_tokenizer.py      -> accessible as 'src/data/fit_tokenizer.py'
+#   python -c "import src.workbench" succeeds from WORKDIR
+COPY --chown=1001:0 src/ src/
+COPY --chown=1001:0 scripts/ scripts/
+COPY --chown=1001:0 pyproject.toml pyproject.toml
+
+# Ensure all copied source files are world-readable.
+# OpenShift's restricted-v2 SCC assigns a random UID from the namespace's
+# UID range (not 1001). Source files in the repo may have mode 600 (owner-only
+# read) if created by certain editors. COPY preserves the source mode, so a
+# 600 file remains 600 even after --chown. Since the pod UID differs from
+# the file owner (1001), Python's import mechanism gets PermissionError.
+# a+rX: add read to all (a+r) and execute only to directories (X, not x).
+RUN chmod -R a+rX src/ scripts/
+
+# Verify source code is importable from WORKDIR at build time.
+# This catches missing __init__.py files, broken imports, or incomplete
+# COPY instructions at image build time rather than at job runtime.
+RUN python -c "import src.model; import src.data; import src.workbench; print('PRAGMA source imports OK')"

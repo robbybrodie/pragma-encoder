@@ -7,7 +7,8 @@ Each adapter handles one dataset source format. The adapter:
   4. Returns a DatasetManifest describing the prepared dataset.
 
 Registered adapters:
-    "ibm-tabformer" → IBMTabFormerAdapter (IBM TabFormer synthetic credit-card CSV)
+    "ibm-tabformer"       → IBMTabFormerAdapter       (IBM TabFormer CSV; requires real data + S3)
+    "ibm-tabformer-smoke" → IBMTabFormerSmokeAdapter  (synthetic 15-row CSV; no S3; KFP smoke only)
 
 Adding a new adapter (e.g. bank transaction Parquet):
     1. Create src/data/adapters/bank_txn.py implementing DatasetAdapterProtocol.
@@ -21,9 +22,11 @@ ADR: docs/decisions/003-workbench-training-api.md
 
 from .base import DatasetAdapterProtocol
 from .ibm_tabformer import IBMTabFormerAdapter
+from .ibm_tabformer_smoke import IBMTabFormerSmokeAdapter
 
 _REGISTRY: dict[str, type] = {
     "ibm-tabformer": IBMTabFormerAdapter,
+    "ibm-tabformer-smoke": IBMTabFormerSmokeAdapter,
 }
 
 
@@ -44,4 +47,9 @@ def get_adapter(dataset_name: str) -> type:
     return _REGISTRY[dataset_name]
 
 
-__all__ = ["DatasetAdapterProtocol", "IBMTabFormerAdapter", "get_adapter"]
+__all__ = [
+    "DatasetAdapterProtocol",
+    "IBMTabFormerAdapter",
+    "IBMTabFormerSmokeAdapter",
+    "get_adapter",
+]

@@ -28,6 +28,8 @@ ADR: docs/decisions/003-workbench-training-api.md
 # KFP optional import guard
 # ---------------------------------------------------------------------------
 
+import os
+
 try:
     from kfp import dsl as _dsl
     _KFP_AVAILABLE: bool = True
@@ -56,9 +58,36 @@ PIPELINE_STAGE_NAMES: tuple[str, ...] = (
     "export",    # Upload model checkpoints and outputs to S3
 )
 
-_BASE_IMAGE = (
+# ---------------------------------------------------------------------------
+# Component base image
+#
+# KFP component pods do NOT inherit the workbench pod's git checkout.
+# The component image must contain PRAGMA source code (src/) and all
+# Python dependencies.  The PRAGMA training image is the correct choice —
+# it is built from openshift/training/Dockerfile.training with src/ baked in.
+#
+# Override at compile time via env var (read once at module import):
+#   PRAGMA_KFP_COMPONENT_IMAGE — explicit override (highest priority)
+#   PRAGMA_TRAINING_IMAGE      — training image URI (fallback)
+#
+# Do NOT use the workbench image (pragma-encoder-workbench) — it is a
+# deps-only image without PRAGMA source code. KFP component pods would fail
+# with ModuleNotFoundError: No module named 'src'.
+#
+# Do NOT use runtime source cloning — not the default pattern.
+# ---------------------------------------------------------------------------
+
+_DEFAULT_COMPONENT_IMAGE = (
     "image-registry.openshift-image-registry.svc:5000"
-    "/pragma-encoder/pragma-encoder-workbench:latest"
+    "/pragma-encoder/pragma-encoder-training:latest"
+)
+
+# Read env var at import time — KFP @dsl.component captures base_image
+# at decoration time, so the env var must be set before this module is imported.
+_BASE_IMAGE: str = (
+    os.environ.get("PRAGMA_KFP_COMPONENT_IMAGE")
+    or os.environ.get("PRAGMA_TRAINING_IMAGE")
+    or _DEFAULT_COMPONENT_IMAGE
 )
 
 
@@ -130,26 +159,27 @@ def upload_artifacts(
 ) -> str:
     """Upload prepared artifacts to S3 (idempotent).
 
-    Reads the DatasetManifest at manifest_uri and uploads all shards and the
-    vocabulary file to S3.  Idempotent: re-running does not corrupt existing
-    data.
+    If manifest_uri is already an S3 URI (starts with 's3://'), the artifacts
+    are assumed to be in place — returns manifest_uri unchanged.
+
+    If manifest_uri is a local path (e.g. from ibm-tabformer-smoke), there is
+    nothing durable to upload; returns manifest_uri unchanged.  Full S3 upload
+    (reading shards from manifest, uploading via boto3) is a future milestone.
 
     S3 credentials come from the pragma-workbench-env Secret only
     (openshift-storage-pattern.md rule 4).
 
     Args:
-        manifest_uri: S3 prefix URI returned by prepare_dataset.
+        manifest_uri: Prefix URI returned by prepare_dataset (S3 or local).
         bucket:       Override S3 bucket name.  Defaults to the value of
                       MODEL_REGISTRY_BUCKET environment variable.
 
     Returns:
         manifest_uri: The same manifest_uri (passed to downstream stages).
     """
-    raise NotImplementedError(
-        "upload_artifacts: upload prepared artifacts from manifest_uri to S3. "
-        "S3 credentials from pragma-workbench-env Secret "
-        "(MODEL_REGISTRY_ENDPOINT_URL / MODEL_REGISTRY_BUCKET)."
-    )
+    # Pass-through: downstream stages receive the same manifest_uri.
+    # Full S3 upload implementation is a future milestone (see docs/tech-debt.md).
+    return manifest_uri
 
 
 # ---------------------------------------------------------------------------
@@ -187,11 +217,13 @@ def submit_pytorchjob(
     Returns:
         job_name: The submitted PyTorchJob name (for monitoring).
     """
-    raise NotImplementedError(
-        "submit_pytorchjob: apply the correct PyTorchJob manifest via oc apply. "
-        "nodes=1 -> pytorchjob-pragma-s.yaml; "
-        "nodes=2 -> pytorchjob-pragma-s-2node.yaml."
-    )
+    import os as _os
+    # Smoke stub: return a synthetic job name.
+    # Real implementation: apply pytorchjob-pragma-{s,m,l}.yaml via kubernetes API.
+    # nodes=1 -> pytorchjob-pragma-s.yaml; nodes=2 -> pytorchjob-pragma-s-2node.yaml.
+    # PyTorchJob submission is a future milestone — do not implement here.
+    _run_id = _os.environ.get("KFP_RUN_ID", "smoke")
+    return f"pragma-{model_size.lower()}-{_run_id[:8]}"
 
 
 # ---------------------------------------------------------------------------
@@ -238,10 +270,11 @@ def run_pretraining(
         raise ValueError(
             f"model_size must be 'S', 'M', or 'L', got {model_size!r}"
         )
-    raise NotImplementedError(
-        "run_pretraining: monitor PyTorchJob and return checkpoint URI. "
-        "Working training entrypoint: scripts/train_pragma.py."
-    )
+    # Smoke stub: return a synthetic checkpoint URI.
+    # Real implementation: monitor PyTorchJob until completion, then return S3 URI.
+    # Working training entrypoint: scripts/train_pragma.py (PyTorchJob pod).
+    # PyTorchJob monitoring is a future milestone — do not implement here.
+    return f"{manifest_uri}/checkpoint_epoch0001.pt"
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +302,8 @@ def export_checkpoint(
     Returns:
         export_uri: S3 URI of the exported model directory.
     """
-    raise NotImplementedError(
-        "export_checkpoint: copy checkpoint to S3 canonical export prefix "
-        "and return the export URI. "
-        "Format: pragma-encoder/checkpoints/pragma-{s,m,l}/checkpoint_epoch<NNNN>.pt"
-    )
+    # Smoke stub: return a synthetic export URI.
+    # Real implementation: copy checkpoint_uri to S3 canonical export prefix via boto3.
+    # Format: pragma-encoder/checkpoints/pragma-{s,m,l}/checkpoint_epoch<NNNN>.pt
+    # S3 export is a future milestone — do not implement here.
+    return f"{export_prefix}pragma-{model_size.lower()}/{checkpoint_uri.rsplit('/', 1)[-1]}"
