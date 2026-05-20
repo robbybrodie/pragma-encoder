@@ -50,3 +50,5 @@ ignore = ["N806", "N812"]
 # standard pattern for skipping entire modules when torch is unavailable.
 # E402 (module-level import not at top) is intentional here.
 "tests/test_*.py" = ["E402"]
+# The IBM TabFormer smoke CSV header is a fixed-format string that cannot be wrapped.
+"src/data/adapters/ibm_tabformer_smoke.py" = ["E501"]
