@@ -36,7 +36,6 @@ from src.model.assembler import EmbeddingAssembler
 from src.tokenizer.vocabulary import VocabularySpec
 from src.training.readiness import make_readiness_report
 
-
 # ---------------------------------------------------------------------------
 # Tiny config for convergence tests — fast, deterministic, no GPU needed
 # ---------------------------------------------------------------------------
