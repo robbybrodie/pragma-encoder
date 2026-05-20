@@ -11,10 +11,12 @@ requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 
 [project.optional-dependencies]
-# kfp is optional: pipeline components and pragma_pipeline.py import it
-# conditionally (_KFP_AVAILABLE guard). Core training and the workbench API
-# work without kfp installed.
-workbench = ["kfp>=2"]
+# kfp and kfp-kubernetes are optional: only needed in the workbench/compile
+# environment. Core training and the workbench API work without them installed.
+# kfp-kubernetes: Kubernetes-native KFP features (secret injection, PVC mount,
+#   tolerations). Used at pipeline compile time only — not in component pods.
+#   See docs/openshift-image-contract.md.
+workbench = ["kfp>=2", "kfp-kubernetes>=1.2"]
 
 [tool.mypy]
 strict = true

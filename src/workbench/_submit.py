@@ -73,6 +73,49 @@ _SUCCESS_RUN_STATES: frozenset[str] = frozenset({"SUCCEEDED"})
 
 
 # ---------------------------------------------------------------------------
+# _require_kfp_kubernetes — guard for optional kfp-kubernetes dependency
+# ---------------------------------------------------------------------------
+
+
+def _require_kfp_kubernetes(feature: str = "Kubernetes secret injection") -> object:
+    """Return the kfp_kubernetes module, or raise a friendly ImportError if absent.
+
+    This guard is ONLY called when a kfp-kubernetes feature is explicitly
+    requested by the caller (e.g. secret injection, PVC mounting).
+    It is never called at module import time.
+
+    Args:
+        feature: Human-readable name of the feature requiring kfp-kubernetes.
+                 Included in the error message so callers get actionable output.
+
+    Returns:
+        The kfp_kubernetes module object.
+
+    Raises:
+        ImportError: If kfp_kubernetes is not importable, with install instructions.
+
+    Usage (inside a function that uses kfp-kubernetes, not at module level)::
+
+        def attach_secret(pipeline_task, secret_name: str) -> None:
+            kfp_kubernetes = _require_kfp_kubernetes("secret injection")
+            kfp_kubernetes.use_secret_as_env(pipeline_task, secret_name=secret_name)
+    """
+    try:
+        import kfp_kubernetes  # noqa: PLC0415
+        return kfp_kubernetes
+    except ImportError as exc:
+        raise ImportError(
+            f"kfp-kubernetes is required for {feature}. "
+            "Install the PRAGMA workbench extras:\n"
+            "    pip install 'pragma-encoder[workbench]'\n"
+            "or install directly:\n"
+            "    pip install 'kfp-kubernetes>=1.2'\n"
+            "The PRAGMA workbench image already includes kfp-kubernetes. "
+            "See docs/openshift-image-contract.md."
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
 # get_dspa_endpoint
 # ---------------------------------------------------------------------------
 
