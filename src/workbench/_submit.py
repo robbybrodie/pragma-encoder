@@ -86,7 +86,7 @@ def get_dspa_endpoint(
                         /var/run/secrets/kubernetes.io/serviceaccount/namespace.
 
     Returns:
-        http://ds-pipeline-pipelines-definition.<namespace>.svc.cluster.local:8888
+        https://ds-pipeline-pipelines-definition.<namespace>.svc.cluster.local:8888
 
     Raises:
         RuntimeError: When no namespace source is available and
@@ -129,7 +129,7 @@ def get_dspa_endpoint(
             f"  {_DEFAULT_SA_NAMESPACE_PATH}"
         )
 
-    return f"http://{_DSPA_SERVICE}.{ns}.svc.cluster.local:{_KFP_PORT}"
+    return f"https://{_DSPA_SERVICE}.{ns}.svc.cluster.local:{_KFP_PORT}"
 
 
 # ---------------------------------------------------------------------------
@@ -245,8 +245,8 @@ def make_kfp_client(endpoint: str, token: str | None = None):  # type: ignore[re
         ) from exc
 
     if token is not None:
-        return kfp.Client(host=endpoint, existing_token=token)
-    return kfp.Client(host=endpoint)
+        return kfp.Client(host=endpoint, existing_token=token, verify_ssl=False)
+    return kfp.Client(host=endpoint, verify_ssl=False)
 
 
 # ---------------------------------------------------------------------------
@@ -315,14 +315,23 @@ def submit_pipeline_run(
         run_id string from the DSPA response. Use this to track the run
         via the OpenShift AI dashboard or the KFP v2 API.
     """
-    kwargs: dict = {
-        "pipeline_id": pipeline_id,
-        "run_name": run_name,
-    }
-    if arguments is not None:
-        kwargs["arguments"] = arguments
-    if experiment_name is not None:
-        kwargs["experiment_name"] = experiment_name
+    # Resolve version_id — kfp v2 run_pipeline() requires both pipeline_id and version_id.
+    versions = client.list_pipeline_versions(pipeline_id=pipeline_id)
+    version_id = versions.pipeline_versions[0].pipeline_version_id
 
-    response = client.create_run_from_pipeline_package(**kwargs)
+    # Resolve or create experiment — run_pipeline() requires an experiment_id.
+    name = experiment_name or "Default"
+    try:
+        exp = client.get_experiment(experiment_name=name)
+    except Exception:  # noqa: BLE001
+        exp = client.create_experiment(name=name)
+    experiment_id = exp.experiment_id
+
+    response = client.run_pipeline(
+        experiment_id=experiment_id,
+        job_name=run_name,
+        pipeline_id=pipeline_id,
+        version_id=version_id,
+        params=arguments,
+    )
     return response.run_id

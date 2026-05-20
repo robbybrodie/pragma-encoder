@@ -97,7 +97,7 @@ Tests never write to S3 unless explicitly authorised.
 | 0 | oc access + namespace checks | Implemented | `test_00_oc_access.py` |
 | 1 | Argo-managed substrate verification | Implemented | `test_01_cluster_prereqs.py` |
 | 2 | Decorated pipeline compile | Implemented | `test_02_pipeline_compile.py` |
-| 3 | DSPA/KFP v2 pipeline import + run smoke | Future / xfail | `test_03_pipeline_smoke_run.py` |
+| 3 | DSPA/KFP v2 pipeline import + run smoke | Implemented | `test_03_pipeline_smoke_run.py` |
 | 3d | DSPA/KFP v2 runtime discovery (read-only) | Implemented | `test_03_dspa_runtime_discovery.py` |
 | 3e | KFP/DSPA client connectivity probe | Implemented | `test_03e_kfp_client_probe.py` |
 | 3b | Training container batch/v1 Job smoke | Implemented | `test_03b_training_job_smoke.py` |
@@ -296,7 +296,9 @@ PRAGMA_TEST_NAMESPACE=pragma-encoder \
 pytest tests/openshift/test_03e_kfp_client_probe.py -v
 ```
 
-### Future: OpenShift Pipeline smoke (Level 3, xfail until implemented)
+### OpenShift Pipeline smoke (Level 3 — run from inside workbench pod)
+
+Proven working. Requires `kfp` installed and in-cluster network (run from workbench pod).
 
 ```bash
 RUN_OPENSHIFT_TESTS=1 \
@@ -434,6 +436,21 @@ in the environment). Only unit tests run.
 - `test_generated_pipeline_yaml_contains_expected_stages` — all 5 stages present
 - `test_compile_does_not_require_oc_or_cluster` — monkeypatched safety check
 
+### Level 3 — DSPA/KFP v2 pipeline upload + run creation (opt-in, run from inside workbench pod)
+
+Gated by `RUN_OPENSHIFT_PIPELINE_SMOKE=1`. Requires in-cluster network access.
+Proven working against OpenShift AI DSPA (kfp 2.7.0, SA token auth, HTTPS port 8888).
+
+Implementation: `src/workbench/_submit.py`
+  - `get_dspa_endpoint()` — resolves `https://ds-pipeline-pipelines-definition.<ns>.svc.cluster.local:8888`
+  - `make_kfp_client()` — `kfp.Client(host=..., verify_ssl=False)` for self-signed cert
+  - `upload_pipeline()` — uploads KFP v2 YAML; returns `pipeline_id`
+  - `submit_pipeline_run()` — resolves `version_id` via `list_pipeline_versions()`, resolves/creates experiment, calls `run_pipeline()`
+
+**`TestOpenShiftPipelineSmoke`**:
+- `test_pipeline_smoke_upload_and_run` — compiles PRAGMA-S pipeline, uploads to DSPA, creates run; asserts `pipeline_id` and `run_id` returned
+- `test_pipeline_compile_produces_valid_yaml` — compile-only check (no cluster required)
+
 ### Level 3d — DSPA/KFP v2 runtime discovery (read-only, no cluster mutation)
 
 All tests are read-only. No resources are created. Cluster access required.
@@ -458,7 +475,7 @@ All tests are read-only. No resources are created. Cluster access required.
 - `test_kfp_client_candidate_endpoint_documented` — documents candidate in-cluster and external KFP endpoints from discovered services/routes; does not attempt connection
 
 **`TestDSPARuntimeFuture`**:
-- `test_dspa_runtime_submission_marked_future` — xfail: pipeline upload/run submission not yet implemented; marks the known gap
+- `test_dspa_runtime_submission_marked_future` — xfail boundary marker: Level 3d is discovery only; Level 3 pipeline upload/run is implemented (see above)
 
 ### Level 3e — KFP/DSPA client connectivity probe (opt-in, run from inside workbench pod)
 
@@ -508,12 +525,6 @@ Gated by `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1`. Also requires `PRAGMA_TRAINING_IM
 ---
 
 ## What Is Future / xfail
-
-### Level 3 — DSPA / KFP v2 pipeline runtime smoke
-`test_pipeline_smoke_run_future` — xfail. Submit a PRAGMA-S pipeline run via
-the OpenShift AI DSPA / KFP v2 API with `max_steps=1`, wait for completion,
-verify logs, cleanup labelled resources.
-Will xpass when DSPA pipeline submission is implemented in `src/workbench/`.
 
 ### Level 4 — PyTorchJob execution smoke
 `test_pytorchjob_two_node_smoke_future` — xfail. Apply two-node manifest with

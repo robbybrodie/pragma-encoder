@@ -601,40 +601,43 @@ class TestKFPEndpointDiscovery:
 
 
 class TestDSPARuntimeFuture:
-    """Level 3d: Explicitly mark pipeline submission as future / not implemented.
+    """Level 3d: Boundary marker — pipeline submission is Level 3, not Level 3d.
 
     This class exists to prevent any ambiguity: Level 3d is discovery only.
-    Actual pipeline run creation is Level 3 (test_03_pipeline_smoke_run.py)
-    and remains xfail until implemented.
+    Actual pipeline upload and run creation is Level 3 (test_03_pipeline_smoke_run.py),
+    which is now IMPLEMENTED and proven working on the cluster.
+
+    Level 3 implementation proven:
+      - src/workbench/_submit.py: get_dspa_endpoint, make_kfp_client,
+        upload_pipeline, submit_pipeline_run
+      - Endpoint: https://ds-pipeline-pipelines-definition.<ns>.svc.cluster.local:8888
+      - Auth: SA token (verify_ssl=False for self-signed cert)
+      - kfp 2.7.0 API: upload_pipeline → list_pipeline_versions → run_pipeline
     """
 
     @pytest.mark.xfail(
         reason=(
-            "DSPA / KFP v2 pipeline upload and run creation are not implemented yet. "
-            "Level 3d (this file) is discovery only: it maps the substrate and "
+            "Level 3d (this file) is discovery only — it maps the substrate and "
             "documents candidate endpoints without creating resources. "
-            "Implement pipeline submission in src/workbench/ targeting the DSPA API "
-            "(http://<service>:<8888>/apis/v2beta1/ in-cluster, or the external "
-            "HTTPS route with OAuth token). "
-            "This test will xpass when the DSPA submission path is implemented."
+            "Level 3 pipeline upload + run creation is IMPLEMENTED in "
+            "src/workbench/_submit.py and proven in test_03_pipeline_smoke_run.py. "
+            "This placeholder remains xfail to preserve the Level 3d / Level 3 boundary."
         ),
         strict=False,
     )
     def test_dspa_runtime_submission_marked_future(
         self, test_namespace: str
     ) -> None:
-        """Placeholder: pipeline upload/run creation not yet implemented.
+        """Boundary marker: Level 3d is discovery only; Level 3 is implemented.
 
-        This test exists to make the gap visible in the test report.
-        It is intentionally xfail — do not fake success.
+        Level 3 (pipeline upload + run creation) is now implemented in
+        src/workbench/_submit.py and proven via test_03_pipeline_smoke_run.py.
 
-        When DSPA submission is implemented:
-          1. Upload compiled KFP v2 YAML to DSPA via the KFP v2 API.
-          2. Create a pipeline run with max_steps=1.
-          3. Wait for completion. Verify logs. Clean up.
-          The test in test_03_pipeline_smoke_run.py will xpass first.
+        This test remains xfail to mark the Level 3d / Level 3 boundary cleanly.
+        Level 3d tests (this file) never create resources. Level 3 tests do.
         """
         pytest.xfail(
-            "DSPA / KFP v2 pipeline upload + run creation not implemented. "
-            "Discovery only at this level. See test_03_pipeline_smoke_run.py."
+            "Level 3d is discovery only. "
+            "Level 3 pipeline upload + run creation is implemented — "
+            "see test_03_pipeline_smoke_run.py."
         )

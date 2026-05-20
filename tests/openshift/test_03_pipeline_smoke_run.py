@@ -57,6 +57,8 @@ import socket
 import urllib.error
 import urllib.request
 
+import ssl
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -87,14 +89,21 @@ _KFP_API_BASE_PATH = "/apis/v2beta1"
 
 
 def _endpoint_reachable(endpoint: str, timeout: int = 5) -> bool:
-    """Return True if the KFP API endpoint is reachable via HTTP."""
+    """Return True if the KFP API endpoint is reachable (HTTP or HTTPS).
+
+    Uses an unverified SSL context because the in-cluster DSPA service uses
+    a self-signed TLS certificate on port 8888.
+    """
     health_url = f"{endpoint}{_KFP_API_BASE_PATH}/healthz"
     req = urllib.request.Request(health_url, method="GET")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
     try:
-        urllib.request.urlopen(req, timeout=timeout)
+        urllib.request.urlopen(req, timeout=timeout, context=ctx)
         return True
     except urllib.error.HTTPError:
-        return True  # HTTP error means TCP worked; endpoint is reachable
+        return True  # HTTP error means TCP + TLS worked; endpoint is reachable
     except (ConnectionRefusedError, OSError, socket.timeout, urllib.error.URLError):
         return False
 
@@ -261,7 +270,7 @@ class TestOpenShiftPipelineSmoke:
                 client=client,
                 pipeline_id=pipeline_id,
                 run_name=run_name,
-                arguments={"model_size": "S", "max_steps": 1},
+                arguments={"dataset_name": "ibm-tabformer", "model_size": "S"},
                 experiment_name="pragma-smoke",
             )
         except Exception as exc:  # noqa: BLE001

@@ -66,7 +66,7 @@ _KFP_PORT = 8888
 
 _DEFAULT_NAMESPACE = "pragma-encoder"
 _EXPECTED_ENDPOINT = (
-    f"http://{_DSPA_SERVICE}.{_DEFAULT_NAMESPACE}.svc.cluster.local:{_KFP_PORT}"
+    f"https://{_DSPA_SERVICE}.{_DEFAULT_NAMESPACE}.svc.cluster.local:{_KFP_PORT}"
 )
 
 
@@ -183,23 +183,23 @@ class TestGetDSPAEndpoint:
 
         result = get_dspa_endpoint(namespace="my-ns")
 
-        expected = f"http://{_DSPA_SERVICE}.my-ns.svc.cluster.local:{_KFP_PORT}"
+        expected = f"https://{_DSPA_SERVICE}.my-ns.svc.cluster.local:{_KFP_PORT}"
         assert result == expected
 
-    def test_endpoint_starts_with_http(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Constructed endpoint must always use http:// (not https://).
+    def test_endpoint_starts_with_https(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Constructed endpoint must always use https://.
 
-        Port 8888 is the direct KFP API server, no TLS. External HTTPS
-        routes are not the target of the submit path.
+        Port 8888 on the in-cluster DSPA service uses TLS (self-signed cert).
+        kfp.Client is constructed with verify_ssl=False to bypass cert validation.
         """
         monkeypatch.setenv("PRAGMA_DSPA_NAMESPACE", _DEFAULT_NAMESPACE)
         monkeypatch.delenv("PRAGMA_DSPA_ENDPOINT", raising=False)
 
         result = get_dspa_endpoint()
 
-        assert result.startswith("http://"), (
-            f"Endpoint must use http://, got {result!r}. "
-            "Port 8888 is the direct KFP API server (no OAuth proxy)."
+        assert result.startswith("https://"), (
+            f"Endpoint must use https://, got {result!r}. "
+            "Port 8888 uses TLS (self-signed cert); use verify_ssl=False in kfp.Client."
         )
 
     def test_endpoint_contains_kfp_port(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -394,7 +394,7 @@ class TestMakeKFPClient:
 
         client = make_kfp_client(endpoint=_EXPECTED_ENDPOINT, token=None)
 
-        mock_kfp.Client.assert_called_once_with(host=_EXPECTED_ENDPOINT)
+        mock_kfp.Client.assert_called_once_with(host=_EXPECTED_ENDPOINT, verify_ssl=False)
         assert client is mock_kfp.Client.return_value
 
     def test_constructs_client_with_token(
@@ -414,6 +414,7 @@ class TestMakeKFPClient:
         mock_kfp.Client.assert_called_once_with(
             host=_EXPECTED_ENDPOINT,
             existing_token=token,
+            verify_ssl=False,
         )
 
     def test_client_token_not_in_call_repr(
@@ -526,11 +527,23 @@ class TestSubmitPipelineRun:
     """submit_pipeline_run() wraps kfp run creation."""
 
     def _make_client_mock(self, run_id: str = "test-run-id") -> mock.MagicMock:
-        """Return a mock kfp.Client with create_run pre-configured."""
+        """Return a mock kfp.Client with run_pipeline, experiment, and version mocks."""
         client = mock.MagicMock(name="kfp.Client")
         run_response = mock.MagicMock()
         run_response.run_id = run_id
-        client.create_run_from_pipeline_package.return_value = run_response
+        # run_pipeline is the kfp v2 method used by submit_pipeline_run()
+        client.run_pipeline.return_value = run_response
+        # Pipeline version resolution mock (kfp v2 requires version_id)
+        version = mock.MagicMock()
+        version.pipeline_version_id = "test-version-id"
+        versions_response = mock.MagicMock()
+        versions_response.pipeline_versions = [version]
+        client.list_pipeline_versions.return_value = versions_response
+        # Experiment resolution mocks
+        exp = mock.MagicMock()
+        exp.experiment_id = "test-experiment-id"
+        client.get_experiment.return_value = exp
+        client.create_experiment.return_value = exp
         return client
 
     def test_calls_create_run_with_pipeline_id(self) -> None:
