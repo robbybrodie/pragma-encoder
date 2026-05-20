@@ -133,6 +133,7 @@ Tests never write to S3 unless explicitly authorised.
 | `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset / `pragma-registry`) | Name of the image pull Secret. Level 1: test verifies existence only (no data access). Level 3b: used as `imagePullSecrets` in the smoke Job pod spec; defaults to `pragma-registry` if unset. |
 | `RUN_TEKTON_TESTS=1` | (unset) | Opt-in for Tekton CRD checks (Level 1) and Tekton cleanup. Off by default — this environment uses DSPA / KFP v2. Enable only when validating a cluster with Tekton installed as an alternate runtime. |
 | `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 DSPA / KFP v2 pipeline smoke tests. |
+| `PRAGMA_KFP_COMPONENT_IMAGE` | (unset) | Component base image for KFP pipeline pods. Overrides `PRAGMA_TRAINING_IMAGE`. KFP component pods do NOT inherit the workbench pod's git checkout — the image must contain PRAGMA source code (src/) and all Python dependencies. Build from `openshift/training/Dockerfile.training`. |
 | `RUN_DSPA_CLIENT_PROBE=1` | (unset) | Opt-in for Level 3e KFP/DSPA client connectivity probe. Run from inside the PRAGMA workbench pod. If set, kfp SDK must be installed (FAIL, not skip, when missing). |
 | `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1` | (unset) | Opt-in for Level 3b training container smoke. Requires `PRAGMA_TRAINING_IMAGE`. |
 | `PRAGMA_TRAINING_IMAGE` | (unset) | Image URI for the Level 3b batch/v1 Job smoke. Must be built from `openshift/training/Dockerfile.training` with `src/` and `scripts/` baked in at WORKDIR. |
@@ -298,13 +299,22 @@ pytest tests/openshift/test_03e_kfp_client_probe.py -v
 
 ### OpenShift Pipeline smoke (Level 3 — run from inside workbench pod)
 
-Proven working. Requires `kfp` installed and in-cluster network (run from workbench pod).
+Requires `kfp` installed, in-cluster network access, and the PRAGMA training image.
+`PRAGMA_TRAINING_IMAGE` must be set so the compiled pipeline YAML embeds the training
+image as the component base image. Component pods do not inherit the workbench git checkout.
 
 ```bash
 RUN_OPENSHIFT_TESTS=1 \
 RUN_OPENSHIFT_PIPELINE_SMOKE=1 \
 PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest \
 pytest tests/openshift/test_03_pipeline_smoke_run.py -q
+```
+
+To override the component image independently from the PyTorchJob training image:
+```bash
+PRAGMA_KFP_COMPONENT_IMAGE=<custom-image> \
+...
 ```
 
 ### Training container smoke (Level 3b — requires built image)

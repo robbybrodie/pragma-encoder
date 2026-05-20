@@ -28,6 +28,8 @@ ADR: docs/decisions/003-workbench-training-api.md
 # KFP optional import guard
 # ---------------------------------------------------------------------------
 
+import os
+
 try:
     from kfp import dsl as _dsl
     _KFP_AVAILABLE: bool = True
@@ -56,9 +58,36 @@ PIPELINE_STAGE_NAMES: tuple[str, ...] = (
     "export",    # Upload model checkpoints and outputs to S3
 )
 
-_BASE_IMAGE = (
+# ---------------------------------------------------------------------------
+# Component base image
+#
+# KFP component pods do NOT inherit the workbench pod's git checkout.
+# The component image must contain PRAGMA source code (src/) and all
+# Python dependencies.  The PRAGMA training image is the correct choice —
+# it is built from openshift/training/Dockerfile.training with src/ baked in.
+#
+# Override at compile time via env var (read once at module import):
+#   PRAGMA_KFP_COMPONENT_IMAGE — explicit override (highest priority)
+#   PRAGMA_TRAINING_IMAGE      — training image URI (fallback)
+#
+# Do NOT use the workbench image (pragma-encoder-workbench) — it is a
+# deps-only image without PRAGMA source code. KFP component pods would fail
+# with ModuleNotFoundError: No module named 'src'.
+#
+# Do NOT use runtime source cloning — not the default pattern.
+# ---------------------------------------------------------------------------
+
+_DEFAULT_COMPONENT_IMAGE = (
     "image-registry.openshift-image-registry.svc:5000"
-    "/pragma-encoder/pragma-encoder-workbench:latest"
+    "/pragma-encoder/pragma-encoder-training:latest"
+)
+
+# Read env var at import time — KFP @dsl.component captures base_image
+# at decoration time, so the env var must be set before this module is imported.
+_BASE_IMAGE: str = (
+    os.environ.get("PRAGMA_KFP_COMPONENT_IMAGE")
+    or os.environ.get("PRAGMA_TRAINING_IMAGE")
+    or _DEFAULT_COMPONENT_IMAGE
 )
 
 

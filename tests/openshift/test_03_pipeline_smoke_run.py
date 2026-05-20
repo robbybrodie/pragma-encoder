@@ -36,15 +36,27 @@ Prerequisites (when enabled):
   - RUN_OPENSHIFT_TESTS=1
   - RUN_OPENSHIFT_PIPELINE_SMOKE=1
   - PRAGMA_TEST_NAMESPACE=<namespace>
+  - PRAGMA_TRAINING_IMAGE=<image-uri> (recommended: sets component base image at compile time)
+    Default: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
+    Override with PRAGMA_KFP_COMPONENT_IMAGE for a different component image.
   - kfp SDK installed (PRAGMA workbench notebook image includes kfp)
   - Running from inside the workbench pod (in-cluster endpoint required)
   - Level 0, 1, and 3d tests passing
   - DSPA instance healthy in PRAGMA_TEST_NAMESPACE
 
+Component image requirement:
+  KFP component pods do NOT inherit the workbench pod's git checkout.
+  The component image must contain PRAGMA source code (src/) and all Python
+  dependencies. The PRAGMA training image is the correct choice — it is built
+  from openshift/training/Dockerfile.training with src/ baked in at WORKDIR.
+  Setting PRAGMA_TRAINING_IMAGE before running this test ensures the compiled
+  pipeline YAML embeds the correct component image.
+
 Run from inside workbench pod:
   export RUN_OPENSHIFT_TESTS=1
   export RUN_OPENSHIFT_PIPELINE_SMOKE=1
   export PRAGMA_TEST_NAMESPACE=pragma-encoder
+  export PRAGMA_TRAINING_IMAGE=image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
   PYTHONPATH=. python -m pytest tests/openshift/test_03_pipeline_smoke_run.py -v -s
 """
 
@@ -205,6 +217,26 @@ class TestOpenShiftPipelineSmoke:
         assert yaml_path.exists(), f"Compiled YAML not found at {yaml_path}"
         yaml_size = yaml_path.stat().st_size
         print(f"  Compiled YAML: {yaml_path} ({yaml_size} bytes)")
+
+        # --- Step 2b: Verify component image embedded in YAML ---
+        # KFP component pods do NOT inherit the workbench pod's git checkout.
+        # The compiled YAML must embed the PRAGMA training image (not the workbench image).
+        # The component image is controlled by PRAGMA_KFP_COMPONENT_IMAGE or
+        # PRAGMA_TRAINING_IMAGE env vars, read at pipeline/components_pragma.py import time.
+        try:
+            from pipeline import components_pragma as _cpmod  # noqa: PLC0415
+            component_image = _cpmod._BASE_IMAGE
+            yaml_content = yaml_path.read_text()
+            if component_image in yaml_content:
+                print(f"  Component image: {component_image} (verified in YAML)")
+            else:
+                print(
+                    f"  WARNING: component image {component_image!r} not found in YAML. "
+                    "This may indicate the pipeline was compiled before PRAGMA_TRAINING_IMAGE "
+                    "was set. Component pods may fail with ModuleNotFoundError: No module named 'src'."
+                )
+        except Exception:  # noqa: BLE001
+            pass  # image check is informational; do not fail compile step
 
         # --- Step 3: Resolve endpoint ---
         endpoint = get_dspa_endpoint(namespace=test_namespace)
