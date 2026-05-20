@@ -13,58 +13,30 @@ The local/unit test suite (`tests/`) has strong coverage of:
 - decorated pipeline authoring
 - pipeline compilation
 
-The gap is the transition from workbench authoring to **real OpenShift AI DSPA /
-KFP v2 pipeline execution and PyTorchJob distributed training**. This suite fills
-that gap with a safe, opt-in TDD loop for cluster-facing behaviour.
+The gap is the transition from workbench authoring to **real OpenShift AI
+pipeline execution and PyTorchJob training**. This suite fills that gap with
+a safe, opt-in TDD loop for cluster-facing behaviour.
 
 ---
 
-## Why a Separate Suite
+## Pipeline Runtime — OpenShift AI / KFP v2 (not Tekton)
 
-Argo CD reconciles the PRAGMA platform substrate. These tests do not deploy the
-platform; they verify it and create short-lived labelled runtime objects against it.
+This environment uses **OpenShift AI Data Science Pipelines** backed by
+**KFP v2 via DataSciencePipelinesApplication (DSPA)**:
 
-The separation exists because:
+- `datasciencepipelinesapplications.datasciencepipelinesapplications.opendatahub.io` — DSPA CRD
+- `pipelines.pipelines.kubeflow.org` — KFP v2 Pipeline CRD
+- `pipelineversions.pipelines.kubeflow.org` — KFP v2 PipelineVersion CRD
+- `ds-pipeline-*` pods provide the KFP v2 API server, workflow controller,
+  and persistence agent
 
-- Unit tests must always run fast and without cluster access.
-- Cluster tests require authentication, namespace access, and running operators.
-- Cluster tests create real resources and must clean them up safely.
-- Making cluster tests opt-in prevents accidental cluster mutation in CI.
+**Tekton PipelineRun/TaskRun (`pipelineruns.tekton.dev`, `taskruns.tekton.dev`)
+are not required** unless the cluster explicitly uses that runtime.
+The Level 1 substrate checks target DSPA/KFP v2, not Tekton.
 
----
-
-## Pipeline Runtime
-
-This environment uses **OpenShift AI Data Science Pipelines (DSPA) / KFP v2**.
-
-Red Hat OpenShift AI Data Science Pipelines 2.0 does **not** use kfp-tekton.
-Tekton CRDs (`pipelineruns.tekton.dev`, `taskruns.tekton.dev`) are not installed
-by default and are not required for PRAGMA pipeline execution.
-
-- **Default pipeline target**: OpenShift AI DSPA / KFP v2
-- **Tekton**: optional legacy/alternate runtime — checks gated by `RUN_TEKTON_TESTS=1`
-- **Level 3b batch/v1 Job smoke**: proves training image execution in-cluster; it is **not** pipeline runtime
-
-### Documented OpenShift AI Pipeline pattern
-
-The supported PRAGMA pipeline execution path is:
-
-1. **Author** — write a Python pipeline using PRAGMA workbench decorators or the KFP SDK.
-2. **Compile** — call `.compile()` to produce a KFP v2 YAML file.
-3. **Upload / import** — upload the compiled YAML to OpenShift AI Data Science Pipelines via the DSPA API or the OpenShift AI dashboard.
-4. **Create a pipeline run** — trigger a run from the uploaded pipeline, passing dataset and model parameters.
-5. **Track** — monitor the run via the OpenShift AI dashboard or the DSPA / KFP v2 API.
-
-Training steps inside the pipeline run as PyTorchJob workers launched by the pipeline component.
-
-### What `oc exec` is — and is not
-
-`oc exec` (running commands directly inside existing pods) is a **diagnostic tool only**.
-It is not a pipeline engine and not the product execution path.
-
-- Use `oc exec` to inspect the workbench pod or a running training pod for debugging.
-- Do **not** use `oc exec` to launch training runs in production.
-- Do **not** use `oc exec` in tests as a substitute for the DSPA pipeline submission path.
+A `batch/v1 Job` may be used as a training-container smoke test to verify
+the training image runs correctly in-cluster. It does **not** prove OpenShift AI
+Pipelines are working — that is a separate, higher-level concern.
 
 ---
 
@@ -75,13 +47,14 @@ Argo CD  ─── deploys ──►  platform substrate  (long-lived, Argo-mana
                            └── namespace
                            └── ServiceAccount
                            └── RBAC
+                           └── DSPA (DataSciencePipelinesApplication)
                            └── Secrets (S3, image pull)
-                           └── DSPA instance  (KFP v2 API server)
 
 tests/openshift/  ─── verify substrate ──►  read-only checks (Levels 0–1)
                   ─── create (future) ──►   short-lived labelled resources
-                                            └── KFP PipelineRun (Level 3, via DSPA)
-                                            └── PyTorchJob       (Level 4)
+                                            └── KFP v2 Run    (Level 3)
+                                            └── batch/v1 Job  (Level 3b)
+                                            └── PyTorchJob    (Level 4)
                   ─── cleanup ──────────►   only label-scoped resources
 ```
 
@@ -97,20 +70,12 @@ Tests never write to S3 unless explicitly authorised.
 | 0 | oc access + namespace checks | Implemented | `test_00_oc_access.py` |
 | 1 | Argo-managed substrate verification | Implemented | `test_01_cluster_prereqs.py` |
 | 2 | Decorated pipeline compile | Implemented | `test_02_pipeline_compile.py` |
-| 3 | DSPA/KFP v2 pipeline import + run smoke | Implemented | `test_03_pipeline_smoke_run.py` |
-| 3d | DSPA/KFP v2 runtime discovery (read-only) | Implemented | `test_03_dspa_runtime_discovery.py` |
-| 3e | KFP/DSPA client connectivity probe | Implemented | `test_03e_kfp_client_probe.py` |
-| 3b | Training container batch/v1 Job smoke | Implemented | `test_03b_training_job_smoke.py` |
+| 3 | OpenShift AI KFP v2 pipeline smoke | Future / xfail | `test_03_pipeline_smoke_run.py` |
+| 3b | Training container Job smoke | Future / xfail | `test_03b_training_job_smoke.py` |
 | 4 | PyTorchJob / two-node smoke | Future / xfail | `test_04_pytorchjob_smoke.py` |
 | 5 | S3-backed checkpoint/resume | Future | — |
 | 6 | Scaled training validation | Future | — |
 | 7 | Bank-data adapter validation | Future | — |
-
-> **Level 3b warning:** The training job smoke proves the PRAGMA training image
-> and command execute correctly inside the cluster. It does **not** prove OpenShift AI
-> Pipelines runtime. The image executes as a standalone `batch/v1 Job`, not as a
-> DSPA-managed pipeline run. Level 3d (discovery) maps the DSPA seam. Level 3
-> (future) will prove end-to-end pipeline runtime via the DSPA API.
 
 ---
 
@@ -130,15 +95,11 @@ Tests never write to S3 unless explicitly authorised.
 | `PRAGMA_TEST_RUNTIME_NAMESPACE` | `PRAGMA_TEST_NAMESPACE` | Namespace for ephemeral test resources. Use when you want to isolate test-created resources from the Argo-managed namespace. |
 | `PRAGMA_S3_SECRET_NAME` | (unset) | Name of the S3 credentials Secret. Test verifies existence only; data is never read. |
 | `PRAGMA_TRAINING_SERVICE_ACCOUNT` | `pragma-encoder-training` | Name of the training ServiceAccount to verify. |
-| `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset / `pragma-registry`) | Name of the image pull Secret. Level 1: test verifies existence only (no data access). Level 3b: used as `imagePullSecrets` in the smoke Job pod spec; defaults to `pragma-registry` if unset. |
-| `RUN_TEKTON_TESTS=1` | (unset) | Opt-in for Tekton CRD checks (Level 1) and Tekton cleanup. Off by default — this environment uses DSPA / KFP v2. Enable only when validating a cluster with Tekton installed as an alternate runtime. |
-| `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 DSPA / KFP v2 pipeline smoke tests. |
-| `PRAGMA_KFP_COMPONENT_IMAGE` | (unset) | Component base image for KFP pipeline pods. Overrides `PRAGMA_TRAINING_IMAGE`. KFP component pods do NOT inherit the workbench pod's git checkout — the image must contain PRAGMA source code (src/) and all Python dependencies. Build from `openshift/training/Dockerfile.training`. |
-| `RUN_DSPA_CLIENT_PROBE=1` | (unset) | Opt-in for Level 3e KFP/DSPA client connectivity probe. Run from inside the PRAGMA workbench pod. If set, kfp SDK must be installed (FAIL, not skip, when missing). |
-| `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1` | (unset) | Opt-in for Level 3b training container smoke. Requires `PRAGMA_TRAINING_IMAGE`. |
-| `PRAGMA_TRAINING_IMAGE` | (unset) | Image URI for the Level 3b batch/v1 Job smoke. Must be built from `openshift/training/Dockerfile.training` with `src/` and `scripts/` baked in at WORKDIR. |
-| `PRAGMA_ALLOW_RUNTIME_GIT_CLONE` | `0` | Level 3b debug fallback only. Set to `1` to allow the smoke Job to git-clone the repo at runtime if the image lacks code. Off by default. Use only to diagnose dependency-only images — not the intended primary path. |
+| `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset) | Name of the image pull Secret. Test verifies existence only; data is never read. |
+| `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 KFP v2 DSPA pipeline run smoke tests. |
+| `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1` | (unset) | Opt-in for Level 3b batch/v1 Job training container smoke. |
 | `RUN_PYTORCHJOB_TESTS=1` | (unset) | Opt-in for Level 4 PyTorchJob tests. |
+| `RUN_TEKTON_TESTS=1` | (unset) | Opt-in for Tekton PipelineRun/TaskRun CRD checks. Not required for OpenShift AI KFP v2. |
 | `PRAGMA_TEST_TIMEOUT_SECONDS` | `300` | Timeout for cluster wait loops (minimum 30s). |
 
 ---
@@ -169,6 +130,7 @@ Tests never write to S3 unless explicitly authorised.
    - `oc delete serviceaccount` — forbidden
    - `oc delete sa` — forbidden
 10. All cleanup commands are label-scoped.
+11. `oc exec` is for diagnostics/log collection only — never the product path.
 
 ---
 
@@ -177,7 +139,7 @@ Tests never write to S3 unless explicitly authorised.
 The `cleanup_labelled_resources` fixture runs after each test and deletes only:
 
 ```
-pod, job, configmap, pytorchjob
+pipelinerun, taskrun, pod, job, configmap, pytorchjob
 ```
 
 …in `PRAGMA_TEST_RUNTIME_NAMESPACE`, scoped to the selector:
@@ -185,10 +147,6 @@ pod, job, configmap, pytorchjob
 ```
 pragma.redhat.com/test-run=true,pragma.redhat.com/test-id=<test_id>
 ```
-
-When `RUN_TEKTON_TESTS=1` is set, `pipelinerun` and `taskrun` are also included.
-They are **omitted by default** because this environment uses DSPA / KFP v2, which
-does not install Tekton CRDs. Attempting to delete a non-existent CRD produces noise.
 
 Cleanup failures are reported as warnings but do not hide the original test result.
 
@@ -215,6 +173,9 @@ PRAGMA_TEST_NAMESPACE=pragma-encoder \
 pytest tests/openshift/test_00_oc_access.py tests/openshift/test_01_cluster_prereqs.py -q
 ```
 
+Expected: DSPA/KFP v2 substrate checks pass. Tekton checks skipped unless
+`RUN_TEKTON_TESTS=1`.
+
 ### Pipeline compile verification (Level 2, no cluster needed)
 
 ```bash
@@ -233,28 +194,6 @@ pytest tests/openshift/test_00_oc_access.py \
        tests/openshift/test_02_pipeline_compile.py -q
 ```
 
-### DSPA/KFP v2 runtime discovery (Level 3d, read-only, cluster needed)
-
-Discovers DSPA objects, pods, services, routes, and candidate KFP endpoints.
-Does not create any resources. Does not attempt pipeline submission.
-
-```bash
-RUN_OPENSHIFT_TESTS=1 \
-PRAGMA_TEST_NAMESPACE=pragma-encoder \
-pytest tests/openshift/test_03_dspa_runtime_discovery.py -v
-```
-
-### Full read-only suite including DSPA discovery (Levels 0–2, 3d)
-
-```bash
-RUN_OPENSHIFT_TESTS=1 \
-PRAGMA_TEST_NAMESPACE=pragma-encoder \
-pytest tests/openshift/test_00_oc_access.py \
-       tests/openshift/test_01_cluster_prereqs.py \
-       tests/openshift/test_02_pipeline_compile.py \
-       tests/openshift/test_03_dspa_runtime_discovery.py -v
-```
-
 ### With optional substrate checks
 
 ```bash
@@ -265,136 +204,32 @@ PRAGMA_IMAGE_PULL_SECRET_NAME=pragma-encoder-pull \
 pytest tests/openshift/test_01_cluster_prereqs.py -q
 ```
 
-### KFP/DSPA client connectivity probe (Level 3e — run from inside workbench pod)
+### Tekton CRD checks (only for clusters using Tekton as pipeline runtime)
 
-Proves the exact `kfp.Client` configuration required to reach the DSPA/KFP v2 API
-from inside the PRAGMA workbench pod. Read-only: no pipelines uploaded, no runs created.
-SA token is never printed.
-
-Requires `kfp` to be installed (use the PRAGMA workbench notebook image, which
-includes `kfp`, or `pip install kfp` locally).
-
-**Run from inside the workbench pod** (in-cluster endpoint required):
-```bash
-oc exec -n pragma-encoder <workbench-pod> -- \
-  env RUN_OPENSHIFT_TESTS=1 RUN_DSPA_CLIENT_PROBE=1 \
-  PRAGMA_TEST_NAMESPACE=pragma-encoder \
-  python -m pytest tests/openshift/test_03e_kfp_client_probe.py -v -s
-```
-
-**Standalone probe script** (prints config report without pytest):
-```bash
-oc exec -n pragma-encoder <workbench-pod> -- \
-  env PRAGMA_TEST_NAMESPACE=pragma-encoder \
-  python examples/workbench/07_dspa_client_probe.py
-```
-
-**Local run** (all tests skip — endpoint not reachable outside cluster):
 ```bash
 RUN_OPENSHIFT_TESTS=1 \
-RUN_DSPA_CLIENT_PROBE=1 \
+RUN_TEKTON_TESTS=1 \
 PRAGMA_TEST_NAMESPACE=pragma-encoder \
-pytest tests/openshift/test_03e_kfp_client_probe.py -v
+pytest tests/openshift/test_01_cluster_prereqs.py -q
 ```
 
-### OpenShift Pipeline smoke (Level 3 — run from inside workbench pod)
-
-Requires `kfp` installed, in-cluster network access, and the PRAGMA training image.
-`PRAGMA_TRAINING_IMAGE` must be set so the compiled pipeline YAML embeds the training
-image as the component base image. Component pods do not inherit the workbench git checkout.
+### Future: OpenShift AI KFP v2 pipeline smoke (Level 3, xfail until implemented)
 
 ```bash
 RUN_OPENSHIFT_TESTS=1 \
 RUN_OPENSHIFT_PIPELINE_SMOKE=1 \
 PRAGMA_TEST_NAMESPACE=pragma-encoder \
-PRAGMA_TRAINING_IMAGE=image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest \
 pytest tests/openshift/test_03_pipeline_smoke_run.py -q
 ```
 
-To override the component image independently from the PyTorchJob training image:
-```bash
-PRAGMA_KFP_COMPONENT_IMAGE=<custom-image> \
-...
-```
-
-### Training container smoke (Level 3b — requires built image)
-
-This is a diagnostic step that proves the PRAGMA training image and command
-work correctly inside the cluster, before DSPA/KFP pipeline runtime is attempted.
-
-It is **not** a PyTorchJob. It is a single-pod `batch/v1 Job` with no DDP.
-
-#### Building the training image
-
-`PRAGMA_TRAINING_IMAGE` must be built from `openshift/training/Dockerfile.training`.
-The workbench notebook image alone is **not** sufficient — it has no source code.
-
-```bash
-# One-time setup: create ImageStream for the training image output
-oc new-build --strategy=docker \
-  --binary \
-  --name=pragma-encoder-training \
-  -n pragma-encoder
-
-# Build from repo root (sends src/, scripts/, pyproject.toml to the build daemon)
-oc start-build pragma-encoder-training \
-  --from-dir=. \
-  --follow \
-  -n pragma-encoder
-
-# Verify the image was pushed
-oc get istag pragma-encoder-training:latest -n pragma-encoder
-```
-
-The resulting image URI is:
-```
-image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
-```
-
-The smoke test validates the image before running training steps. If the image
-lacks code, the Job fails immediately with:
-```
-ERROR: scripts/train_pragma.py not found in image WORKDIR.
-PRAGMA_TRAINING_IMAGE is a dependency-only image, not a training image.
-Rebuild using: openshift/training/Dockerfile.training
-```
-
-#### Running the smoke
-
-Prerequisites:
-- `PRAGMA_TRAINING_IMAGE` built and pushed (see above)
-- `oc` logged into the cluster
+### Future: Training container Job smoke (Level 3b, xfail until image is available)
 
 ```bash
 RUN_OPENSHIFT_TESTS=1 \
 RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1 \
 PRAGMA_TEST_NAMESPACE=pragma-encoder \
-PRAGMA_TRAINING_IMAGE=image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest \
 pytest tests/openshift/test_03b_training_job_smoke.py -q
 ```
-
-Optional — override image pull secret (default: `pragma-registry`):
-```bash
-PRAGMA_IMAGE_PULL_SECRET_NAME=my-pull-secret \
-...
-```
-
-Optional — debug fallback if image lacks code (off by default, not the intended path):
-```bash
-PRAGMA_ALLOW_RUNTIME_GIT_CLONE=1 \
-...
-```
-
-What it creates (all label-scoped, cleaned up automatically):
-- `ConfigMap` `pragma-smoke-csv-<test_id>` — 15-row synthetic IBM TabFormer CSV
-- `batch/v1 Job` `pragma-smoke-job-<test_id>` — validates image, runs fit_tokenizer + PRAGMA-S --max-steps 1
-- `Pod` created by the Job controller (auto-labelled by the Job)
-
-What it asserts:
-- Pod logs contain `"Image validation passed"` (src/ and scripts/ found at WORKDIR)
-- Job reaches `Complete` status within `PRAGMA_TEST_TIMEOUT_SECONDS`
-- Pod logs contain `"pragma-s"` (model variant confirmed at startup)
-- Pod logs contain `"Reached --max-steps"` (early-stop confirmed)
 
 ### Future: PyTorchJob smoke (Level 4, xfail until implemented)
 
@@ -429,11 +264,14 @@ in the environment). Only unit tests run.
 - `test_can_list_pods_in_test_namespace` — basic RBAC confirmed
 - `test_runtime_namespace_exists_if_different` — runtime namespace check (if set)
 
-### Level 1 — Argo-managed substrate
-- `test_dspa_crd_exists` — DSPA CRD installed (OpenShift AI default pipeline substrate)
-- `test_kfp_pipeline_crd_exists` — KFP v2 pipeline CRD installed
-- `test_pipelinerun_crd_exists` — Tekton CRD; **skipped unless `RUN_TEKTON_TESTS=1`**
-- `test_taskrun_crd_exists` — Tekton CRD; **skipped unless `RUN_TEKTON_TESTS=1`**
+### Level 1 — Argo-managed substrate (DSPA/KFP v2)
+- `test_dspa_crd_exists` — DataSciencePipelinesApplication CRD present
+- `test_kfp_pipeline_crd_exists` — pipelines.pipelines.kubeflow.org CRD present
+- `test_kfp_pipelineversion_crd_exists` — pipelineversions.pipelines.kubeflow.org CRD present
+- `test_dspa_instance_exists_in_namespace` — at least one DSPA in PRAGMA_TEST_NAMESPACE
+- `test_dspa_pods_running_in_namespace` — ds-pipeline-* pods Running
+- `test_tekton_pipelinerun_crd_exists_if_enabled` — gated by `RUN_TEKTON_TESTS=1`
+- `test_tekton_taskrun_crd_exists_if_enabled` — gated by `RUN_TEKTON_TESTS=1`
 - `test_pytorchjob_crd_exists_if_enabled` — gated by `RUN_PYTORCHJOB_TESTS=1`
 - `test_training_service_account_exists` — SA deployed by Argo CD
 - `test_s3_secret_exists_if_configured` — existence check only, no data access
@@ -446,86 +284,6 @@ in the environment). Only unit tests run.
 - `test_generated_pipeline_yaml_contains_expected_stages` — all 5 stages present
 - `test_compile_does_not_require_oc_or_cluster` — monkeypatched safety check
 
-### Level 3 — DSPA/KFP v2 pipeline upload + run creation (opt-in, run from inside workbench pod)
-
-Gated by `RUN_OPENSHIFT_PIPELINE_SMOKE=1`. Requires in-cluster network access.
-Proven working against OpenShift AI DSPA (kfp 2.7.0, SA token auth, HTTPS port 8888).
-
-Implementation: `src/workbench/_submit.py`
-  - `get_dspa_endpoint()` — resolves `https://ds-pipeline-pipelines-definition.<ns>.svc.cluster.local:8888`
-  - `make_kfp_client()` — `kfp.Client(host=..., verify_ssl=False)` for self-signed cert
-  - `upload_pipeline()` — uploads KFP v2 YAML; returns `pipeline_id`
-  - `submit_pipeline_run()` — resolves `version_id` via `list_pipeline_versions()`, resolves/creates experiment, calls `run_pipeline()`
-
-**`TestOpenShiftPipelineSmoke`**:
-- `test_pipeline_smoke_upload_and_run` — compiles PRAGMA-S pipeline, uploads to DSPA, creates run; asserts `pipeline_id` and `run_id` returned
-- `test_pipeline_compile_produces_valid_yaml` — compile-only check (no cluster required)
-
-### Level 3d — DSPA/KFP v2 runtime discovery (read-only, no cluster mutation)
-
-All tests are read-only. No resources are created. Cluster access required.
-
-**`TestDSPAObjectDiscovery`**:
-- `test_dspa_object_discovered` — finds DataSciencePipelinesApplication(s) in namespace; reports name, API version, and dspVersion
-
-**`TestDSPAPodsRunning`**:
-- `test_dspa_pods_running` — finds all `ds-pipeline-*` pods, asserts all are Running/Ready; reports pod names and phases
-
-**`TestDSPAServicesDiscovery`**:
-- `test_dspa_services_discovered` — finds services with KFP API port (8888); asserts at least one candidate exists
-
-**`TestDSPARoutesDiscovery`**:
-- `test_dspa_routes_discovered` — finds routes with `ds-pipeline` prefix; reports external HTTPS endpoints; skips if none found
-
-**`TestKFPSDK`**:
-- `test_kfp_sdk_import_optional` — passes if kfp is installed and reports version; skips if not installed
-- `test_compiled_pipeline_yaml_exists_or_can_be_generated` — if kfp installed, compiles decorated pipeline to temp YAML and asserts non-empty; skips if kfp not installed
-
-**`TestKFPEndpointDiscovery`**:
-- `test_kfp_client_candidate_endpoint_documented` — documents candidate in-cluster and external KFP endpoints from discovered services/routes; does not attempt connection
-
-**`TestDSPARuntimeFuture`**:
-- `test_dspa_runtime_submission_marked_future` — xfail boundary marker: Level 3d is discovery only; Level 3 pipeline upload/run is implemented (see above)
-
-### Level 3e — KFP/DSPA client connectivity probe (opt-in, run from inside workbench pod)
-
-Gated by `RUN_DSPA_CLIENT_PROBE=1`. All tests SKIP (not fail) when the in-cluster
-endpoint is unreachable. When `RUN_DSPA_CLIENT_PROBE=1` is set but `kfp` is not
-installed, prereq tests FAIL (not skip) so the missing dependency is visible.
-
-**`TestKFPClientProbePrereqs`** (local validation, no connection attempted):
-- `test_kfp_installed_for_probe` — FAIL (not skip) if probe enabled but kfp SDK missing; verifies kfp >= 2.0.0
-- `test_primary_endpoint_string_valid` — confirms in-cluster URL is well-formed for the target namespace
-- `test_sa_token_environment_documented` — reports SA token file presence without reading or printing token
-
-**`TestKFPEndpointReachability`** (requires in-cluster network):
-- `test_in_cluster_endpoint_reachable_without_token` — probes port 8888 without auth; SKIP if unreachable; accepts 200/401/403
-- `test_ml_pipeline_alias_reachable` — probes `ml-pipeline` alias; SKIP if unreachable
-
-**`TestKFPClientAuth`** (requires in-cluster network + kfp):
-- `test_kfp_client_instantiates` — confirms `kfp.Client(host=...)` constructs without error
-- `test_kfp_client_list_pipelines_no_token` — tries `list_pipelines()` without token; SKIP if fails (redirects to SA token test)
-- `test_kfp_client_list_pipelines_with_sa_token` — reads mounted SA token and retries `list_pipelines()`; SKIP if not inside pod; token never printed
-
-**`TestKFPReadOnlyAPI`** (requires in-cluster network + kfp):
-- `test_kfp_api_version_endpoint` — GET `/apis/v2beta1/healthz`; accepts 200/401/403/404; confirms v2beta1 path is correct
-- `test_kfp_client_configuration_report` — always passes; prints full endpoint, auth, and client configuration summary
-
-**Standalone probe example**: `examples/workbench/07_dspa_client_probe.py` — runs all four probe steps without pytest; prints discovered working client configuration and pipeline upload next steps.
-
-### Level 3b — Training container smoke (opt-in, creates cluster resources)
-
-Gated by `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1`. Also requires `PRAGMA_TRAINING_IMAGE`.
-
-**`TestTrainingJobSmokePrereqs`** (local validation, no cluster needed):
-- `test_training_image_env_is_set` — `PRAGMA_TRAINING_IMAGE` is set and looks like an image URI; FAILS (not skips) when smoke flag is set but image is missing
-- `test_smoke_csv_fixture_has_required_columns` — embedded CSV has all 12 required IBM TabFormer column names
-- `test_smoke_csv_fixture_has_enough_users` — CSV has ≥3 unique User IDs for a valid 80/20 train/val split
-- `test_smoke_shell_command_contains_expected_steps` — `_SMOKE_SHELL` contains all four required step markers
-
-**`TestTrainingJobSmoke`** (creates cluster resources):
-- `test_training_job_smoke` — creates ConfigMap + `batch/v1 Job`, waits for completion, asserts log markers, cleanup via `cleanup_labelled_resources`
-
 ### Level 4 — Manifest structure (read-only, gated by RUN_PYTORCHJOB_TESTS=1)
 - `test_two_node_manifest_exists`
 - `test_two_node_manifest_has_no_pvc_canonical_storage`
@@ -535,6 +293,18 @@ Gated by `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1`. Also requires `PRAGMA_TRAINING_IM
 ---
 
 ## What Is Future / xfail
+
+### Level 3 — OpenShift AI KFP v2 pipeline smoke
+`test_kfp_pipeline_smoke_run_future` — xfail. Compile decorated pipeline to
+KFP v2 YAML, upload to DSPA API, create a Run with `max_steps=1`, poll
+until complete, collect pod logs, assert run succeeded.
+Will xpass when KFP v2 run submission is implemented in `src/workbench/`.
+
+### Level 3b — Training container Job smoke
+`test_training_job_smoke_future` — xfail. Submit a labelled `batch/v1 Job`
+running the PRAGMA training container with `--max-steps 1`, wait for
+completion, collect logs, assert "PRAGMA-S" and max_steps completion.
+Does not prove KFP v2 pipeline orchestration — proves the training image works.
 
 ### Level 4 — PyTorchJob execution smoke
 `test_pytorchjob_two_node_smoke_future` — xfail. Apply two-node manifest with
@@ -547,9 +317,9 @@ Will xpass when the safe apply + wait + cleanup path is implemented.
 
 Argo CD owns and reconciles the long-lived platform substrate in
 `PRAGMA_TEST_NAMESPACE`. These tests treat that namespace as read-only
-for substrate resources (ServiceAccount, Secrets, ConfigMaps managed by Argo).
+for substrate resources (ServiceAccount, Secrets, DSPA, ConfigMaps managed by Argo).
 
-Ephemeral test resources (PipelineRun, PyTorchJob, Pod, Job) are created
+Ephemeral test resources (KFP v2 Run, PyTorchJob, Pod, Job) are created
 in `PRAGMA_TEST_RUNTIME_NAMESPACE` (which may be the same namespace) with
 test labels so they are clearly distinguishable from Argo-managed resources.
 
