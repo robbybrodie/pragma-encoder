@@ -60,3 +60,6 @@ ignore = ["N806", "N812"]
 # The Level 3 pipeline smoke test has print statements with KFP run IDs and log
 # markers that cannot be wrapped without losing diagnostic clarity.
 "tests/openshift/test_03_pipeline_smoke_run.py" = ["E501"]
+# The Level 4 PyTorchJob smoke test embeds the TabFormer CSV header, shell script
+# lines with long path arguments, and diagnostic assertion messages.
+"tests/openshift/test_04_pytorchjob_smoke.py" = ["E501"]
