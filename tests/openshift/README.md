@@ -99,6 +99,7 @@ Tests never write to S3 unless explicitly authorised.
 | 2 | Decorated pipeline compile | Implemented | `test_02_pipeline_compile.py` |
 | 3 | DSPA/KFP v2 pipeline import + run smoke | Future / xfail | `test_03_pipeline_smoke_run.py` |
 | 3d | DSPA/KFP v2 runtime discovery (read-only) | Implemented | `test_03_dspa_runtime_discovery.py` |
+| 3e | KFP/DSPA client connectivity probe | Implemented | `test_03e_kfp_client_probe.py` |
 | 3b | Training container batch/v1 Job smoke | Implemented | `test_03b_training_job_smoke.py` |
 | 4 | PyTorchJob / two-node smoke | Future / xfail | `test_04_pytorchjob_smoke.py` |
 | 5 | S3-backed checkpoint/resume | Future | — |
@@ -132,6 +133,7 @@ Tests never write to S3 unless explicitly authorised.
 | `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset / `pragma-registry`) | Name of the image pull Secret. Level 1: test verifies existence only (no data access). Level 3b: used as `imagePullSecrets` in the smoke Job pod spec; defaults to `pragma-registry` if unset. |
 | `RUN_TEKTON_TESTS=1` | (unset) | Opt-in for Tekton CRD checks (Level 1) and Tekton cleanup. Off by default — this environment uses DSPA / KFP v2. Enable only when validating a cluster with Tekton installed as an alternate runtime. |
 | `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 DSPA / KFP v2 pipeline smoke tests. |
+| `RUN_DSPA_CLIENT_PROBE=1` | (unset) | Opt-in for Level 3e KFP/DSPA client connectivity probe. Run from inside the PRAGMA workbench pod. If set, kfp SDK must be installed (FAIL, not skip, when missing). |
 | `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1` | (unset) | Opt-in for Level 3b training container smoke. Requires `PRAGMA_TRAINING_IMAGE`. |
 | `PRAGMA_TRAINING_IMAGE` | (unset) | Image URI for the Level 3b batch/v1 Job smoke. Must be built from `openshift/training/Dockerfile.training` with `src/` and `scripts/` baked in at WORKDIR. |
 | `PRAGMA_ALLOW_RUNTIME_GIT_CLONE` | `0` | Level 3b debug fallback only. Set to `1` to allow the smoke Job to git-clone the repo at runtime if the image lacks code. Off by default. Use only to diagnose dependency-only images — not the intended primary path. |
@@ -260,6 +262,38 @@ PRAGMA_TEST_NAMESPACE=pragma-encoder \
 PRAGMA_S3_SECRET_NAME=pragma-encoder-s3 \
 PRAGMA_IMAGE_PULL_SECRET_NAME=pragma-encoder-pull \
 pytest tests/openshift/test_01_cluster_prereqs.py -q
+```
+
+### KFP/DSPA client connectivity probe (Level 3e — run from inside workbench pod)
+
+Proves the exact `kfp.Client` configuration required to reach the DSPA/KFP v2 API
+from inside the PRAGMA workbench pod. Read-only: no pipelines uploaded, no runs created.
+SA token is never printed.
+
+Requires `kfp` to be installed (use the PRAGMA workbench notebook image, which
+includes `kfp`, or `pip install kfp` locally).
+
+**Run from inside the workbench pod** (in-cluster endpoint required):
+```bash
+oc exec -n pragma-encoder <workbench-pod> -- \
+  env RUN_OPENSHIFT_TESTS=1 RUN_DSPA_CLIENT_PROBE=1 \
+  PRAGMA_TEST_NAMESPACE=pragma-encoder \
+  python -m pytest tests/openshift/test_03e_kfp_client_probe.py -v -s
+```
+
+**Standalone probe script** (prints config report without pytest):
+```bash
+oc exec -n pragma-encoder <workbench-pod> -- \
+  env PRAGMA_TEST_NAMESPACE=pragma-encoder \
+  python examples/workbench/07_dspa_client_probe.py
+```
+
+**Local run** (all tests skip — endpoint not reachable outside cluster):
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_DSPA_CLIENT_PROBE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+pytest tests/openshift/test_03e_kfp_client_probe.py -v
 ```
 
 ### Future: OpenShift Pipeline smoke (Level 3, xfail until implemented)
@@ -425,6 +459,32 @@ All tests are read-only. No resources are created. Cluster access required.
 
 **`TestDSPARuntimeFuture`**:
 - `test_dspa_runtime_submission_marked_future` — xfail: pipeline upload/run submission not yet implemented; marks the known gap
+
+### Level 3e — KFP/DSPA client connectivity probe (opt-in, run from inside workbench pod)
+
+Gated by `RUN_DSPA_CLIENT_PROBE=1`. All tests SKIP (not fail) when the in-cluster
+endpoint is unreachable. When `RUN_DSPA_CLIENT_PROBE=1` is set but `kfp` is not
+installed, prereq tests FAIL (not skip) so the missing dependency is visible.
+
+**`TestKFPClientProbePrereqs`** (local validation, no connection attempted):
+- `test_kfp_installed_for_probe` — FAIL (not skip) if probe enabled but kfp SDK missing; verifies kfp >= 2.0.0
+- `test_primary_endpoint_string_valid` — confirms in-cluster URL is well-formed for the target namespace
+- `test_sa_token_environment_documented` — reports SA token file presence without reading or printing token
+
+**`TestKFPEndpointReachability`** (requires in-cluster network):
+- `test_in_cluster_endpoint_reachable_without_token` — probes port 8888 without auth; SKIP if unreachable; accepts 200/401/403
+- `test_ml_pipeline_alias_reachable` — probes `ml-pipeline` alias; SKIP if unreachable
+
+**`TestKFPClientAuth`** (requires in-cluster network + kfp):
+- `test_kfp_client_instantiates` — confirms `kfp.Client(host=...)` constructs without error
+- `test_kfp_client_list_pipelines_no_token` — tries `list_pipelines()` without token; SKIP if fails (redirects to SA token test)
+- `test_kfp_client_list_pipelines_with_sa_token` — reads mounted SA token and retries `list_pipelines()`; SKIP if not inside pod; token never printed
+
+**`TestKFPReadOnlyAPI`** (requires in-cluster network + kfp):
+- `test_kfp_api_version_endpoint` — GET `/apis/v2beta1/healthz`; accepts 200/401/403/404; confirms v2beta1 path is correct
+- `test_kfp_client_configuration_report` — always passes; prints full endpoint, auth, and client configuration summary
+
+**Standalone probe example**: `examples/workbench/07_dspa_client_probe.py` — runs all four probe steps without pytest; prints discovered working client configuration and pipeline upload next steps.
 
 ### Level 3b — Training container smoke (opt-in, creates cluster resources)
 
