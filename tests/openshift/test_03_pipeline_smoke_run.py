@@ -66,10 +66,9 @@ import importlib.util
 import os
 import pathlib
 import socket
+import ssl
 import urllib.error
 import urllib.request
-
-import ssl
 
 import pytest
 
@@ -187,7 +186,6 @@ class TestOpenShiftPipelineSmoke:
         """
         from src.workbench._submit import (  # noqa: PLC0415
             get_dspa_endpoint,
-            get_run_status,
             get_service_account_token,
             make_kfp_client,
             submit_pipeline_run,

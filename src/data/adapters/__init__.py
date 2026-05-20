@@ -47,4 +47,9 @@ def get_adapter(dataset_name: str) -> type:
     return _REGISTRY[dataset_name]
 
 
-__all__ = ["DatasetAdapterProtocol", "IBMTabFormerAdapter", "IBMTabFormerSmokeAdapter", "get_adapter"]
+__all__ = [
+    "DatasetAdapterProtocol",
+    "IBMTabFormerAdapter",
+    "IBMTabFormerSmokeAdapter",
+    "get_adapter",
+]

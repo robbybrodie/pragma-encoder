@@ -75,12 +75,10 @@ import json
 import os
 import pathlib
 import time
-from typing import Optional
 
 import pytest
 
 from tests.openshift.oc import label_selector, oc, oc_json, redact
-
 
 # ---------------------------------------------------------------------------
 # Suite-level skip guard
@@ -239,12 +237,12 @@ _EXPECTED_LOG_MARKERS: tuple[str, ...] = (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_training_image() -> Optional[str]:
+def _get_training_image() -> str | None:
     """Return PRAGMA_TRAINING_IMAGE or None if not set / empty."""
     return os.environ.get("PRAGMA_TRAINING_IMAGE", "").strip() or None
 
 
-def _get_image_pull_secret() -> Optional[str]:
+def _get_image_pull_secret() -> str | None:
     """Return the image pull secret name for the smoke Job.
 
     Reads PRAGMA_IMAGE_PULL_SECRET_NAME.
@@ -303,7 +301,7 @@ def _build_job(
     labels: dict[str, str],
     image: str,
     configmap_name: str,
-    image_pull_secret: Optional[str] = None,
+    image_pull_secret: str | None = None,
     allow_runtime_git_clone: bool = False,
 ) -> dict:
     """Build a batch/v1 Job manifest dict for the training smoke.

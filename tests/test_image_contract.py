@@ -50,7 +50,7 @@ class TestWorkbenchDependencies:
         text = _PYPROJECT.read_text()
         assert "workbench" in text, "pyproject.toml must have [project.optional-dependencies]"
         workbench_line = next(
-            (l for l in text.splitlines() if l.strip().startswith("workbench")), None
+            (ln for ln in text.splitlines() if ln.strip().startswith("workbench")), None
         )
         assert workbench_line is not None, (
             "pyproject.toml must define workbench extras "
@@ -71,7 +71,7 @@ class TestWorkbenchDependencies:
         """
         text = _PYPROJECT.read_text()
         workbench_line = next(
-            (l for l in text.splitlines() if l.strip().startswith("workbench")), None
+            (ln for ln in text.splitlines() if ln.strip().startswith("workbench")), None
         )
         assert workbench_line is not None
         assert "kfp-kubernetes" in workbench_line, (
@@ -111,7 +111,7 @@ class TestWorkbenchDependencies:
             line.strip().startswith("kfp") and not line.strip().startswith("kfp-kubernetes")
             for line in text.splitlines()
         ), (
-            f"openshift/notebook-image/requirements.txt must include kfp. "
+            "openshift/notebook-image/requirements.txt must include kfp. "
             "The workbench image is the compile environment for KFP pipelines."
         )
 
@@ -126,7 +126,7 @@ class TestWorkbenchDependencies:
             line.strip().startswith("kfp-kubernetes")
             for line in text.splitlines()
         ), (
-            f"openshift/notebook-image/requirements.txt must include kfp-kubernetes. "
+            "openshift/notebook-image/requirements.txt must include kfp-kubernetes. "
             "The workbench image must have kfp-kubernetes for secret injection. "
             "See docs/openshift-image-contract.md."
         )
@@ -151,7 +151,7 @@ class TestTrainingImageContract:
             "KFP component pods import from src.* — source must be baked in. "
             "See docs/openshift-image-contract.md."
         )
-        copy_lines = [l for l in text.splitlines() if "COPY" in l and "src/" in l]
+        copy_lines = [ln for ln in text.splitlines() if "COPY" in ln and "src/" in ln]
         assert copy_lines, (
             "No COPY src/ line found in Dockerfile.training. "
             "Without src/ baked in, component pods cannot import PRAGMA code."
@@ -189,11 +189,11 @@ class TestTrainingImageContract:
         """
         text = _DOCKERFILE_TRAINING.read_text()
         from_lines = [
-            l for l in text.splitlines()
-            if l.strip().startswith("FROM") and not l.strip().startswith("#")
+            ln for ln in text.splitlines()
+            if ln.strip().startswith("FROM") and not ln.strip().startswith("#")
         ]
         assert from_lines, "Dockerfile.training must have a FROM directive."
-        assert any("pragma-encoder-workbench" in l for l in from_lines), (
+        assert any("pragma-encoder-workbench" in ln for ln in from_lines), (
             f"Dockerfile.training must extend pragma-encoder-workbench. "
             f"FROM lines found: {from_lines}. "
             "The training image inherits workbench deps (kfp, kfp-kubernetes, …)."

@@ -116,7 +116,7 @@ def _probe_http(url: str, token: str | None = None, timeout: int = 5) -> int:
     """Attempt a GET request and return the HTTP status code.
 
     Returns the HTTP status code.
-    Raises ``_EndpointUnreachable`` if the TCP connection fails (not in cluster).
+    Raises ``_EndpointUnreachableError`` if the TCP connection fails (not in cluster).
     Does not raise on HTTP error codes — callers inspect the code.
 
     Never prints the token value.
@@ -131,12 +131,12 @@ def _probe_http(url: str, token: str | None = None, timeout: int = 5) -> int:
     except urllib.error.HTTPError as exc:
         return exc.code
     except (ConnectionRefusedError, OSError, socket.timeout, urllib.error.URLError) as exc:
-        raise _EndpointUnreachable(
+        raise _EndpointUnreachableError(
             f"Cannot reach {url}: {type(exc).__name__}: {exc}"
         ) from exc
 
 
-class _EndpointUnreachable(Exception):
+class _EndpointUnreachableError(Exception):
     """Raised when the in-cluster endpoint is not reachable from this environment."""
 
 
@@ -282,7 +282,7 @@ class TestKFPEndpointReachability:
 
         try:
             status = _probe_http(health_url, token=None, timeout=5)
-        except _EndpointUnreachable as exc:
+        except _EndpointUnreachableError as exc:
             pytest.skip(
                 f"In-cluster endpoint not reachable from this environment.\n"
                 f"Endpoint: {health_url}\n"
@@ -328,7 +328,7 @@ class TestKFPEndpointReachability:
 
         try:
             status = _probe_http(health_url, token=None, timeout=5)
-        except _EndpointUnreachable as exc:
+        except _EndpointUnreachableError as exc:
             pytest.skip(
                 f"ml-pipeline alias not reachable: {exc}. "
                 "This is expected when running outside the cluster. "
@@ -399,7 +399,7 @@ class TestKFPClientAuth:
         health_url = f"{endpoint}{_KFP_API_BASE_PATH}/healthz"
         try:
             _probe_http(health_url, token=None, timeout=5)
-        except _EndpointUnreachable as exc:
+        except _EndpointUnreachableError as exc:
             pytest.skip(f"Endpoint not reachable: {exc}")
 
         client = kfp.Client(host=endpoint)
@@ -452,7 +452,7 @@ class TestKFPClientAuth:
         health_url = f"{endpoint}{_KFP_API_BASE_PATH}/healthz"
         try:
             _probe_http(health_url, token=None, timeout=5)
-        except _EndpointUnreachable as exc:
+        except _EndpointUnreachableError as exc:
             pytest.skip(f"Endpoint not reachable: {exc}")
 
         # Require SA token file to be present.
@@ -513,7 +513,7 @@ class TestKFPReadOnlyAPI:
 
         try:
             status = _probe_http(health_url, token=None, timeout=5)
-        except _EndpointUnreachable as exc:
+        except _EndpointUnreachableError as exc:
             pytest.skip(f"Endpoint not reachable: {exc}")
 
         print(
@@ -566,7 +566,7 @@ class TestKFPReadOnlyAPI:
                 timeout=5,
             )
             endpoint_reachable = True
-        except _EndpointUnreachable:
+        except _EndpointUnreachableError:
             status_no_token = None
             endpoint_reachable = False
 
@@ -587,9 +587,9 @@ class TestKFPReadOnlyAPI:
         report.extend([
             "",
             "Recommended client configuration (inside workbench pod):",
-            f"  # No token needed (if port 8888 allows in-cluster access):",
+            "  # No token needed (if port 8888 allows in-cluster access):",
             f"  client = kfp.Client(host='{endpoint_primary}')",
-            f"  # With SA token (if port 8888 requires auth):",
+            "  # With SA token (if port 8888 requires auth):",
             f"  token = pathlib.Path('{_SA_TOKEN_PATH}').read_text().strip()",
             f"  client = kfp.Client(host='{endpoint_primary}', existing_token=token)",
             "",

@@ -32,8 +32,6 @@ ADR reference: docs/decisions/003-workbench-training-api.md
 
 from __future__ import annotations
 
-import importlib.util
-import os
 import pathlib
 import sys
 import types
@@ -653,7 +651,7 @@ class TestSubmitNoSideEffects:
         and pipeline.pragma_pipeline. It must not import or call anything
         from src.workbench._submit.
         """
-        from src.workbench._decorators import PragmaPipeline, pragma_pipeline
+        from src.workbench._decorators import pragma_pipeline
         from src.workbench._intent import dataset, train
 
         @pragma_pipeline(name="test-no-cluster")

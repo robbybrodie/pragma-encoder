@@ -336,7 +336,8 @@ def upload_pipeline(
             "Run PragmaPipeline.compile(path) before upload_pipeline().\n"
             "Example:\n"
             "  run.compile('pipeline/generated/pragma-s.yaml')\n"
-            "  pipeline_id = upload_pipeline(client, 'pipeline/generated/pragma-s.yaml', 'pragma-s')"
+            "  pipeline_id = upload_pipeline("
+            "client, 'pipeline/generated/pragma-s.yaml', 'pragma-s')"
         )
 
     response = client.upload_pipeline(str(path), pipeline_name=pipeline_name)

@@ -52,3 +52,12 @@ ignore = [
     # inside methods to keep them optional. This is intentional throughout the codebase.
     "E402",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Files containing IBM TabFormer CSV headers (110 chars) inside triple-quoted strings.
+# noqa comments inside multi-line string literals become part of the string data and
+# break the CSV parser, so E501 must be suppressed at the file level.
+"src/data/adapters/ibm_tabformer_smoke.py" = ["E501"]
+"tests/openshift/test_03b_training_job_smoke.py" = ["E501"]
+# Docstring contains long image URI examples that cannot be shortened without losing clarity.
+"tests/openshift/test_03_pipeline_smoke_run.py" = ["E501"]
