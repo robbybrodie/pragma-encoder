@@ -17,14 +17,14 @@ used in any training or evaluation context.
 Reference: Ostroukhov et al. (2026), Section 2.3.5
 """
 
-from typing import Tuple
+from typing import Protocol, Tuple
 
 import torch
 
 from .strategy import MaskingStrategy
 
 
-class MaskingStrategyProtocol:
+class MaskingStrategyProtocol(Protocol):
     """Interface contract for MaskingStrategy (§2.3.5).
 
     Describes the forward() signature for three-strategy masked event

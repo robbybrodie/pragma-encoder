@@ -37,7 +37,7 @@ class TextualTokenizer(BaseTokenizer):
     def __init__(self, vocab_size: int = 8_000, max_length: int = 16):
         self._vocab_size = vocab_size
         self.max_length = max_length
-        self._tokenizer = None
+        self._tokenizer: Any = None  # set by fit(); type is tokenizers.Tokenizer
         self._fitted = False
 
     def fit(self, data: List[Any]) -> "TextualTokenizer":
@@ -82,7 +82,7 @@ class TextualTokenizer(BaseTokenizer):
         if value is None:
             return [self._tokenizer.token_to_id("[MISSING]")]
         encoding = self._tokenizer.encode(str(value))
-        return encoding.ids[: self.max_length]
+        return encoding.ids[: self.max_length]  # type: ignore[no-any-return]
 
     def decode(self, token_ids: Union[int, List[int]]) -> str:
         """Decode token IDs back to a text string.
@@ -96,7 +96,7 @@ class TextualTokenizer(BaseTokenizer):
         if not self._fitted:
             raise RuntimeError("Call fit() before decode().")
         ids = [token_ids] if isinstance(token_ids, int) else token_ids
-        return self._tokenizer.decode(ids)
+        return self._tokenizer.decode(ids)  # type: ignore[no-any-return]
 
     @property
     def vocab_size(self) -> int:

@@ -115,7 +115,7 @@ class TemporalTokenizer(BaseTokenizer):
         Returns:
             Descriptive string (not a reconstructed datetime).
         """
-        ids = list(token_ids) if not isinstance(token_ids, list) else token_ids
+        ids = [token_ids] if isinstance(token_ids, int) else list(token_ids)
         return f"hour={ids[0]}, dow={ids[1]}, dom={ids[2] + 1}"
 
     @property

@@ -28,6 +28,7 @@ import os
 import pickle
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from src.data.dataset_manifest import DatasetManifest, DatasetShard
 from src.data.tabformer_adapter import TabFormerAdapter
@@ -147,7 +148,7 @@ class IBMTabFormerAdapter:
         n_train = max(1, int(row_count * _TRAIN_SPLIT))
         train_customers = customers[:n_train]
 
-        field_data: dict[str, list] = defaultdict(list)
+        field_data: dict[str, list[Any]] = defaultdict(list)
         for _cid, transactions in train_customers:
             for txn in transactions:
                 for field in _FITTABLE_FIELDS:

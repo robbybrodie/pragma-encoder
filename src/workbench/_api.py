@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from src.data.adapters import get_adapter
 from src.model.config import PRAGMAConfig
@@ -35,7 +36,7 @@ from src.workbench._run import (
 # Model size → PRAGMAConfig factory map (case-sensitive per §2.4)
 # ---------------------------------------------------------------------------
 
-_MODEL_SIZE_MAP: dict[str, type] = {
+_MODEL_SIZE_MAP: dict[str, Any] = {
     "S": PRAGMAConfig.pragma_s,
     "M": PRAGMAConfig.pragma_m,
     "L": PRAGMAConfig.pragma_l,

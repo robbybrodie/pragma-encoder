@@ -25,7 +25,7 @@ Field mapping to FinancialTokenizerPipeline:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
 
@@ -49,7 +49,7 @@ def _parse_timestamp(year: int, month: int, day: int, time_str: str) -> pd.Times
                         hour=hour, minute=minute)
 
 
-def _row_to_fields(row: pd.Series) -> Dict:
+def _row_to_fields(row: pd.Series) -> Dict[str, Any]:
     """Convert a single TabFormer row to a dict of pipeline field values."""
     ts = _parse_timestamp(row["Year"], row["Month"], row["Day"], row["Time"])
     amount = _parse_amount(row["Amount"])
@@ -96,7 +96,7 @@ class TabFormerAdapter:
 
     def iter_customers(
         self,
-    ) -> Iterable[Tuple[str, List[Dict]]]:
+    ) -> Iterable[Tuple[str, List[Dict[str, Any]]]]:
         """Yield (customer_id, transactions) for each unique User.
 
         Customers are yielded in ascending User-ID order.

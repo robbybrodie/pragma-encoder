@@ -26,6 +26,7 @@ import pickle
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 # Allow running as a script from the repo root
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -70,7 +71,7 @@ def main() -> None:
     print(f"  Using first {n_train} customers for fitting ({n_train / len(customers):.0%})")
 
     # Accumulate per-field raw values from training customers
-    field_data: dict[str, list] = defaultdict(list)
+    field_data: dict[str, list[Any]] = defaultdict(list)
     n_txns = 0
     for _cid, transactions in train_customers:
         for txn in transactions:
