@@ -1,0 +1,84 @@
+# RBAC — Workbench SA permissions for OpenShift integration smoke tests
+#
+# Purpose:
+#   Grant the pragma-encoder-workbench ServiceAccount the minimum permissions
+#   required to submit, monitor, and clean up short-lived test resources
+#   during opt-in Level 3b training-container smoke tests.
+#
+#   These permissions are ONLY used when RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1
+#   is explicitly set by the test operator. Normal workbench usage (notebooks,
+#   pipeline compilation, DSPA interaction) does not require any of these.
+#
+# Safety constraints:
+#   - Namespaced to pragma-encoder only (no cluster-scoped RBAC)
+#   - No access to secrets, serviceaccounts, namespaces, or cluster APIs
+#   - No wildcard verbs — exact minimum required
+#   - delete on jobs/configmaps is label-scoped by oc.py validate_safe_delete()
+#   - pytorchjobs watch/delete added for cleanup_labelled_resources fixture
+#
+# Argo CD:
+#   Wave 1 (after ServiceAccount definitions at wave 0).
+#   Argo CD adopts this manifest on next sync.
+#   Apply manually for immediate effect:
+#     oc apply -f openshift/gitops/rbac/pragma-workbench-test-runner-rbac.yaml \
+#              -n pragma-encoder
+#
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pragma-workbench-test-runner
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+    pragma.redhat.com/role-type: test-runner
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    pragma.redhat.com/purpose: >-
+      Minimum RBAC for Level 3b training-container smoke tests.
+      Grants pragma-encoder-workbench SA permission to create/monitor/clean up
+      labelled batch Jobs and ConfigMaps in this namespace only.
+rules:
+  # Pod visibility — needed to wait for Job pods and collect logs
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # Batch Jobs — create smoke Job, poll status, delete after test
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # ConfigMaps — embed smoke CSV as ConfigMap volume for the Job pod
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "delete"]
+  # Events — optional: useful diagnostics when Job or pod fails
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  # PyTorchJobs — watch/delete only (for cleanup_labelled_resources fixture)
+  #   No create — Level 3b uses batch/v1 Job, not PyTorchJob
+  - apiGroups: ["kubeflow.org"]
+    resources: ["pytorchjobs"]
+    verbs: ["get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pragma-workbench-test-runner
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+    pragma.redhat.com/role-type: test-runner
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pragma-workbench-test-runner
+subjects:
+  - kind: ServiceAccount
+    name: pragma-encoder-workbench
+    namespace: pragma-encoder
