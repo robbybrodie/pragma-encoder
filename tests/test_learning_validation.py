@@ -34,7 +34,7 @@ from src.masking import MaskingStrategy
 from src.model import PRAGMA, PRAGMAConfig
 from src.model.assembler import EmbeddingAssembler
 from src.tokenizer.vocabulary import VocabularySpec
-from src.training.readiness import TrainingReadinessReport, make_readiness_report
+from src.training.readiness import make_readiness_report
 
 
 # ---------------------------------------------------------------------------
@@ -238,11 +238,11 @@ class TestLossComputation:
             loss = _assemble_and_forward(config, vocab_spec, model, assembler, masker)
 
         assert not torch.isnan(loss), (
-            f"MLM loss is NaN. "
+            "MLM loss is NaN. "
             "Numerical instability in embeddings or logits."
         )
         assert not torch.isinf(loss), (
-            f"MLM loss is Inf. "
+            "MLM loss is Inf. "
             "Overflow in cross-entropy — logits may be too large."
         )
 
