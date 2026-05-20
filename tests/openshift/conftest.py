@@ -11,6 +11,11 @@ Safety model:
     pragma.redhat.com/test-id=<test_id>
 
 No namespace creation, no secret deletion, no Argo CD resource mutation.
+
+Pipeline runtime:
+  This environment uses OpenShift AI Data Science Pipelines (DSPA) / KFP v2.
+  Tekton PipelineRun/TaskRun are not part of the default substrate.
+  Tekton cleanup kinds are included only when RUN_TEKTON_TESTS=1.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from __future__ import annotations
 import datetime
 import os
 import uuid
+import warnings
 from collections.abc import Generator
 
 import pytest
@@ -141,8 +147,15 @@ def cleanup_labelled_resources(
     After each test, deletes only resources in the safe cleanup list that
     carry both test labels, scoped to ``runtime_namespace``.
 
-    Safe resource types (never includes secrets or serviceaccounts):
-        pipelinerun, taskrun, pod, job, configmap, pytorchjob
+    Default resource types cleaned up (never includes secrets or serviceaccounts):
+        pod, job, configmap, pytorchjob
+
+    Tekton resource types (pipelinerun, taskrun) are added to cleanup only when
+    RUN_TEKTON_TESTS=1. They are omitted by default because this environment uses
+    OpenShift AI Data Science Pipelines (DSPA) / KFP v2, which does not install
+    Tekton CRDs. Attempting to delete a non-existent CRD type produces noise.
+
+    PVCs are excluded — they may hold valuable data and require explicit opt-in.
 
     Cleanup failures are reported via warnings but do not hide the original
     test result.
@@ -154,17 +167,20 @@ def cleanup_labelled_resources(
 
     selector = label_selector(test_id)
 
-    # Resource types that are safe to cleanup when label-scoped.
-    # PVCs excluded by default — they may hold valuable data and require
-    # explicit opt-in.  Secrets and ServiceAccounts never included.
+    # Default resource kinds: types actually created by current test suite.
+    # PVCs and Secrets excluded. ServiceAccounts never included.
     _CLEANUP_KINDS = [
-        "pipelinerun",
-        "taskrun",
         "pod",
         "job",
         "configmap",
         "pytorchjob",
     ]
+
+    # Add Tekton kinds only when explicitly opted in.
+    # Omit by default — DSPA/KFP v2 does not install Tekton CRDs, so
+    # attempting to delete pipelinerun/taskrun would produce spurious warnings.
+    if os.environ.get("RUN_TEKTON_TESTS") == "1":
+        _CLEANUP_KINDS = ["pipelinerun", "taskrun"] + _CLEANUP_KINDS
 
     for kind in _CLEANUP_KINDS:
         try:
@@ -176,7 +192,6 @@ def cleanup_labelled_resources(
             )
             if result.returncode != 0:
                 # Report but do not re-raise — cleanup failure must not hide test result.
-                import warnings
                 warnings.warn(
                     f"Cleanup of {kind} with selector {selector!r} "
                     f"in namespace {runtime_namespace!r} failed "
@@ -184,7 +199,6 @@ def cleanup_labelled_resources(
                     stacklevel=2,
                 )
         except Exception as exc:  # noqa: BLE001
-            import warnings
             warnings.warn(
                 f"Cleanup of {kind} raised: {exc}",
                 stacklevel=2,

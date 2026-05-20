@@ -33,6 +33,7 @@ import ast as _ast
 import importlib
 import importlib.util
 import inspect
+import os
 import pathlib
 import sys
 
@@ -808,6 +809,198 @@ class TestNoPvcStorage:
             f"components_pragma.py source contains PVC references: {pvc_strings}. "
             f"Remove all PVC-based storage logic."
         )
+
+
+# ---------------------------------------------------------------------------
+# TestComponentBaseImage  (category: structural / environment)
+# ---------------------------------------------------------------------------
+
+
+class TestComponentBaseImage:
+    """Verify _BASE_IMAGE is the PRAGMA training image, not the workbench image.
+
+    Category: structural / environment
+
+    KFP component pods run in their own image — they do NOT inherit the
+    workbench pod's git checkout. The component image must contain PRAGMA
+    source code (src/) and all Python dependencies.
+
+    The PRAGMA training image (pragma-encoder-training) is the correct choice:
+      - Built from openshift/training/Dockerfile.training
+      - Has src/ baked in at WORKDIR (proven by Level 3b smoke)
+      - Has all Python dependencies installed
+
+    The workbench image (pragma-encoder-workbench) is deps-only:
+      - Does NOT contain PRAGMA source code
+      - Component pods would fail with: ModuleNotFoundError: No module named 'src'
+      - This is exactly the error observed in Level 3.1 cluster run
+
+    Runtime git clone is NOT the default pattern and must not be introduced.
+    """
+
+    def test_default_component_image_constant_defined(self) -> None:
+        """components_pragma must define _DEFAULT_COMPONENT_IMAGE explicitly."""
+        _require_importable()
+        assert hasattr(_comp, "_DEFAULT_COMPONENT_IMAGE"), (
+            "pipeline/components_pragma.py must define _DEFAULT_COMPONENT_IMAGE "
+            "so the default training image is explicit and independently testable."
+        )
+
+    def test_default_component_image_is_training_image(self) -> None:
+        """_DEFAULT_COMPONENT_IMAGE must reference the PRAGMA training image.
+
+        The training image is built from openshift/training/Dockerfile.training
+        and has src/ baked in at WORKDIR. It is the only image proven to have
+        the PRAGMA source tree available inside a component pod (Level 3b smoke).
+        """
+        _require_importable()
+        img = _comp._DEFAULT_COMPONENT_IMAGE
+        assert "pragma-encoder-training" in img, (
+            f"_DEFAULT_COMPONENT_IMAGE must reference the PRAGMA training image "
+            f"(pragma-encoder-training), got {img!r}. "
+            "The training image has src/ baked in; the workbench image does not."
+        )
+
+    def test_default_component_image_is_not_workbench_image(self) -> None:
+        """_DEFAULT_COMPONENT_IMAGE must NOT be the workbench image.
+
+        The workbench image (pragma-encoder-workbench) is deps-only — it does
+        not contain PRAGMA source code. Component pods using it fail with:
+          ModuleNotFoundError: No module named 'src'
+        This was observed in the Level 3.1 cluster run (run_id 62690376).
+        """
+        _require_importable()
+        img = _comp._DEFAULT_COMPONENT_IMAGE
+        assert "pragma-encoder-workbench" not in img, (
+            f"_DEFAULT_COMPONENT_IMAGE must not be the workbench image, got {img!r}. "
+            "The workbench image is deps-only and does not contain PRAGMA source code. "
+            "KFP component pods fail with ModuleNotFoundError when using it."
+        )
+
+    def test_base_image_is_training_image_by_default(self) -> None:
+        """_BASE_IMAGE (used by @_component decorators) must default to the training image.
+
+        This test validates the actual value passed to @_component(base_image=...)
+        when no env var override is set.
+        """
+        _require_importable()
+        img = _comp._BASE_IMAGE
+        assert "pragma-encoder-training" in img or (
+            # Allow env var overrides that may be set in the test environment
+            os.environ.get("PRAGMA_KFP_COMPONENT_IMAGE")
+            or os.environ.get("PRAGMA_TRAINING_IMAGE")
+        ), (
+            f"_BASE_IMAGE must default to the PRAGMA training image, got {img!r}. "
+            "KFP component pods cannot access the workbench pod's git checkout."
+        )
+
+    def test_pragma_kfp_component_image_env_var_overrides_base_image(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PRAGMA_KFP_COMPONENT_IMAGE env var overrides _BASE_IMAGE at module import.
+
+        The env var is read once at import time because KFP @dsl.component
+        captures base_image at decoration time (not at call time).
+        The caller must set PRAGMA_KFP_COMPONENT_IMAGE before importing
+        pipeline/components_pragma.py for the override to take effect.
+        """
+        custom_image = "registry.example.com/my-custom-pragma:v2"
+        monkeypatch.setenv("PRAGMA_KFP_COMPONENT_IMAGE", custom_image)
+        monkeypatch.delenv("PRAGMA_TRAINING_IMAGE", raising=False)
+
+        # Load a fresh copy of the module — _load_module uses spec_from_file_location
+        # so each call executes the module body fresh, reading the current env.
+        fresh = _load_module("components_pragma_kfp_override", _COMPONENTS_PATH)
+
+        assert fresh._BASE_IMAGE == custom_image, (
+            f"PRAGMA_KFP_COMPONENT_IMAGE must override _BASE_IMAGE at import. "
+            f"Expected {custom_image!r}, got {fresh._BASE_IMAGE!r}"
+        )
+
+    def test_pragma_training_image_env_var_overrides_base_image(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PRAGMA_TRAINING_IMAGE env var overrides _BASE_IMAGE when PRAGMA_KFP_COMPONENT_IMAGE
+        is not set. This is the primary env var for the smoke test path.
+        """
+        custom_image = "registry.example.com/my-training:v3"
+        monkeypatch.delenv("PRAGMA_KFP_COMPONENT_IMAGE", raising=False)
+        monkeypatch.setenv("PRAGMA_TRAINING_IMAGE", custom_image)
+
+        fresh = _load_module("components_pragma_training_override", _COMPONENTS_PATH)
+
+        assert fresh._BASE_IMAGE == custom_image, (
+            f"PRAGMA_TRAINING_IMAGE must override _BASE_IMAGE when "
+            f"PRAGMA_KFP_COMPONENT_IMAGE is not set. "
+            f"Expected {custom_image!r}, got {fresh._BASE_IMAGE!r}"
+        )
+
+    def test_pragma_kfp_component_image_takes_precedence_over_training_image(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PRAGMA_KFP_COMPONENT_IMAGE takes precedence over PRAGMA_TRAINING_IMAGE.
+
+        When both env vars are set, PRAGMA_KFP_COMPONENT_IMAGE wins.
+        This allows the component image to differ from the PyTorchJob training
+        image if needed (e.g. a lighter image for orchestration-only components).
+        """
+        kfp_image = "registry.example.com/kfp-override:v1"
+        training_image = "registry.example.com/training-image:v2"
+        monkeypatch.setenv("PRAGMA_KFP_COMPONENT_IMAGE", kfp_image)
+        monkeypatch.setenv("PRAGMA_TRAINING_IMAGE", training_image)
+
+        fresh = _load_module("components_pragma_precedence", _COMPONENTS_PATH)
+
+        assert fresh._BASE_IMAGE == kfp_image, (
+            f"PRAGMA_KFP_COMPONENT_IMAGE must take precedence over PRAGMA_TRAINING_IMAGE. "
+            f"Expected {kfp_image!r}, got {fresh._BASE_IMAGE!r}"
+        )
+
+    def test_no_runtime_git_clone_in_components_source(self) -> None:
+        """components_pragma.py must not contain runtime git clone logic.
+
+        Runtime git clone is not the default pattern. The training image
+        (built from Dockerfile.training) bakes in src/ at WORKDIR.
+        """
+        src = _src_text(_COMPONENTS_PATH)
+        assert "git clone" not in src, (
+            "pipeline/components_pragma.py must not contain 'git clone'. "
+            "Runtime git clone is not the default pattern. "
+            "Use the training image (src/ baked in at WORKDIR) instead."
+        )
+
+    def test_generated_yaml_contains_component_image_when_kfp_available(
+        self,
+    ) -> None:
+        """When kfp is installed, the compiled YAML must embed the component image.
+
+        Validates that the image set at _BASE_IMAGE actually propagates into
+        the compiled KFP v2 YAML that gets uploaded to DSPA. If the image is
+        wrong in the YAML, KFP component pods will use the wrong image.
+        """
+        import os as _os
+        import tempfile
+
+        kfp = pytest.importorskip("kfp", reason="kfp not installed — skipping YAML check")
+        _require_importable()
+        fn = getattr(_pipe, "pragma_pretraining_pipeline", None)
+        assert fn is not None, "pragma_pretraining_pipeline must be defined"
+
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            kfp.compiler.Compiler().compile(pipeline_func=fn, package_path=tmp_path)
+            content = pathlib.Path(tmp_path).read_text()
+            expected_image = _comp._BASE_IMAGE
+            assert expected_image in content, (
+                f"Compiled pipeline YAML must contain the component image "
+                f"{expected_image!r}. "
+                "If the image is missing from the YAML, KFP component pods "
+                "will not use the correct image."
+            )
+        finally:
+            if _os.path.exists(tmp_path):
+                _os.unlink(tmp_path)
 
 
 # ---------------------------------------------------------------------------
