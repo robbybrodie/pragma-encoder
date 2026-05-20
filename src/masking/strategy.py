@@ -146,7 +146,7 @@ class MaskingStrategy:
                       key type was selected for masking.
         """
         selected = torch.zeros_like(key_ids, dtype=torch.bool)
-        unique_keys = key_ids.unique()
+        unique_keys = key_ids.unique()  # type: ignore[no-untyped-call]
         for k in unique_keys:
             if torch.bernoulli(torch.tensor(self.key_mask_prob)).item():
                 selected |= (key_ids == k)

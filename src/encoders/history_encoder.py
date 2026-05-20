@@ -133,7 +133,7 @@ class _RoPEMultiheadAttention(nn.Module):
         )  # (batch, n_heads, 1+ne, head_dim)
 
         attn_out = attn_out.transpose(1, 2).contiguous().view(batch, seq_len, self.d_model)
-        return self.out_proj(attn_out)
+        return self.out_proj(attn_out)  # type: ignore[no-any-return]
 
 
 class _HistoryEncoderLayer(nn.Module):
@@ -269,4 +269,4 @@ class HistoryEncoder(nn.Module):
             zh = layer(zh, te, attn_mask=attn_mask)
 
         # Final layer norm over the full sequence
-        return self.norm(zh)
+        return self.norm(zh)  # type: ignore[no-any-return]

@@ -22,7 +22,7 @@ ADR: docs/decisions/003-workbench-training-api.md
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from src.data.dataset_manifest import DatasetManifest
 
@@ -117,7 +117,7 @@ class PragmaRunProtocol(Protocol):
         """
         ...
 
-    def metrics(self) -> dict:
+    def metrics(self) -> dict[str, Any]:
         """Return training metrics dict.
 
         Keys (present when training has started or completed):
@@ -129,7 +129,7 @@ class PragmaRunProtocol(Protocol):
         """
         ...
 
-    def artifacts(self) -> dict:
+    def artifacts(self) -> dict[str, str]:
         """Return S3 artifact URI dict.
 
         Keys (present when available):
@@ -171,8 +171,8 @@ class PragmaRun:
 
     manifest: DatasetManifest
     steps: list[PipelineStep] = field(default_factory=list)
-    _metrics: dict = field(default_factory=dict, repr=False)
-    _artifacts: dict = field(default_factory=dict, repr=False)
+    _metrics: dict[str, Any] = field(default_factory=dict, repr=False)
+    _artifacts: dict[str, str] = field(default_factory=dict, repr=False)
     kfp_run_url: str | None = None
     run_mode: str | None = None
 
@@ -197,10 +197,10 @@ class PragmaRun:
         if self.kfp_run_url:
             print(f"\nKFP run: {self.kfp_run_url}")
 
-    def metrics(self) -> dict:
+    def metrics(self) -> dict[str, Any]:
         """Return current training metrics dict."""
         return dict(self._metrics)
 
-    def artifacts(self) -> dict:
+    def artifacts(self) -> dict[str, str]:
         """Return current S3 artifact URI dict."""
         return dict(self._artifacts)

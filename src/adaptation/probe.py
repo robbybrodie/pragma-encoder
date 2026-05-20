@@ -28,9 +28,9 @@ Pre-processing (required by paper §3.1.1):
 Probe type and optimiser (§3.1.1):
     Classification: LogisticRegression(solver='lbfgs', max_iter=1000)
     Regression:     Ridge() — L2 regularised linear regression.
-    L-BFGS is the paper-specified optimiser (key-numbers.md: probe_optimiser=L-BFGS, §3.1.1).
-    L-BFGS is a quasi-Newton method suited for smooth (L2) objectives. Ridge's quadratic
-    penalty is smooth; sklearn Ridge uses an equivalent exact solver by default.
+    L-BFGS is the paper-specified optimiser (key-numbers.md: probe_optimiser=L-BFGS,
+    §3.1.1). L-BFGS is a quasi-Newton method suited for smooth (L2) objectives.
+    Ridge's quadratic penalty is smooth; sklearn Ridge uses an equivalent exact solver.
 
 Metrics (§3.1.1):
     score() returns AUC-ROC for classification (matching PRAGMA paper metrics).
@@ -118,7 +118,7 @@ class EmbeddingProbe:
             task:       "classification" — fits LogisticRegression(solver='lbfgs').
                         "regression"    — fits Ridge(solver='lbfgs').
         """
-        X: np.ndarray = embeddings.detach().cpu().numpy()   # (n_samples, d)
+        x: np.ndarray = embeddings.detach().cpu().numpy()   # (n_samples, d)
         y: np.ndarray = labels.detach().cpu().numpy()       # (n_samples,)
 
         self._task = task
@@ -127,7 +127,7 @@ class EmbeddingProbe:
         # The pre-norm architecture produces embeddings in different scales;
         # scaling ensures L-BFGS convergence is not dominated by scale differences.
         self.scaler = StandardScaler()
-        X_scaled: np.ndarray = self.scaler.fit_transform(X)
+        x_scaled: np.ndarray = self.scaler.fit_transform(x)
 
         if task == "classification":
             # LogisticRegression with L-BFGS — key-numbers.md: probe_optimiser=L-BFGS, §3.1.1
@@ -144,7 +144,7 @@ class EmbeddingProbe:
             # the default solver which minimises the same L2 objective exactly.
             self.model = Ridge()
 
-        self.model.fit(X_scaled, y)
+        self.model.fit(x_scaled, y)
 
     def predict(
         self,
@@ -166,9 +166,9 @@ class EmbeddingProbe:
         assert self.scaler is not None and self.model is not None, (
             "EmbeddingProbe.predict() called before fit(). Call fit() first."
         )
-        X: np.ndarray = embeddings.detach().cpu().numpy()
-        X_scaled: np.ndarray = self.scaler.transform(X)    # apply — do NOT re-fit
-        preds: np.ndarray = self.model.predict(X_scaled)   # (n_samples,)
+        x: np.ndarray = embeddings.detach().cpu().numpy()
+        x_scaled: np.ndarray = self.scaler.transform(x)    # apply — do NOT re-fit
+        preds: np.ndarray = self.model.predict(x_scaled)   # (n_samples,)
         return torch.from_numpy(preds)
 
     def score(
@@ -194,15 +194,15 @@ class EmbeddingProbe:
         assert self.scaler is not None and self.model is not None, (
             "EmbeddingProbe.score() called before fit(). Call fit() first."
         )
-        X: np.ndarray = embeddings.detach().cpu().numpy()
+        x: np.ndarray = embeddings.detach().cpu().numpy()
         y: np.ndarray = labels.detach().cpu().numpy()
-        X_scaled: np.ndarray = self.scaler.transform(X)
+        x_scaled: np.ndarray = self.scaler.transform(x)
 
         if self._task == "classification":
             # AUC-ROC — paper metrics use ROC-AUC (Table 2, §3.3; key-numbers.md: §3.1.1)
             # predict_proba returns (n_samples, n_classes); take class-1 probability.
-            proba: np.ndarray = self.model.predict_proba(X_scaled)[:, 1]
+            proba: np.ndarray = self.model.predict_proba(x_scaled)[:, 1]
             return float(roc_auc_score(y, proba))
         else:
-            preds: np.ndarray = self.model.predict(X_scaled)
+            preds: np.ndarray = self.model.predict(x_scaled)
             return float(r2_score(y, preds))

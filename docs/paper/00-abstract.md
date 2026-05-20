@@ -59,7 +59,7 @@ commercially sensitive. All examples are synthetic and not from real production 
 The abstract establishes the non-negotiable design choices:
 
 - Encoder-only (bidirectional) architecture — confirmed in ADR 001
-- Masked modelling pre-training objective — confirmed in ADR 004
+- Masked modelling pre-training objective — confirmed in ADR 001 §4
 - Self-supervised (no labels required for pre-training)
 - Two adaptation modes: embedding probe + LoRA
 - General-purpose: single backbone for all tasks

@@ -1,19 +1,23 @@
 """train_pragma() — workbench entry point for PRAGMA pretraining.
 
 Maps the five §2.4 pipeline stages onto a concrete execution path and
-returns a PragmaRun for workbench inspection.
+returns a PragmaRun (or PragmaPipeline for mode="pipeline") for inspection.
 
 Supported modes:
     "dry_run"  — return a PragmaRun immediately without doing any work.
                  Constructs a placeholder DatasetManifest from the requested
                  dataset name and PRAGMAConfig. No S3, no cluster, no subprocess.
                  Useful for previewing pipeline shape and configuration.
+    "pipeline" — return a PragmaPipeline capturing training intent.
+                 No training, no S3, no cluster at call time.
+                 Call .compile(path) to produce a KFP v2 YAML.
     "auto"     — detect environment: OpenShift pod → "cluster"; else → "local".
     "cluster"  — submit a KFTO PyTorchJob via oc apply (not yet implemented).
     "local"    — run scripts/train_pragma.py as a subprocess.
 
 Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 ADR: docs/decisions/003-workbench-training-api.md
+ADR: docs/decisions/004-workbench-decorated-pipelines.md
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, Callable
 
 from src.data.adapters import get_adapter
 from src.model.config import PRAGMAConfig
@@ -35,7 +40,7 @@ from src.workbench._run import (
 # Model size → PRAGMAConfig factory map (case-sensitive per §2.4)
 # ---------------------------------------------------------------------------
 
-_MODEL_SIZE_MAP: dict[str, type] = {
+_MODEL_SIZE_MAP: dict[str, Callable[[], PRAGMAConfig]] = {
     "S": PRAGMAConfig.pragma_s,
     "M": PRAGMAConfig.pragma_m,
     "L": PRAGMAConfig.pragma_l,
@@ -64,7 +69,7 @@ def train_pragma(
     local_csv_path: str | None = None,
     output_dir: str | None = None,
     max_steps: int | None = None,
-) -> PragmaRun:
+) -> PragmaRun | Any:
     """Launch PRAGMA pretraining and return a PragmaRun for inspection.
 
     Args:
@@ -127,6 +132,14 @@ def train_pragma(
     if effective_mode == "dry_run":
         return _build_dry_run(dataset=dataset, config=config)
 
+    if effective_mode == "pipeline":
+        return _build_pipeline_intent(
+            dataset=dataset,
+            model_size=model_size,
+            epochs=epochs,
+            max_steps=max_steps,
+        )
+
     if effective_mode == "local":
         return _build_local_run(
             dataset=dataset,
@@ -179,6 +192,44 @@ def _build_dry_run(dataset: str, config: PRAGMAConfig) -> PragmaRun:
         config=config,
     )
     return PragmaRun(manifest=manifest, run_mode="dry_run")
+
+
+# ---------------------------------------------------------------------------
+# Private — pipeline mode builder
+# ---------------------------------------------------------------------------
+
+def _build_pipeline_intent(
+    dataset: str,
+    model_size: str,
+    epochs: int,
+    max_steps: int | None,
+) -> Any:
+    """Return a PragmaPipeline capturing training intent without executing anything.
+
+    No training, no S3, no cluster access. The returned PragmaPipeline can be
+    inspected via show_pipeline() and compiled to KFP YAML via compile(path).
+
+    Args:
+        dataset:    Dataset registry key, e.g. "ibm-tabformer".
+        model_size: Model size variant: "S", "M", or "L".
+        epochs:     Number of pretraining epochs.
+        max_steps:  Maximum training steps, or None.
+
+    Returns:
+        PragmaPipeline wrapping the captured training intent.
+    """
+    from src.workbench._decorators import PragmaPipeline
+    from src.workbench._intent import DatasetIntent, TrainIntent
+
+    pipeline_name = f"pragma-{model_size.lower()}-{dataset}"
+    ds_intent = DatasetIntent(name=dataset, prepare_if_missing=True)
+    train_intent = TrainIntent(
+        dataset=ds_intent,
+        model_size=model_size,
+        epochs=epochs,
+        max_steps=max_steps,
+    )
+    return PragmaPipeline(name=pipeline_name, train_intent=train_intent)
 
 
 # ---------------------------------------------------------------------------

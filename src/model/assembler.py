@@ -147,7 +147,7 @@ class EmbeddingAssembler(nn.Module):
 
         Works for any leading shape — both (batch, na) and (batch, ne, ni).
         """
-        return self.E(key_ids) + self.E(val_ids) + self.pos_emb(pos_ids)
+        return self.E(key_ids) + self.E(val_ids) + self.pos_emb(pos_ids)  # type: ignore[no-any-return]
 
     def forward(
         self,
