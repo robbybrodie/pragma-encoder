@@ -153,7 +153,24 @@ class TestCleanInstall:
                 f"stderr:\n{install.stderr[-2000:]}"
             )
 
+            # Verify the installed package is importable using the venv Python.
+            # src/__init__.py exists, so 'import src' is the canonical import check.
+            python_exe = bin_dir / "python"
+            import_check = subprocess.run(
+                [str(python_exe), "-c", "import src"],
+                capture_output=True,
+                text=True,
+            )
+            assert import_check.returncode == 0, (
+                "import src failed in the venv after pip install -e .\n"
+                "The package was installed (exit 0) but the top-level 'src' "
+                "namespace is not importable. Check pyproject.toml "
+                "[tool.setuptools] configuration.\n"
+                f"stdout:\n{import_check.stdout}\n"
+                f"stderr:\n{import_check.stderr}"
+            )
+
         print(
-            f"\n[TestCleanInstall] pip install -e . succeeded "
+            f"\n[TestCleanInstall] pip install -e . and import src succeeded "
             f"(Python {sys.version.split()[0]})."
         )
