@@ -24,7 +24,11 @@ Safety:
   - All created resources carry test labels; cleaned up by fixture
   - No secrets are printed or asserted on
 
-Current status: ALL tests skipped unless RUN_OPENSHIFT_GPU_SMOKE=1.
+Current status:
+  TestGPUSmokeLocalPrereqs — static constant checks; skip unless
+    RUN_OPENSHIFT_TESTS=1 (conftest suite-wide gate).
+  TestGPUTrainingSmoke — cluster runtime; also requires
+    RUN_OPENSHIFT_GPU_SMOKE=1.
 This file is a scaffold — the smoke test is implemented but gated.
 """
 
@@ -81,14 +85,21 @@ def _resolve_gpu_count() -> int:
 
 
 # ---------------------------------------------------------------------------
-# Local prerequisite checks (no cluster, no opt-in needed)
+# Static prerequisite checks (no cluster required; RUN_OPENSHIFT_TESTS=1
+# conftest gate still applies because this file is under tests/openshift/)
 # ---------------------------------------------------------------------------
 
 
 class TestGPUSmokeLocalPrereqs:
-    """Local checks that run without cluster access or opt-in.
+    """Static checks that validate GPU smoke configuration constants.
 
-    These verify static properties of the GPU smoke configuration.
+    No cluster access or GPU is needed for these tests. They verify
+    module-level constants (_GPU_JOB_PREFIX length, default counts, guards).
+
+    Note: even though no cluster is needed, conftest.py skips all tests in
+    tests/openshift/ unless RUN_OPENSHIFT_TESTS=1 is set. These checks would
+    be better placed in an ungated top-level test file, but are kept here for
+    co-location with the GPU smoke they describe.
     """
 
     def test_gpu_job_prefix_length_safe(self) -> None:
