@@ -28,8 +28,8 @@ import os
 import pytest
 
 from pragma_encoder.model.config import PRAGMAConfig
-from pragma_encoder.workbench._api import train_pragma
-from pragma_encoder.workbench._run import (
+from tools.openshift_ai.workbench._api import train_pragma
+from tools.openshift_ai.workbench._run import (
     PIPELINE_STEP_NAMES,
     PragmaRun,
     PragmaRunProtocol,
@@ -482,8 +482,8 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-             patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
+        with patch("tools.openshift_ai.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("tools.openshift_ai.workbench._api.subprocess") as mock_subp, \
              patch("pathlib.Path.mkdir"):
             mock_subp.run.return_value = MagicMock(returncode=returncode)
             run = train_pragma(
@@ -650,8 +650,8 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-             patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
+        with patch("tools.openshift_ai.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("tools.openshift_ai.workbench._api.subprocess") as mock_subp, \
              patch("pathlib.Path.mkdir"):
             mock_subp.run.return_value = MagicMock(returncode=0)
             train_pragma(
@@ -688,8 +688,8 @@ class TestLocalModeContract:
                     "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
             env_backup[var] = os.environ.pop(var, None)
         try:
-            with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-                 patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
+            with patch("tools.openshift_ai.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+                 patch("tools.openshift_ai.workbench._api.subprocess") as mock_subp, \
                  patch("pathlib.Path.mkdir"):
                 mock_subp.run.return_value = MagicMock(returncode=0)
                 run = train_pragma(
@@ -721,8 +721,8 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-             patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
+        with patch("tools.openshift_ai.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("tools.openshift_ai.workbench._api.subprocess") as mock_subp, \
              patch("pathlib.Path.mkdir"):
             mock_subp.run.return_value = MagicMock(returncode=0)
             train_pragma(
@@ -781,8 +781,8 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-             patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
+        with patch("tools.openshift_ai.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("tools.openshift_ai.workbench._api.subprocess") as mock_subp, \
              patch("pathlib.Path.mkdir"):
             mock_subp.run.return_value = MagicMock(returncode=0)
             train_pragma(

@@ -35,7 +35,7 @@ if str(_REPO_ROOT) not in sys.path:
 # Smoke test
 # ---------------------------------------------------------------------------
 
-from pragma_encoder.workbench._api import train_pragma  # noqa: E402
+from tools.openshift_ai.workbench._api import train_pragma  # noqa: E402
 
 _CSV_PATH   = "tests/fixtures/ibm_tabformer_tiny.csv"
 _OUTPUT_DIR = "/tmp/pragma-local-smoke"

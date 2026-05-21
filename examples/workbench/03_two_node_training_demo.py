@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # ── Imports ───────────────────────────────────────────────────────────────────
-from pragma_encoder.workbench import train_pragma
+from tools.openshift_ai.workbench import train_pragma
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration

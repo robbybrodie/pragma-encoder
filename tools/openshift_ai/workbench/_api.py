@@ -30,7 +30,8 @@ from typing import Any, Callable
 
 from pragma_encoder.data.adapters import get_adapter
 from pragma_encoder.model.config import PRAGMAConfig
-from pragma_encoder.workbench._run import (
+
+from ._run import (
     STEP_DESCRIPTIONS,
     PipelineStep,
     PragmaRun,
@@ -218,8 +219,8 @@ def _build_pipeline_intent(
     Returns:
         PragmaPipeline wrapping the captured training intent.
     """
-    from pragma_encoder.workbench._decorators import PragmaPipeline
-    from pragma_encoder.workbench._intent import DatasetIntent, TrainIntent
+    from ._decorators import PragmaPipeline
+    from ._intent import DatasetIntent, TrainIntent
 
     pipeline_name = f"pragma-{model_size.lower()}-{dataset}"
     ds_intent = DatasetIntent(name=dataset, prepare_if_missing=True)

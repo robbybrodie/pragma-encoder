@@ -6,7 +6,7 @@ to a KFP v2 pipeline YAML for submission to OpenShift Pipelines.
 
 Target UX::
 
-    from pragma_encoder.workbench import pragma_pipeline, dataset, train
+    from tools.openshift_ai.workbench import pragma_pipeline, dataset, train
 
     @pragma_pipeline(name="pragma-s-ibm-tabformer")
     def run():
@@ -32,12 +32,12 @@ from __future__ import annotations
 import importlib
 from typing import Any, Callable
 
-from pragma_encoder.workbench._intent import (
+from ._intent import (
     TrainIntent,
     start_capture,
     stop_capture,
 )
-from pragma_encoder.workbench._run import PIPELINE_STEP_NAMES, STEP_DESCRIPTIONS
+from ._run import PIPELINE_STEP_NAMES, STEP_DESCRIPTIONS
 
 # ---------------------------------------------------------------------------
 # PragmaPipeline — result of @pragma_pipeline decoration

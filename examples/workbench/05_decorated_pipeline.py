@@ -57,7 +57,7 @@ if str(_REPO_ROOT) not in sys.path:
 # Imports
 # ---------------------------------------------------------------------------
 
-from pragma_encoder.workbench import (  # noqa: E402
+from tools.openshift_ai.workbench import (  # noqa: E402
     pragma_pipeline,
     dataset,
     train,
@@ -154,7 +154,7 @@ print("dry_run and local modes are unchanged (ADR 004)")
 print("=" * 60)
 print()
 print("train_pragma(mode='dry_run') — returns PragmaRun as before:")
-from pragma_encoder.workbench._run import PragmaRun  # noqa: E402
+from tools.openshift_ai.workbench._run import PragmaRun  # noqa: E402
 dry = train_pragma(dataset="ibm-tabformer", model_size="S", mode="dry_run")
 print(f"  type     : {type(dry).__name__}")
 print(f"  run_mode : {dry.run_mode}")
