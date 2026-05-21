@@ -1,0 +1,62 @@
+# RHOAI Hardware Profile — GPU, PRAGMA-S production training
+#
+# OpenShift AI 3.3 primitive: Hardware Profile
+# API: apiVersion: infrastructure.opendatahub.io/v1, kind: HardwareProfile
+# Status: GA in RHOAI 3.3 (replaces deprecated Accelerator Profiles and
+#         Container Size selector)
+#
+# This profile defines the resource shape for PRAGMA-S (~10M params) production
+# training: 1 GPU per node, 8 CPU, 64Gi RAM.
+#
+# This corresponds to the resource requests in:
+#   openshift/training/pytorchjob-pragma-s.yaml
+#   openshift/training/pytorchjob-pragma-s-2node.yaml
+#
+# For N-node distributed training, each node/pod receives these resources.
+#
+# Accelerator selection:
+#   The `identifier: nvidia.com/gpu` maps to NVIDIA GPU scheduling.
+#   The node selector targets nodes labelled for NVIDIA GPU use.
+#   Adjust `identifier` and `nodeSelector` for different GPU vendor/model.
+#
+# To apply to cluster (requires RHOAI admin):
+#   oc apply -f tests/openshift/fixtures/hardware-profile-gpu-pragma-s.yaml -n redhat-ods-applications
+#
+# Reference: docs/openshift-ai-3.3-alignment.md §Hardware Profile
+
+apiVersion: infrastructure.opendatahub.io/v1
+kind: HardwareProfile
+metadata:
+  name: pragma-gpu-pragma-s
+  namespace: redhat-ods-applications
+  labels:
+    app: pragma-encoder
+    pragma.redhat.com/purpose: production-training
+spec:
+  displayName: "PRAGMA-S GPU Training (1×GPU per node)"
+  description: >
+    Production training shape for PRAGMA-S (~10M params).
+    1 NVIDIA GPU per node, 8 CPU cores, 64Gi RAM.
+    Use for single-node or multi-node (nnodes≥2) PyTorchJob training.
+  identifiers:
+    - displayName: "CPU"
+      identifier: cpu
+      minCount: "4"
+      maxCount: "16"
+      defaultCount: "8"
+    - displayName: "Memory"
+      identifier: memory
+      minCount: "32Gi"
+      maxCount: "128Gi"
+      defaultCount: "64Gi"
+    - displayName: "NVIDIA GPU"
+      identifier: nvidia.com/gpu
+      minCount: "1"
+      maxCount: "1"
+      defaultCount: "1"
+  nodeSelector:
+    nvidia.com/gpu.present: "true"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule

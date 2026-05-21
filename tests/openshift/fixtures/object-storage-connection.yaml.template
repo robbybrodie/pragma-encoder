@@ -1,0 +1,56 @@
+# RHOAI Object-Storage Connection — test fixture template
+#
+# OpenShift AI 3.3 primitive: Connection (Data Connection)
+#
+# In the RHOAI dashboard, a user creates an object-storage Connection by
+# providing S3 credentials. RHOAI creates a Kubernetes Secret annotated with:
+#   opendatahub.io/managed: "true"
+#   opendatahub.io/connection-type: s3
+#
+# The Secret is then injected into workbench pods and training pods as env vars.
+#
+# Standard RHOAI Connection env var names:
+#   AWS_ACCESS_KEY_ID
+#   AWS_SECRET_ACCESS_KEY
+#   AWS_S3_BUCKET
+#   AWS_S3_ENDPOINT
+#   AWS_DEFAULT_REGION
+#
+# Alignment note:
+#   The current pragma-encoder training code reads MODEL_REGISTRY_* env vars
+#   (MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT, MODEL_REGISTRY_ACCESS_KEY,
+#   MODEL_REGISTRY_SECRET_KEY). These are equivalent in function to the AWS_*
+#   names that a standard RHOAI Connection would inject.
+#
+#   This fixture uses MODEL_REGISTRY_* naming to match the current code.
+#   When migrating to a formal RHOAI Connection, either:
+#   - create the Connection with these custom key names, OR
+#   - update checkpoints.py to read AWS_S3_BUCKET / AWS_S3_ENDPOINT etc.
+#
+# DO NOT commit a populated version of this file.
+# Use kubeseal to seal credentials: see openshift/secrets/workbench-secret.template.yaml
+#
+# Reference: docs/openshift-ai-3.3-alignment.md §Connection / Data Connection
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pragma-workbench-env
+  namespace: pragma-encoder
+  annotations:
+    opendatahub.io/managed: "true"
+    opendatahub.io/connection-type: s3
+  labels:
+    opendatahub.io/dashboard: "true"
+type: Opaque
+stringData:
+  # S3 credentials — used by pragma_encoder.training.checkpoints
+  # Variable names match what pragma-encoder training code reads.
+  MODEL_REGISTRY_BUCKET: REPLACE_ME
+  MODEL_REGISTRY_ENDPOINT: REPLACE_ME     # e.g. https://s3.example.com
+  MODEL_REGISTRY_ACCESS_KEY: REPLACE_ME
+  MODEL_REGISTRY_SECRET_KEY: REPLACE_ME
+
+  # Additional workbench env vars (not used by training code directly)
+  NGC_API_KEY: REPLACE_ME
+  HF_TOKEN: REPLACE_ME

@@ -110,6 +110,8 @@ Quick start:
 
 See `docs/training-guide.md` for pretraining instructions and `docs/evaluation.md` for downstream evaluation.
 
+OpenShift AI 3.3 primitive alignment and platform responsibility split: `docs/openshift-ai-3.3-alignment.md`
+
 ---
 
 ## Repository Structure

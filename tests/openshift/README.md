@@ -71,6 +71,11 @@ tests/openshift/  ─── verify substrate ──►  read-only checks (Levels
 Durable data and training artifacts live in S3-compatible object storage.
 Tests never write to S3 unless explicitly authorised.
 
+`tests/openshift/fixtures/` — RHOAI 3.3-aligned fixture examples:
+Connection templates, Hardware Profile examples, TrainJob reference (Tech Preview).
+These are reference fixtures documenting expected platform config, not deployed artifacts.
+See `docs/openshift-ai-3.3-alignment.md` for the full primitive map and responsibility split.
+
 ---
 
 ## Maturity Levels
