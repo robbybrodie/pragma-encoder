@@ -169,16 +169,17 @@ class TestSmokePipelineSource:
     """Source inspection: verify the component body calls the right scripts."""
 
     def test_component_source_references_fit_tokenizer(self) -> None:
-        """pragma_smoke_training component must call fit_tokenizer.py.
+        """pragma_smoke_training component must invoke fit_tokenizer.
 
-        fit_tokenizer.py builds vocab.pkl from the inline CSV before training
+        fit_tokenizer builds vocab.pkl from the inline CSV before training
         starts. Without this, train_pragma.py would fail with a missing vocab.
+        The wheel-based image provides it as python -m pragma_encoder.data.fit_tokenizer.
         Verified by inspecting the source text (not execution — no cluster needed).
         """
         src = _smoke_pipeline_source()
         assert "fit_tokenizer" in src, (
             "pipeline/pragma_smoke_pipeline.py source must reference fit_tokenizer. "
-            "The component must run src/data/fit_tokenizer.py before training."
+            "The component must invoke pragma_encoder.data.fit_tokenizer before training."
         )
 
     def test_component_source_references_train_pragma_max_steps(self) -> None:
@@ -196,6 +197,29 @@ class TestSmokePipelineSource:
         assert "max-steps" in src or "max_steps" in src, (
             "pipeline/pragma_smoke_pipeline.py source must reference max-steps or max_steps. "
             "The component must pass --max-steps to train_pragma.py to stop early."
+        )
+
+    def test_component_uses_module_invocation_for_fit_tokenizer(self) -> None:
+        """pragma_smoke_training must invoke fit_tokenizer as a Python module.
+
+        The wheel-based training image installs pragma_encoder into site-packages
+        but does not contain a src/ source tree. The component must invoke
+        fit_tokenizer via module execution:
+            [sys.executable, "-m", "pragma_encoder.data.fit_tokenizer"]
+
+        Direct file-path invocation (str(project_root / "src" / ...)) fails in
+        the wheel image because the src/ directory is not present.
+        """
+        src = _smoke_pipeline_source()
+        assert "pragma_encoder.data.fit_tokenizer" in src, (
+            "pragma_smoke_pipeline.py must invoke fit_tokenizer as a module: "
+            "[sys.executable, '-m', 'pragma_encoder.data.fit_tokenizer']. "
+            "Source-tree file-path invocation is not compatible with the wheel image."
+        )
+        assert '"-m"' in src or "'-m'" in src, (
+            "pragma_smoke_pipeline.py must use the '-m' flag to invoke fit_tokenizer. "
+            "Expected: [sys.executable, '-m', 'pragma_encoder.data.fit_tokenizer']. "
+            "The wheel image has no src/ directory — module invocation is required."
         )
 
     def test_component_source_references_pragma_s_variant(self) -> None:
@@ -260,6 +284,33 @@ class TestSmokePipelineSafety:
                 f"pipeline/pragma_smoke_pipeline.py must not reference {term!r}. "
                 "Level 3 smoke must not depend on S3 — no credentials required."
             )
+
+    def test_component_has_no_src_tree_assumption(self) -> None:
+        """pragma_smoke_training must not reference src/pragma_encoder source-tree paths.
+
+        The wheel-based training image (openshift/training/Dockerfile.training)
+        installs pragma_encoder into site-packages. There is no src/ directory
+        in the image. Any reference to a source-tree path for fit_tokenizer
+        causes RuntimeError at pod startup when the path is not found.
+
+        The component must use module invocation:
+            [sys.executable, "-m", "pragma_encoder.data.fit_tokenizer"]
+        Not direct file execution:
+            [sys.executable, str(project_root / "src" / "pragma_encoder" / ...)]
+        """
+        src = _smoke_pipeline_source()
+        # The old broken invocation searched for the source file
+        assert '"src" / "pragma_encoder"' not in src, (
+            "pragma_smoke_pipeline.py must not construct source-tree paths via "
+            "'src' / 'pragma_encoder'. The wheel image has no src/ directory. "
+            "Use: [sys.executable, '-m', 'pragma_encoder.data.fit_tokenizer']"
+        )
+        # No direct file execution of fit_tokenizer via path
+        assert "/src/pragma_encoder/data/fit_tokenizer" not in src, (
+            "pragma_smoke_pipeline.py must not reference "
+            "'/src/pragma_encoder/data/fit_tokenizer' as a file path. "
+            "Use module invocation: python -m pragma_encoder.data.fit_tokenizer"
+        )
 
     def test_smoke_module_has_no_pvc_reference(self) -> None:
         """pragma_smoke_pipeline.py must not reference PVC or persistent volumes.
@@ -328,4 +379,53 @@ class TestSmokePipelineCompile:
         print(
             f"\n[Compile] pragma_smoke_training_pipeline compiled to "
             f"{len(content)} bytes of KFP v2 YAML."
+        )
+
+    def test_compiled_yaml_has_no_src_tree_paths(self) -> None:
+        """Compiled pipeline YAML must not embed source-tree path invocations.
+
+        KFP serialises the component function body into the compiled YAML.
+        The compiled YAML must not contain old source-tree path patterns
+        (e.g. 'src/pragma_encoder/data/fit_tokenizer') because those paths
+        do not exist in the wheel-based training image.
+
+        Skips if kfp is not installed (optional dependency).
+        """
+        if importlib.util.find_spec("kfp") is None:
+            pytest.skip(
+                "kfp is not installed. Install with: pip install 'pragma-encoder[workbench]'."
+            )
+
+        import kfp  # noqa: PLC0415
+
+        from pipeline.pragma_smoke_pipeline import (  # noqa: PLC0415
+            pragma_smoke_training_pipeline,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            yaml_path = pathlib.Path(tmp_dir) / "smoke_pipeline.yaml"
+            kfp.compiler.Compiler().compile(
+                pipeline_func=pragma_smoke_training_pipeline,
+                package_path=str(yaml_path),
+            )
+            content = yaml_path.read_text()
+
+        # Old source-tree path — must not appear in compiled YAML
+        assert "/src/pragma_encoder/data/fit_tokenizer" not in content, (
+            "Compiled pipeline YAML embeds the old source-tree path "
+            "'/src/pragma_encoder/data/fit_tokenizer'. "
+            "Update the component body to use module invocation: "
+            "python -m pragma_encoder.data.fit_tokenizer"
+        )
+        # Module invocation must be present in compiled YAML
+        assert "pragma_encoder.data.fit_tokenizer" in content, (
+            "Compiled pipeline YAML must embed 'pragma_encoder.data.fit_tokenizer' "
+            "from the module invocation in the component body. "
+            "The component should call: [sys.executable, '-m', 'pragma_encoder.data.fit_tokenizer']"
+        )
+        # scripts/train_pragma.py search must be present (not project_root source search)
+        assert "scripts/train_pragma.py" in content, (
+            "Compiled pipeline YAML must embed 'scripts/train_pragma.py' path search. "
+            "The component should search for train_pragma.py in the scripts/ directory "
+            "as copied by Dockerfile.training, not via a source-tree project_root search."
         )
