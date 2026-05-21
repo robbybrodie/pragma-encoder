@@ -2,7 +2,7 @@
 
 A data-scientist-friendly guide to training, inspecting, and understanding the
 PRAGMA foundation model pipeline — from your first workbench call to a
-distributed two-node training run.
+distributed N-node training run (2-node smoke proven).
 
 > Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 
@@ -304,7 +304,7 @@ scheduling constraint.
 
 By putting data in S3 (which any node can read) and using `emptyDir` for the
 local workspace, the scheduler is free to place training pods on any available
-GPU node. For two-node training this is essential — the two pods may end up on
+GPU node. For N-node training this is essential — pods may end up on
 completely different physical nodes.
 
 PVCs may appear elsewhere in the platform (for the data science pipeline server,
@@ -312,22 +312,26 @@ for example), but they are not part of the PRAGMA training data path.
 
 ---
 
-## Step 7 — Two-node distributed training
+## Step 7 — N-node distributed training (2-node smoke proven)
 
-To see the two-node topology in action, run:
+PRAGMA's training architecture is N-node capable through `torchrun/KFTO`.
+The committed manifest demonstrates the minimal distributed case (2 nodes).
+
+To see the 2-node topology in action, run:
 
 ```bash
 python examples/workbench/03_two_node_training_demo.py
 ```
 
-Setting `nodes=2` in `train_pragma()` selects the two-node PyTorchJob manifest
+Setting `nodes=2` in `train_pragma()` selects the 2-node PyTorchJob manifest
 (`openshift/training/pytorchjob-pragma-s-2node.yaml`). This creates two pods:
 
 - **Master** (rank 0) — coordinates rendezvous, handles logging and checkpointing
-- **Worker** (rank 1) — participates in gradient averaging, skips checkpointing
+- **Worker** (rank 1..N-1) — participates in gradient averaging, skips checkpointing
 
-Both pods run `torchrun --nnodes=2 --nproc_per_node=1`, giving a `WORLD_SIZE`
-of 2. The training script detects this automatically and:
+For N nodes, KFTO creates 1 Master + (N-1) Worker replicas.
+Each pod runs `torchrun --nnodes=N --nproc_per_node=1`, giving `WORLD_SIZE=N`.
+The training script detects this automatically and:
 
 - Uses `DistributedSampler` to split the training data between pods
 - Wraps the model in `DistributedDataParallel` (DDP) so gradients are averaged
@@ -335,7 +339,7 @@ of 2. The training script detects this automatically and:
 - Synchronises all pods at the end of each epoch with a barrier
 - Gates all checkpointing and S3 uploads to rank 0 (the Master pod) only
 
-**What is fully supported on a fresh two-node run:**
+**What is fully supported on a two-node run:**
 
 | Capability | Status |
 |-----------|--------|
@@ -343,21 +347,24 @@ of 2. The training script detects this automatically and:
 | Disjoint data sharding via DistributedSampler | Supported |
 | Rank-0-only checkpointing (no S3 write races) | Supported |
 | Epoch barrier synchronisation | Supported |
+| All-rank checkpoint resume from S3 (TD-006 fix) | Supported |
 
-**What is not yet supported — TD-006:**
+**N-node checkpoint resume — TD-006 resolved:**
 
-Checkpoint resume across pods is not correctly implemented for the per-pod
-`emptyDir` storage pattern. If a two-node job is interrupted *after* a
-checkpoint has been saved and then restarted, rank 0 downloads the checkpoint
-from S3 but the Worker pod looks for it in its own (empty) local workspace and
-finds nothing. Rank 0 resumes; rank 1 starts from scratch. Model states diverge.
+Checkpoint resume across pods now correctly handles the per-pod `emptyDir`
+storage pattern. The fix (implemented in `src/training/checkpoints.py`) uses
+an all-rank download pattern:
 
-For the demo manifest (`--max-steps 20`, first run), this does not matter: no
-checkpoint is written before the job exits, so `--resume` is always a no-op.
-The limitation only affects genuine restarts of long-running two-node jobs.
+1. Rank 0 selects the latest checkpoint key from S3.
+2. Rank 0 broadcasts the key string to all ranks via `dist.broadcast_object_list`.
+3. **Every rank independently downloads the checkpoint** from S3 to its own local
+   `emptyDir`. Workers do not depend on rank 0's local files.
+4. All ranks call `dist.barrier()` before loading.
 
-The resolution (all ranks download the checkpoint from S3 independently) is
-described in `docs/tech-debt.md` under **TD-006**. It is not yet implemented.
+If a two-node job is interrupted after a checkpoint has been saved and restarted,
+all ranks resume from the same checkpoint. Model states are consistent.
+
+See `docs/tech-debt.md` under **TD-006** for the full resolution record.
 
 ---
 
@@ -458,7 +465,7 @@ minute on a laptop.
 | Prove the model can learn (before real training) | `PYTHONPATH=. python examples/workbench/06_local_learning_validation.py` |
 | Prepare data locally (no cluster) | Run `src/data/fit_tokenizer.py` + `scripts/upload_training_data.py` |
 | Submit a real single-node training job | Follow `docs/training-guide.md` → Cluster training — PRAGMA-S |
-| Submit a real two-node training job | Apply `openshift/training/pytorchjob-pragma-s-2node.yaml` (see TD-006 note above) |
+| Submit a real N-node training job (2-node default) | Apply `openshift/training/pytorchjob-pragma-s-2node.yaml` (see TD-006 note above) |
 | Use PRAGMA embeddings for downstream tasks | See `src/adaptation/probe.py` (linear probe) and `src/adaptation/lora.py` (LoRA) |
 | Understand the paper-to-code mapping | Read `docs/paper-to-code.md` |
 
@@ -477,5 +484,5 @@ minute on a laptop.
 | `mode="cluster"` — cluster dispatch | **Not yet implemented** |
 | `mode="local"` — local subprocess dispatch | **Not yet implemented** |
 | Single-node training via PyTorchJob | **Complete** — `pytorchjob-pragma-s.yaml` |
-| Two-node fresh training via PyTorchJob | **Complete** — `pytorchjob-pragma-s-2node.yaml` |
-| Two-node checkpoint resume | **Not yet correct** (TD-006) |
+| N-node training via PyTorchJob (2-node smoke proven) | **Complete** — `pytorchjob-pragma-s-2node.yaml` (architecture is N-node capable; 2-node is the validated default) |
+| N-node checkpoint resume | **Complete** (TD-006 resolved) — all ranks independently download checkpoint from S3; `src/training/checkpoints.py` |
