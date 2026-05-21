@@ -11,8 +11,8 @@ Purpose:
 
   It proves only that the training container:
     - Is pullable from the cluster registry
-    - Starts without error and imports PRAGMA source (src/)
-    - Runs fit_tokenizer.py on a minimal synthetic CSV
+    - Starts without error and imports pragma_encoder wheel
+    - Runs fit_tokenizer via python -m pragma_encoder.data.fit_tokenizer
     - Runs the training script with the PRAGMA-S model config
     - Reaches --max-steps 1 and exits 0
 
@@ -123,16 +123,20 @@ _REQUIRED_CSV_COLUMNS = {
 # Runs inside the training container as: bash -c <_SMOKE_SHELL>
 #
 # Steps:
-#   1. Validate that required source files are present in the image WORKDIR.
-#   2. Verify that src/ imports work (catches stale images missing src/).
+#   1. Validate that scripts/train_pragma.py is present in the image WORKDIR.
+#   2. Verify that pragma_encoder wheel imports work (catches stale images).
 #   3. Set up data directory — copy mounted ConfigMap CSV to the hardcoded
-#      fit_tokenizer.py path (data/tabformer/card_transaction.v1.csv).
-#   4. Run fit_tokenizer.py to build vocab.pkl.
+#      fit_tokenizer path (data/tabformer/card_transaction.v1.csv).
+#   4. Run fit_tokenizer via python -m to build vocab.pkl.
 #   5. Run train_pragma.py with --max-steps 1 on CPU.
 #
-# fit_tokenizer.py hardcoded paths (relative to CWD):
+# fit_tokenizer hardcoded paths (relative to CWD):
 #   reads:  data/tabformer/card_transaction.v1.csv
 #   writes: data/tabformer/vocab.pkl
+#
+# Image install model: wheel-based (not editable src/ install).
+# pragma_encoder is installed from dist/pragma_encoder-*.whl into site-packages.
+# There is no src/ tree in the image — use 'python -m' to invoke modules.
 # ---------------------------------------------------------------------------
 
 _SMOKE_SHELL = textwrap.dedent("""\
@@ -143,26 +147,28 @@ _SMOKE_SHELL = textwrap.dedent("""\
     echo "[smoke] Namespace: $PRAGMA_NAMESPACE"
     echo ""
 
-    echo "[smoke] --- Step 1: Validating required source files ---"
-    for required_path in scripts/train_pragma.py src/pragma_encoder/data/fit_tokenizer.py src/pragma_encoder/model/pragma.py; do
-        if [ ! -f "$required_path" ]; then
-            echo "ERROR: $required_path not found in image WORKDIR $(pwd)."
-            echo "       The training image may be stale or missing PRAGMA source."
-            exit 1
-        fi
-        echo "[smoke] OK: $required_path"
-    done
+    echo "[smoke] --- Step 1: Validating required scripts ---"
+    if [ ! -f scripts/train_pragma.py ]; then
+        echo "ERROR: scripts/train_pragma.py not found in image WORKDIR $(pwd)."
+        echo "       The training image may be stale or missing scripts/."
+        exit 1
+    fi
+    echo "[smoke] OK: scripts/train_pragma.py"
 
-    echo "[smoke] --- Step 2: Validating src/ imports ---"
+    echo "[smoke] --- Step 2: Validating wheel imports ---"
     python -c "import pragma_encoder.model; import pragma_encoder.encoders; import pragma_encoder.tokenizer" || {
-        echo "ERROR: Core PRAGMA imports failed. Image may be missing src/."
+        echo "ERROR: Core pragma_encoder imports failed. Wheel may not be installed."
         exit 1
     }
     python -c "import pragma_encoder.workbench" || {
-        echo "ERROR: import pragma_encoder.workbench failed. Image may be stale."
+        echo "ERROR: import pragma_encoder.workbench failed. Wheel may be stale."
         exit 1
     }
-    echo "[smoke] OK: all PRAGMA source imports passed."
+    python -c "import pragma_encoder.training.checkpoints" || {
+        echo "ERROR: import pragma_encoder.training.checkpoints failed."
+        exit 1
+    }
+    echo "[smoke] OK: all pragma_encoder wheel imports passed."
 
     echo "[smoke] --- Step 3: Setting up data directory ---"
     mkdir -p data/tabformer
@@ -170,9 +176,9 @@ _SMOKE_SHELL = textwrap.dedent("""\
     echo "[smoke] CSV rows: $(wc -l < data/tabformer/card_transaction.v1.csv) (including header)"
 
     echo "[smoke] --- Step 4: Fitting tokenizer ---"
-    python src/pragma_encoder/data/fit_tokenizer.py
+    python -m pragma_encoder.data.fit_tokenizer
     if [ ! -f data/tabformer/vocab.pkl ]; then
-        echo "ERROR: vocab.pkl was not created by fit_tokenizer.py"
+        echo "ERROR: vocab.pkl was not created by fit_tokenizer"
         exit 1
     fi
     echo "[smoke] OK: vocab.pkl created."
@@ -509,14 +515,15 @@ class TestTrainingJobSmokePrereqs:
         """_SMOKE_SHELL must reference all required training commands.
 
         The smoke shell must:
-          1. Call fit_tokenizer.py (fits tokenizer on the smoke CSV)
+          1. Call fit_tokenizer via python -m (fits tokenizer on the smoke CSV)
           2. Call train_pragma.py (runs training with --max-steps 1)
           3. Reference --max-steps 1 (ensures the training stops early)
           4. Reference --model-variant (ensures PRAGMA-S config is used)
         """
-        assert "fit_tokenizer.py" in _SMOKE_SHELL, (
-            "_SMOKE_SHELL must call src/pragma_encoder/data/fit_tokenizer.py. "
-            "The tokenizer must be fitted before training can start."
+        assert "fit_tokenizer" in _SMOKE_SHELL, (
+            "_SMOKE_SHELL must invoke pragma_encoder.data.fit_tokenizer. "
+            "The tokenizer must be fitted before training can start. "
+            "Use: python -m pragma_encoder.data.fit_tokenizer"
         )
         assert "train_pragma.py" in _SMOKE_SHELL, (
             "_SMOKE_SHELL must call scripts/train_pragma.py."
