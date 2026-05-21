@@ -110,6 +110,8 @@ Quick start:
 
 See `docs/training-guide.md` for pretraining instructions and `docs/evaluation.md` for downstream evaluation.
 
+Separation-of-concerns architecture and layer model: `docs/architecture.md`
+
 OpenShift AI 3.3 primitive alignment and platform responsibility split: `docs/openshift-ai-3.3-alignment.md`
 
 ArgoCD ownership, pipeline authoring lifecycle, and GitOps promotion path: `docs/openshift-gitops-argocd.md`

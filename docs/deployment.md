@@ -7,6 +7,10 @@ OpenShift AI (RHOAI) 3.3 via ArgoCD GitOps.
 
 ## Architecture
 
+For the separation-of-concerns layer model and ownership table, see
+`docs/architecture.md`. This document covers bootstrap steps, sync wave
+order, and cluster-specific prerequisites.
+
 ```
 Git (pragma-implementation branch)
   └── ArgoCD Application (openshift-gitops)
