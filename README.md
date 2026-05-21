@@ -112,6 +112,8 @@ See `docs/training-guide.md` for pretraining instructions and `docs/evaluation.m
 
 OpenShift AI 3.3 primitive alignment and platform responsibility split: `docs/openshift-ai-3.3-alignment.md`
 
+ArgoCD ownership, pipeline authoring lifecycle, and GitOps promotion path: `docs/openshift-gitops-argocd.md`
+
 ---
 
 ## Repository Structure

@@ -259,3 +259,58 @@ invariant, `barrier_if_distributed` helper, and KFP import boundary.
 - Manifest: `openshift/training/pytorchjob-pragma-s-2node.yaml`
 - ADR 003: docs/decisions/003-workbench-training-api.md (no PVC canonical storage)
 - Paper: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
+
+
+---
+
+## TD-007: pragma_smoke_pipeline component body uses source-tree paths
+
+**Date:** 2026-05-21
+**Severity:** Low (Level 3 cluster smoke only; no regression in current tests)
+**Status:** Identified, not yet fixed
+
+### Description
+
+`pipeline/pragma_smoke_pipeline.py` contains a KFP component function body
+(`pragma_smoke_training`) that locates `fit_tokenizer.py` by searching for:
+
+```python
+_candidate / "src" / "pragma_encoder" / "data" / "fit_tokenizer.py"
+```
+
+And then invokes it as:
+
+```python
+subprocess.run([sys.executable, str(project_root / "src" / "pragma_encoder" / "data" / "fit_tokenizer.py")])
+```
+
+Since the training image was refactored to install the `pragma_encoder` wheel
+(commit d15a249) rather than copy the source tree, there is no `src/` directory
+in the image. This path search will fail silently if the component pod uses the
+current wheel-based training image.
+
+### Why it does not affect current tests
+
+The Level 3 pipeline smoke test (`test_03_pipeline_smoke_run.py`) is marked
+`xfail` pending a `smoke_training` component that can run end-to-end in the
+current image. The component body is never executed by current passing tests.
+
+### Resolution
+
+Update `pragma_smoke_training` component body to use the wheel module path:
+
+1. Remove the `_search_roots` PRAGMA root detection loop.
+2. Replace the `subprocess.run([sys.executable, str(project_root / "src" / ...)])` call
+   with `python -m pragma_encoder.data.fit_tokenizer` (module invocation via wheel).
+3. Replace the `scripts/train_pragma.py` path construction with a search for
+   `scripts/train_pragma.py` relative to the image WORKDIR (`/opt/app-root/src/`),
+   consistent with the fix applied to `test_05_s3_checkpoint_resume.py` (commit 787e55d).
+
+This is analogous to the fix already applied to the Level 5 S3 smoke script.
+
+### References
+
+- Code: `pipeline/pragma_smoke_pipeline.py` — `pragma_smoke_training` component body
+- Prior fix (same pattern): `tests/openshift/test_05_s3_checkpoint_resume.py` (commit 787e55d)
+- Image wheel refactor: `openshift/training/Dockerfile.training` (commit d15a249)
+- Test: `tests/openshift/test_03_pipeline_smoke_run.py` (xfail)
