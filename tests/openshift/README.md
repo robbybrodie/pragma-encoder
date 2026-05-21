@@ -83,7 +83,7 @@ Tests never write to S3 unless explicitly authorised.
 | 3 | OpenShift AI KFP v2 pipeline smoke | In progress / xfail | `test_03_pipeline_smoke_run.py` |
 | 3b | Training container Job smoke | Implemented | `test_03b_training_job_smoke.py` |
 | 4 | PyTorchJob N-node smoke (default: nnodes=2) | Implemented | `test_04_pytorchjob_smoke.py` |
-| 5 | S3-backed checkpoint/resume | Unit tests complete; cluster integration scaffold present | `test_05_s3_checkpoint_resume.py` |
+| 5 | S3-backed checkpoint/resume | Implemented | `test_05_s3_checkpoint_resume.py` |
 | 6 | GPU training smoke (single-node opt-in) | Scaffold implemented | `test_06_gpu_training_smoke.py` |
 | 7 | Bank-data adapter validation | Future | — |
 
@@ -112,6 +112,8 @@ Tests never write to S3 unless explicitly authorised.
 | `RUN_PYTORCHJOB_SMOKE=1` | (unset) | Opt-in for Level 4 runtime smoke (creates a short-lived PyTorchJob). Also requires `RUN_PYTORCHJOB_TESTS=1`. |
 | `PRAGMA_PYTORCHJOB_NNODES` | `2` | Number of nodes for the Level 4 N-node smoke. Minimum 2 (nnodes=1 is non-distributed; use Level 3b). Values >2 require `PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1`. |
 | `PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1` | (unset) | Permit N>2 node smoke. Guards against accidental cluster overload. Required when `PRAGMA_PYTORCHJOB_NNODES > 2`. |
+| `RUN_OPENSHIFT_S3_RESUME_SMOKE=1` | (unset) | Opt-in for Level 5 S3-backed checkpoint/resume two-run smoke. Also requires `RUN_OPENSHIFT_TESTS=1`, `PRAGMA_TEST_NAMESPACE`, and `PRAGMA_TRAINING_IMAGE`. S3 credentials must be present in the `pragma-workbench-env` Secret. |
+| `PRAGMA_S3_RESUME_PREFIX` | `pragma-encoder/test-checkpoints/<test_id>` | S3 key prefix for Level 5 test checkpoint storage. |
 | `RUN_TEKTON_TESTS=1` | (unset) | Opt-in for Tekton PipelineRun/TaskRun CRD checks. Not required for OpenShift AI KFP v2. |
 | `PRAGMA_TEST_TIMEOUT_SECONDS` | `300` | Timeout for cluster wait loops (minimum 30s). |
 
@@ -290,6 +292,30 @@ PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder-training:latest \
 pytest tests/openshift/test_04_pytorchjob_smoke.py::TestPyTorchJobSmoke -q
 ```
 
+### S3-backed checkpoint/resume smoke (Level 5 — implemented)
+
+Local prereqs only (no cluster, no S3 credentials needed):
+
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+pytest tests/openshift/test_05_s3_checkpoint_resume.py::TestS3ResumeLocalPrereqs -q
+```
+
+Expected: 3 passed.
+
+Full two-run S3 smoke (requires S3 credentials in `pragma-workbench-env` Secret and a running cluster):
+
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_OPENSHIFT_S3_RESUME_SMOKE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder-training:latest \
+pytest tests/openshift/test_05_s3_checkpoint_resume.py -q
+```
+
+Expected: 4 passed (3 local prereqs + 1 two-run S3 checkpoint/resume runtime smoke). ~70s.
+
 ---
 
 ## Verifying Normal Test Suite Is Unaffected
@@ -378,6 +404,27 @@ orchestration. Those are separate concerns at different maturity levels.
 architecture is N-node capable through `torchrun/KFTO`; larger N-node validation is
 Level 6 (future scale testing).
 
+### Level 5 — S3-backed checkpoint/resume (gated by RUN_OPENSHIFT_S3_RESUME_SMOKE=1)
+
+**4 tests total.** 3 are local prereqs (no cluster). 1 is the runtime two-run smoke.
+
+- `TestS3ResumeLocalPrereqs` (3 local prereqs, no cluster needed):
+  - `test_s3_resume_job_prefix_safe` — `_S3_RESUME_JOB_PREFIX` leaves room for test_id + KFTO master suffix
+  - `test_checkpoints_module_exists` — `src/training/checkpoints.py` exists
+  - `test_train_pragma_has_resolve_resume_checkpoint` — `scripts/train_pragma.py` calls `resolve_resume_checkpoint`
+- `TestS3CheckpointResumeSmoke` (1 runtime test, requires `RUN_OPENSHIFT_S3_RESUME_SMOKE=1`):
+  - `test_s3_checkpoint_upload_and_all_rank_download` — two-run smoke:
+    - Run 1: 2-node PyTorchJob trains 5 steps → uploads checkpoint to S3 (`Checkpoint uploaded` in logs)
+    - Run 2: 2-node PyTorchJob resumes with `--resume` → all ranks independently download from S3
+    - Asserts `Resuming from checkpoint` appears in run 2 logs (loaded by all ranks)
+    - Asserts `RANK=1` appears in combined logs (worker pod executed independently)
+    - Proves TD-006 is fixed: workers do not rely on rank 0's `emptyDir`
+
+**Architecture**: All-rank S3 download implemented in `src/training/checkpoints.py`. Rank 0
+selects the S3 key, broadcasts via `dist.broadcast_object_list`, all ranks download
+independently to their own `emptyDir`, then `dist.barrier()`. 34 unit tests in
+`tests/test_checkpoint_resume.py`. Cluster integration verified 2026-05-21 (4/4 PASSED, 70s).
+
 ---
 
 ## What Is Future / xfail
@@ -395,19 +442,6 @@ Large N-node validation (N>2) is future scale testing. The current Level 4 smoke
 proves the 2-node minimal distributed case. To test N>2:
 set `PRAGMA_PYTORCHJOB_NNODES=<N>` and `PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1`.
 This is not in CI; it is manual cluster validation only.
-
-### Level 5 — S3-backed checkpoint/resume (TD-006 resolved)
-
-TD-006 is **resolved**. `src/training/checkpoints.py` implements the all-rank download
-pattern: rank 0 selects the S3 key, broadcasts it via `dist.broadcast_object_list`,
-all ranks download independently, then barrier. 34 unit tests pass
-(`tests/test_checkpoint_resume.py`). `scripts/train_pragma.py` uses
-`resolve_resume_checkpoint()` and `upload_checkpoint_if_rank0()`.
-
-The **cluster integration test** (`test_05_s3_checkpoint_resume.py`) is the remaining
-gap: it would submit a PyTorchJob, let it save a checkpoint to S3, interrupt it, restart
-it with `--resume`, and assert both ranks load from the same checkpoint. This requires
-a real S3 bucket configured in the cluster and is future work.
 
 ### Level 6 — GPU training smoke (scaffold implemented)
 
