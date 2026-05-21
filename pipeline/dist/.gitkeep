@@ -1,0 +1,18 @@
+# Compiled KFP v2 pipeline YAML artifacts.
+#
+# Files here are tracked by git (see .gitignore — !pipeline/** negation).
+# Commit compiled artifacts so operators can apply them without a workbench.
+#
+# Generate a smoke pipeline YAML (set PRAGMA_TRAINING_IMAGE first):
+#   PRAGMA_TRAINING_IMAGE=<image-uri> python -c "
+#   import kfp
+#   from pipeline.pragma_smoke_pipeline import pragma_smoke_training_pipeline
+#   kfp.compiler.Compiler().compile(pragma_smoke_training_pipeline, 'pipeline/dist/pragma-smoke.yaml')
+#   "
+#
+# Generate the full PRAGMA pipeline YAML:
+#   PRAGMA_TRAINING_IMAGE=<image-uri> python -c "
+#   import kfp
+#   from pipeline.pragma_pipeline import pragma_pipeline
+#   kfp.compiler.Compiler().compile(pragma_pipeline, 'pipeline/dist/pragma-pipeline.yaml')
+#   "
