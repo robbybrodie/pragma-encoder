@@ -27,12 +27,15 @@ TD-006: docs/tech-debt.md — multi-node checkpoint resume with per-pod emptyDir
 
 from __future__ import annotations
 
+import logging
 import os
 import pathlib
 from typing import Optional
 
 import torch
 import torch.distributed as dist
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +202,7 @@ def upload_checkpoint_if_rank0(
     client = _make_s3_client(config)
     s3_key = f"{s3_prefix.rstrip('/')}/{ckpt_path.name}"
     client.upload_file(str(ckpt_path), config["bucket"], s3_key)
+    logger.info(f"Checkpoint uploaded to S3: s3://{config['bucket']}/{s3_key}")
 
 
 # ---------------------------------------------------------------------------
