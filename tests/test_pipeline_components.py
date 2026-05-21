@@ -822,18 +822,19 @@ class TestComponentBaseImage:
     Category: structural / environment
 
     KFP component pods run in their own image — they do NOT inherit the
-    workbench pod's git checkout. The component image must contain PRAGMA
-    source code (src/) and all Python dependencies.
+    workbench pod's environment.  The component image must have the
+    pragma_encoder wheel installed and all Python dependencies present.
 
     The PRAGMA training image (pragma-encoder-training) is the correct choice:
       - Built from openshift/training/Dockerfile.training
-      - Has src/ baked in at WORKDIR (proven by Level 3b smoke)
+      - Has pragma_encoder wheel installed via pip (proven by Level 3b smoke)
       - Has all Python dependencies installed
 
-    The workbench image (pragma-encoder-workbench) is deps-only:
-      - Does NOT contain PRAGMA source code
-      - Component pods would fail with: ModuleNotFoundError: No module named 'src'
-      - This is exactly the error observed in Level 3.1 cluster run
+    The workbench image (pragma-encoder-workbench) is not suitable:
+      - Does NOT have pragma_encoder installed as a production package
+      - Component pods would fail with:
+          ModuleNotFoundError: No module named 'pragma_encoder'
+      - This is exactly the error class observed in Level 3.1 cluster run
 
     Runtime git clone is NOT the default pattern and must not be introduced.
     """
@@ -850,31 +851,33 @@ class TestComponentBaseImage:
         """_DEFAULT_COMPONENT_IMAGE must reference the PRAGMA training image.
 
         The training image is built from openshift/training/Dockerfile.training
-        and has src/ baked in at WORKDIR. It is the only image proven to have
-        the PRAGMA source tree available inside a component pod (Level 3b smoke).
+        and has the pragma_encoder wheel installed via pip.  It is the only image
+        proven to have pragma_encoder available inside a component pod
+        (Level 3b smoke).
         """
         _require_importable()
         img = _comp._DEFAULT_COMPONENT_IMAGE
         assert "pragma-encoder-training" in img, (
             f"_DEFAULT_COMPONENT_IMAGE must reference the PRAGMA training image "
             f"(pragma-encoder-training), got {img!r}. "
-            "The training image has src/ baked in; the workbench image does not."
+            "The training image has the pragma_encoder wheel installed via pip."
         )
 
     def test_default_component_image_is_not_workbench_image(self) -> None:
         """_DEFAULT_COMPONENT_IMAGE must NOT be the workbench image.
 
         The workbench image (pragma-encoder-workbench) is deps-only — it does
-        not contain PRAGMA source code. Component pods using it fail with:
-          ModuleNotFoundError: No module named 'src'
+        not have pragma_encoder installed as a production package.  Component
+        pods using it fail with:
+          ModuleNotFoundError: No module named 'pragma_encoder'
         This was observed in the Level 3.1 cluster run (run_id 62690376).
         """
         _require_importable()
         img = _comp._DEFAULT_COMPONENT_IMAGE
         assert "pragma-encoder-workbench" not in img, (
             f"_DEFAULT_COMPONENT_IMAGE must not be the workbench image, got {img!r}. "
-            "The workbench image is deps-only and does not contain PRAGMA source code. "
-            "KFP component pods fail with ModuleNotFoundError when using it."
+            "The workbench image does not have pragma_encoder installed as a production "
+            "package.  KFP component pods fail with ModuleNotFoundError when using it."
         )
 
     def test_base_image_is_training_image_by_default(self) -> None:
@@ -891,7 +894,7 @@ class TestComponentBaseImage:
             or os.environ.get("PRAGMA_TRAINING_IMAGE")
         ), (
             f"_BASE_IMAGE must default to the PRAGMA training image, got {img!r}. "
-            "KFP component pods cannot access the workbench pod's git checkout."
+            "The training image has the pragma_encoder wheel installed via pip."
         )
 
     def test_pragma_kfp_component_image_env_var_overrides_base_image(
@@ -960,13 +963,13 @@ class TestComponentBaseImage:
         """components_pragma.py must not contain runtime git clone logic.
 
         Runtime git clone is not the default pattern. The training image
-        (built from Dockerfile.training) bakes in src/ at WORKDIR.
+        installs the pragma_encoder wheel via pip.
         """
         src = _src_text(_COMPONENTS_PATH)
         assert "git clone" not in src, (
             "pipeline/components_pragma.py must not contain 'git clone'. "
             "Runtime git clone is not the default pattern. "
-            "Use the training image (src/ baked in at WORKDIR) instead."
+            "Use the training image (pragma_encoder wheel installed via pip) instead."
         )
 
     def test_generated_yaml_contains_component_image_when_kfp_available(
@@ -1071,6 +1074,150 @@ class TestDatasetAdapterUsage:
         assert "DatasetManifest" in src or "manifest_uri" in src, (
             "pipeline/pragma_pipeline.py must reference DatasetManifest or "
             "manifest_uri — the canonical §2.4 training data contract."
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestWheelBasedLanguage  (category: structural / wheel)
+# ---------------------------------------------------------------------------
+
+
+class TestWheelBasedLanguage:
+    """Verify pipeline/components_pragma.py uses wheel-based language throughout.
+
+    Category: structural / wheel
+
+    The pragma_encoder package is a platform-neutral wheel.  The training image
+    installs it via pip.  KFP component pods use the installed wheel — they do
+    NOT have a source tree (no src/ directory).
+
+    These tests guard against regressing to source-tree language:
+      - "No module named 'src'" (old workbench-era error message)
+      - "source code (src/)" (old "must contain PRAGMA source code" phrasing)
+      - "src/ baked in" (old Dockerfile description)
+      - "scripts/train_pragma.py" as a runtime entrypoint reference
+      - "src/workbench/" path references (moved to tools/openshift_ai/workbench/)
+      - "src/data/adapters/" as a module path (installed as pragma_encoder.data.adapters)
+
+    And enforce positive wheel-based language:
+      - References the installed entrypoint pragma-encoder-train
+        or the module invocation python -m pragma_encoder.training.train
+    """
+
+    def test_no_src_module_not_found_message(self) -> None:
+        """components_pragma.py must not contain 'No module named \\'src\\'' error text.
+
+        'ModuleNotFoundError: No module named \\'src\\'' was the old error that
+        occurred when a component pod used the deps-only workbench image, which
+        lacked the src/ source tree.  The current architecture installs
+        pragma_encoder as a wheel — the correct error would be
+        'No module named \\'pragma_encoder\\'' if the wheel is missing.
+        """
+        src = _src_text(_COMPONENTS_PATH)
+        assert "No module named 'src'" not in src, (
+            "pipeline/components_pragma.py must not contain the old error message "
+            "'No module named \\'src\\''. "
+            "The pragma_encoder wheel is installed into site-packages. "
+            "Replace with: ModuleNotFoundError: No module named 'pragma_encoder'."
+        )
+
+    def test_no_source_code_src_phrasing(self) -> None:
+        """components_pragma.py must not describe the image as containing 'source code (src/)'.
+
+        'PRAGMA source code (src/)' was the old workbench-era description.
+        The current training image installs the pragma_encoder wheel via pip —
+        it is not a source-tree installation.  Wheel-based language:
+          'pragma_encoder wheel installed'
+        """
+        src = _src_text(_COMPONENTS_PATH)
+        assert "source code (src/)" not in src, (
+            "pipeline/components_pragma.py must not describe the component image as "
+            "containing 'source code (src/)'. "
+            "The image installs the pragma_encoder wheel. "
+            "Use: 'pragma_encoder wheel installed'."
+        )
+
+    def test_no_src_baked_in_phrasing(self) -> None:
+        """components_pragma.py must not describe Dockerfile as 'with src/ baked in'.
+
+        'Dockerfile.training with src/ baked in' was the old Dockerfile description.
+        The current Dockerfile installs the pragma_encoder wheel via pip.
+        Wheel-based language: 'with pragma_encoder wheel installed via pip'.
+        """
+        src = _src_text(_COMPONENTS_PATH)
+        assert "src/ baked in" not in src, (
+            "pipeline/components_pragma.py must not contain 'src/ baked in'. "
+            "Dockerfile.training installs the pragma_encoder wheel via pip, "
+            "not a source-tree bake. "
+            "Use: 'pragma_encoder wheel installed via pip'."
+        )
+
+    def test_no_src_workbench_path_reference(self) -> None:
+        """components_pragma.py must not reference 'src/workbench/' paths.
+
+        Workbench helpers have moved from src/workbench/ to
+        tools/openshift_ai/workbench/.  Any reference to 'src/workbench/'
+        is a stale path from before the TD-009 restructuring.
+        """
+        src = _src_text(_COMPONENTS_PATH)
+        assert "src/workbench/" not in src, (
+            "pipeline/components_pragma.py must not reference 'src/workbench/'. "
+            "Workbench helpers are at tools/openshift_ai/workbench/. "
+            "Update any cross-references to the current path."
+        )
+
+    def test_no_scripts_train_pragma_as_runtime_entrypoint(self) -> None:
+        """components_pragma.py must not name scripts/train_pragma.py as the entrypoint.
+
+        scripts/train_pragma.py was the old training entrypoint referenced in
+        component comments as 'Working training entrypoint: scripts/train_pragma.py'.
+        The current wheel-installed entrypoints are:
+          pragma-encoder-train
+          python -m pragma_encoder.training.train
+        A source-file reference would fail in the wheel image where scripts/ does
+        not exist.  Comments may mention scripts/train_pragma.py only for backward-
+        compatibility notes — not as the primary runtime path.
+        """
+        src = _src_text(_COMPONENTS_PATH)
+        assert "Working training entrypoint: scripts/train_pragma.py" not in src, (
+            "pipeline/components_pragma.py must not describe scripts/train_pragma.py "
+            "as the 'Working training entrypoint'. "
+            "The wheel-installed entrypoints are: pragma-encoder-train "
+            "or python -m pragma_encoder.training.train."
+        )
+
+    def test_run_pretraining_references_wheel_entrypoint(self) -> None:
+        """run_pretraining comments must reference the wheel-installed entrypoint.
+
+        The comment describing the training entrypoint must point to the
+        wheel-installed entry point, not the source-file path.  Expected:
+          pragma-encoder-train
+          or python -m pragma_encoder.training.train
+        """
+        src = _src_text(_COMPONENTS_PATH)
+        has_entrypoint_ref = (
+            "pragma-encoder-train" in src
+            or "pragma_encoder.training.train" in src
+        )
+        assert has_entrypoint_ref, (
+            "pipeline/components_pragma.py must reference the wheel-installed "
+            "training entrypoint: 'pragma-encoder-train' or "
+            "'pragma_encoder.training.train'. "
+            "Component pods use the wheel — not scripts/train_pragma.py."
+        )
+
+    def test_prepare_dataset_references_wheel_module_path(self) -> None:
+        """prepare_dataset docstring must reference the wheel module path for adapters.
+
+        'pragma_encoder/data/adapters/__init__.py' is the installed package path.
+        The old source-tree path was 'src/data/adapters/__init__.py'.
+        Adapters are imported as: from pragma_encoder.data.adapters import get_adapter
+        """
+        src = _src_text(_COMPONENTS_PATH)
+        assert "src/data/adapters" not in src, (
+            "pipeline/components_pragma.py must not reference 'src/data/adapters'. "
+            "The installed module path is 'pragma_encoder/data/adapters' "
+            "(or imported as pragma_encoder.data.adapters)."
         )
 
 

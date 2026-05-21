@@ -13,7 +13,8 @@ flag is False and @dsl.component is not applied - components are plain Python
 callables that can be imported and inspected without a running KFP server.
 
 Design (ADR 003):
-  - pipeline/ -> src/ only.  No circular dependency introduced.
+  - pipeline/ imports from the pragma_encoder wheel only.  No circular
+    dependency introduced.  No source-tree path assumptions.
   - DatasetManifest / manifest_uri is the canonical dataset contract.
   - No PVC-backed dataset storage.  All data lives in S3.
   - prepare_dataset delegates to DatasetAdapter (get_adapter).
@@ -47,7 +48,8 @@ def _component(**kwargs):
 
 # ---------------------------------------------------------------------------
 # The five sec.2.4 pipeline stage names
-# Must mirror PIPELINE_STEP_NAMES in src/workbench/_run.py (ADR 003).
+# Must mirror PIPELINE_STEP_NAMES in
+# tools/openshift_ai/workbench/_run.py (ADR 003).
 # ---------------------------------------------------------------------------
 
 PIPELINE_STAGE_NAMES: tuple[str, ...] = (
@@ -61,18 +63,20 @@ PIPELINE_STAGE_NAMES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 # Component base image
 #
-# KFP component pods do NOT inherit the workbench pod's git checkout.
-# The component image must contain PRAGMA source code (src/) and all
-# Python dependencies.  The PRAGMA training image is the correct choice —
-# it is built from openshift/training/Dockerfile.training with src/ baked in.
+# KFP component pods do NOT inherit the workbench pod's environment.
+# The component image must have the pragma_encoder wheel installed and all
+# Python dependencies present.  The PRAGMA training image is the correct
+# choice — it is built from openshift/training/Dockerfile.training with
+# the pragma_encoder wheel installed via pip.
 #
 # Override at compile time via env var (read once at module import):
 #   PRAGMA_KFP_COMPONENT_IMAGE — explicit override (highest priority)
 #   PRAGMA_TRAINING_IMAGE      — training image URI (fallback)
 #
-# Do NOT use the workbench image (pragma-encoder-workbench) — it is a
-# deps-only image without PRAGMA source code. KFP component pods would fail
-# with ModuleNotFoundError: No module named 'src'.
+# Do NOT use the workbench image (pragma-encoder-workbench) — it does not
+# have pragma_encoder installed as a production package.  KFP component
+# pods would fail with:
+#   ModuleNotFoundError: No module named 'pragma_encoder'
 #
 # Do NOT use runtime source cloning — not the default pattern.
 # ---------------------------------------------------------------------------
@@ -108,8 +112,9 @@ def prepare_dataset(
     the prepared_prefix_uri from the resulting DatasetManifest.
 
     Does NOT hardcode IBM TabFormer logic - any registered adapter is
-    supported.  New dataset adapters register in src/data/adapters/__init__.py
-    and require no changes to this component.
+    supported.  New dataset adapters register in
+    pragma_encoder/data/adapters/__init__.py and require no changes to this
+    component.
 
     Args:
         dataset_name: Adapter registry key, e.g. "ibm-tabformer".
@@ -243,9 +248,10 @@ def run_pretraining(
     then returns the S3 URI of the final checkpoint.
 
     Uses the same model_size -> PRAGMAConfig mapping as train_pragma() in
-    src/workbench/_api.py so configuration is defined in exactly one place.
-    Specifically, the same _config_map {"S": PRAGMAConfig.pragma_s, ...}
-    is used to ensure consistency.
+    tools/openshift_ai/workbench/_api.py so configuration is defined in
+    exactly one place.  Specifically, the same
+    _config_map {"S": PRAGMAConfig.pragma_s, ...} is used to ensure
+    consistency.
 
     Args:
         manifest_uri: DatasetManifest URI for the prepared training dataset.
@@ -260,7 +266,8 @@ def run_pretraining(
     from pragma_encoder.model.config import PRAGMAConfig
 
     # Same model_size -> PRAGMAConfig mapping as train_pragma()
-    # (src/workbench/_api.py::_MODEL_SIZE_MAP) - no second implementation.
+    # (tools/openshift_ai/workbench/_api.py::_MODEL_SIZE_MAP) - no second
+    # implementation.
     _config_map = {
         "S": PRAGMAConfig.pragma_s,
         "M": PRAGMAConfig.pragma_m,
@@ -272,7 +279,8 @@ def run_pretraining(
         )
     # Smoke stub: return a synthetic checkpoint URI.
     # Real implementation: monitor PyTorchJob until completion, then return S3 URI.
-    # Working training entrypoint: scripts/train_pragma.py (PyTorchJob pod).
+    # Training entrypoint (wheel-installed): pragma-encoder-train
+    #   or equivalently: python -m pragma_encoder.training.train
     # PyTorchJob monitoring is a future milestone — do not implement here.
     return f"{manifest_uri}/checkpoint_epoch0001.pt"
 
