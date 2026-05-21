@@ -4,15 +4,41 @@ Version: 0.1.0
 Summary: Open-source implementation of the PRAGMA foundation model architecture
 Author: pragma-encoder contributors
 License: Apache-2.0
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 License-File: LICENSE
+Requires-Dist: torch>=2.0.0
+Requires-Dist: transformers>=4.40.0
+Requires-Dist: peft>=0.10.0
+Requires-Dist: einops>=0.7.0
+Requires-Dist: sentencepiece>=0.2.0
+Requires-Dist: tokenizers>=0.19.0
+Requires-Dist: numpy>=1.24.0
+Requires-Dist: pandas>=2.0.0
+Requires-Dist: scikit-learn>=1.3.0
 Provides-Extra: workbench
 Requires-Dist: kfp>=2; extra == "workbench"
 Requires-Dist: kfp-kubernetes>=1.2; extra == "workbench"
-Dynamic: author
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Requires-Dist: build>=1.0.0; extra == "dev"
+Provides-Extra: notebooks
+Requires-Dist: jupyter>=1.0.0; extra == "notebooks"
+Requires-Dist: ipywidgets>=8.0.0; extra == "notebooks"
+Requires-Dist: matplotlib>=3.7.0; extra == "notebooks"
+Requires-Dist: seaborn>=0.12.0; extra == "notebooks"
+Requires-Dist: umap-learn>=0.5.0; extra == "notebooks"
 Dynamic: license-file
-Dynamic: requires-python
 
 # PRAGMA Encoder — Open Source Implementation
 
