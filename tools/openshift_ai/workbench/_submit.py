@@ -107,9 +107,7 @@ def _require_kfp_kubernetes(feature: str = "Kubernetes secret injection") -> obj
     except ImportError as exc:
         raise ImportError(
             f"kfp-kubernetes is required for {feature}. "
-            "Install the PRAGMA workbench extras:\n"
-            "    pip install 'pragma-encoder[workbench]'\n"
-            "or install directly:\n"
+            "Install it with:\n"
             "    pip install 'kfp-kubernetes>=1.2'\n"
             "The PRAGMA workbench image already includes kfp-kubernetes. "
             "See docs/openshift-image-contract.md."
@@ -295,8 +293,6 @@ def make_kfp_client(endpoint: str, token: str | None = None) -> Any:
         raise RuntimeError(
             "make_kfp_client() requires the kfp SDK to be installed.\n"
             "Install it with: pip install kfp\n"
-            "Or install the PRAGMA workbench optional dependency group:\n"
-            "  pip install 'pragma-encoder[workbench]'\n"
             "The PRAGMA workbench notebook image includes kfp pre-installed."
         ) from exc
 

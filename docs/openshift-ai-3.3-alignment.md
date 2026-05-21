@@ -192,6 +192,14 @@ acceptable (they do not represent a production hardware choice).
 
 Example Hardware Profile YAML files are in `tests/openshift/fixtures/`.
 
+**KFP pipeline run limitation (RHOAI 3.3):**
+KFP component pods (Level 3 DSPA pipeline runs) cannot directly select a HardwareProfile
+via pipeline parameters. `HardwareProfile.spec.identifiers` applies to workbench
+notebooks (Notebook CR) and KFTO training jobs, not to KFP component pods.
+KFP component pod resources are set via `@dsl.component` resource limits or cluster
+defaults. The smoke pipeline (`pipeline/pragma_smoke_pipeline.py`) correctly omits
+HardwareProfile selection — this is the expected design, not a gap.
+
 **Owner:** OpenShift AI / RHOAI administrators define Hardware Profiles.
 `pragma_encoder` Python code must not decide GPU vs CPU deployment shape.
 Training manifests should reference Hardware Profile labels or node selectors
@@ -528,8 +536,9 @@ The five-stage pipeline is expressed as KFP v2 components in
 `pipeline/components_pragma.py`. The pipeline compiles to YAML and can be
 uploaded to the DSPA API.
 
-Level 3 tests validate DSPA connectivity. The full end-to-end pipeline smoke
-(`TestKFPPipelineSmoke`) is xfail pending a `smoke_training` component.
+Level 3 tests validate DSPA connectivity and run the full end-to-end pipeline smoke
+(`TestKFPPipelineSmoke`). The Level 3 smoke (`pragma_smoke_training_pipeline`) is
+implemented and ready to run against a cluster with `RUN_OPENSHIFT_PIPELINE_SMOKE=1`.
 
 ### Target state
 

@@ -347,7 +347,7 @@ class TestSmokePipelineCompile:
         """
         if importlib.util.find_spec("kfp") is None:
             pytest.skip(
-                "kfp is not installed. Install with: pip install 'pragma-encoder[workbench]'. "
+                "kfp is not installed. Install with: pip install kfp. "
                 "kfp is available in the workbench image."
             )
 
@@ -395,9 +395,7 @@ class TestSmokePipelineCompile:
         Skips if kfp is not installed (optional dependency).
         """
         if importlib.util.find_spec("kfp") is None:
-            pytest.skip(
-                "kfp is not installed. Install with: pip install 'pragma-encoder[workbench]'."
-            )
+            pytest.skip("kfp is not installed. Install with: pip install kfp.")
 
         import kfp  # noqa: PLC0415
 
@@ -432,4 +430,238 @@ class TestSmokePipelineCompile:
             "from the module invocation in the component body. "
             "The component should call: [sys.executable, '-m', 'pragma_encoder.training.train']. "
             "The wheel image has no scripts/ source dependency — module invocation is required."
+        )
+
+
+# ===========================================================================
+# 5. Image contract tests — compiled YAML bakes training image from env var
+# ===========================================================================
+
+
+class TestSmokePipelineImageContract:
+    """Image contract: compiled YAML embeds base_image from PRAGMA_TRAINING_IMAGE.
+
+    KFP @dsl.component(base_image=...) captures the image at decoration time
+    (module import). The env var must be set before the module is imported —
+    i.e., before compile time in the workbench — for the compiled YAML to
+    reference the correct training image.
+
+    These tests confirm the env-var-to-compiled-YAML pipeline works end-to-end.
+    """
+
+    def test_compiled_yaml_embeds_training_image_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Compiled YAML must embed the image URI set via PRAGMA_TRAINING_IMAGE.
+
+        Workflow that this test validates:
+          1. Workbench sets PRAGMA_TRAINING_IMAGE=<image-uri> before importing the module.
+          2. pragma_smoke_pipeline.py reads it at module import time into _SMOKE_IMAGE.
+          3. @dsl.component(base_image=_SMOKE_IMAGE) captures _SMOKE_IMAGE at decoration.
+          4. kfp.compiler.Compiler().compile() bakes the image URI into the YAML.
+          5. Compiled YAML contains the image URI — confirmed here.
+
+        If this test fails: the env var was set AFTER module import, so the old
+        (default) image was captured. Set PRAGMA_TRAINING_IMAGE before importing
+        pipeline.pragma_smoke_pipeline.
+
+        Skips if kfp is not installed.
+        """
+        if importlib.util.find_spec("kfp") is None:
+            pytest.skip("kfp not installed. Install with: pip install kfp.")
+
+        import kfp  # noqa: PLC0415
+
+        sentinel_image = "image-registry.example.com/test/pragma-training:image-contract-test"
+        monkeypatch.setenv("PRAGMA_TRAINING_IMAGE", sentinel_image)
+        monkeypatch.delenv("PRAGMA_KFP_COMPONENT_IMAGE", raising=False)
+
+        # Force re-import so the sentinel image is captured by @dsl.component at decoration.
+        if "pipeline.pragma_smoke_pipeline" in sys.modules:
+            del sys.modules["pipeline.pragma_smoke_pipeline"]
+
+        from pipeline.pragma_smoke_pipeline import (  # noqa: PLC0415
+            pragma_smoke_training_pipeline,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            yaml_path = pathlib.Path(tmp_dir) / "smoke_image_contract.yaml"
+            kfp.compiler.Compiler().compile(
+                pipeline_func=pragma_smoke_training_pipeline,
+                package_path=str(yaml_path),
+            )
+            content = yaml_path.read_text()
+
+        assert sentinel_image in content, (
+            f"Compiled pipeline YAML must embed the training image URI "
+            f"({sentinel_image!r}) set via PRAGMA_TRAINING_IMAGE. "
+            "The env var must be set BEFORE importing pipeline.pragma_smoke_pipeline. "
+            "KFP captures base_image at decoration time (module import), not at compile time. "
+            f"Compiled YAML excerpt (first 500 chars):\n{content[:500]}"
+        )
+
+    def test_compiled_yaml_pragma_kfp_component_image_takes_priority(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PRAGMA_KFP_COMPONENT_IMAGE must shadow PRAGMA_TRAINING_IMAGE in compiled YAML.
+
+        Priority order (highest to lowest):
+          1. PRAGMA_KFP_COMPONENT_IMAGE — explicit KFP component override
+          2. PRAGMA_TRAINING_IMAGE       — training image
+          3. Default cluster-internal URI
+
+        When PRAGMA_KFP_COMPONENT_IMAGE is set, it must appear in the compiled YAML
+        instead of PRAGMA_TRAINING_IMAGE. Confirms the priority chain works.
+
+        Skips if kfp is not installed.
+        """
+        if importlib.util.find_spec("kfp") is None:
+            pytest.skip("kfp not installed. Install with: pip install kfp.")
+
+        import kfp  # noqa: PLC0415
+
+        override_image = "image-registry.example.com/test/pragma-training:kfp-override"
+        shadow_image = "image-registry.example.com/test/pragma-training:should-not-appear"
+        monkeypatch.setenv("PRAGMA_KFP_COMPONENT_IMAGE", override_image)
+        monkeypatch.setenv("PRAGMA_TRAINING_IMAGE", shadow_image)
+
+        if "pipeline.pragma_smoke_pipeline" in sys.modules:
+            del sys.modules["pipeline.pragma_smoke_pipeline"]
+
+        from pipeline.pragma_smoke_pipeline import (  # noqa: PLC0415
+            pragma_smoke_training_pipeline,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            yaml_path = pathlib.Path(tmp_dir) / "smoke_priority.yaml"
+            kfp.compiler.Compiler().compile(
+                pipeline_func=pragma_smoke_training_pipeline,
+                package_path=str(yaml_path),
+            )
+            content = yaml_path.read_text()
+
+        assert override_image in content, (
+            f"Compiled YAML must embed PRAGMA_KFP_COMPONENT_IMAGE={override_image!r} "
+            "when that env var is set. "
+            "PRAGMA_KFP_COMPONENT_IMAGE has higher priority than PRAGMA_TRAINING_IMAGE."
+        )
+        assert shadow_image not in content, (
+            f"Compiled YAML must NOT embed PRAGMA_TRAINING_IMAGE={shadow_image!r} "
+            f"when PRAGMA_KFP_COMPONENT_IMAGE={override_image!r} is set. "
+            "PRAGMA_KFP_COMPONENT_IMAGE must shadow PRAGMA_TRAINING_IMAGE."
+        )
+
+
+# ===========================================================================
+# 6. Hardware profile contract
+# ===========================================================================
+
+
+class TestSmokePipelineHardwareProfile:
+    """Hardware profile: smoke pipeline correctly omits HardwareProfile selection.
+
+    In RHOAI 3.3, KFP pipeline run pods cannot select a HardwareProfile via
+    pipeline parameters. HardwareProfile.spec.identifiers applies to workbench
+    notebooks (Notebook CR), not to KFP component pods.
+
+    The smoke pipeline does NOT attempt HardwareProfile selection. This class
+    verifies that constraint is preserved and documents the limitation for operators.
+
+    Reference: docs/openshift-ai-3.3-alignment.md §Hardware Profile
+    Fixtures:   tests/openshift/fixtures/hardware-profile-cpu-smoke.yaml
+                tests/openshift/fixtures/hardware-profile-gpu-pragma-s.yaml
+    """
+
+    def test_smoke_module_has_no_hardware_profile_selector(self) -> None:
+        """pragma_smoke_pipeline.py must not attempt HardwareProfile selection.
+
+        HardwareProfile is an RHOAI 3.3 primitive for workbench notebooks.
+        KFP component pods inherit resource requests from the @dsl.component
+        decorator or default cluster limits — not from HardwareProfile.
+
+        Attempting to wire a HardwareProfile to a KFP pipeline run would fail
+        silently or error. The smoke pipeline must not include such a reference.
+
+        Hardware profile fixtures exist in tests/openshift/fixtures/ for
+        operators to apply to the cluster (requires RHOAI admin). They are
+        reference fixtures documenting the expected CPU/GPU resource shapes —
+        not inputs to the smoke pipeline.
+        """
+        src = _smoke_pipeline_source()
+        assert "HardwareProfile" not in src, (
+            "pragma_smoke_pipeline.py must not reference HardwareProfile. "
+            "KFP component pod resources are set via @dsl.component resource limits "
+            "or cluster defaults, not via OpenShift AI HardwareProfile. "
+            "HardwareProfile applies to workbench notebooks (RHOAI 3.3 limitation). "
+            "See docs/openshift-ai-3.3-alignment.md §Hardware Profile."
+        )
+        assert "hardware_profile" not in src.lower(), (
+            "pragma_smoke_pipeline.py must not reference hardware_profile (case-insensitive). "
+            "See test_smoke_module_has_no_hardware_profile_selector for context."
+        )
+
+    def test_hardware_profile_cpu_smoke_fixture_exists(self) -> None:
+        """CPU smoke HardwareProfile fixture must exist in tests/openshift/fixtures/.
+
+        The fixture documents the expected resource shape for smoke tests:
+        cpu=500m, memory=2Gi. Operators apply it with:
+          oc apply -f tests/openshift/fixtures/hardware-profile-cpu-smoke.yaml \\
+            -n redhat-ods-applications
+
+        The fixture is a reference document for the platform configuration —
+        it is not consumed by the smoke pipeline itself.
+        """
+        fixture_path = (
+            pathlib.Path(__file__).parent
+            / "openshift"
+            / "fixtures"
+            / "hardware-profile-cpu-smoke.yaml"
+        )
+        assert fixture_path.exists(), (
+            f"CPU smoke HardwareProfile fixture not found: {fixture_path}. "
+            "Create tests/openshift/fixtures/hardware-profile-cpu-smoke.yaml "
+            "documenting the expected CPU/memory shape for smoke workloads."
+        )
+        content = fixture_path.read_text()
+        assert "HardwareProfile" in content, (
+            "hardware-profile-cpu-smoke.yaml must define a HardwareProfile resource. "
+            "Check the apiVersion and kind fields."
+        )
+        assert "pragma-cpu-smoke" in content, (
+            "hardware-profile-cpu-smoke.yaml must define the 'pragma-cpu-smoke' profile. "
+            "This name is documented in tests/openshift/README.md."
+        )
+
+    def test_hardware_profile_gpu_pragma_s_fixture_exists(self) -> None:
+        """GPU PRAGMA-S HardwareProfile fixture must exist in tests/openshift/fixtures/.
+
+        The fixture documents the expected resource shape for PRAGMA-S GPU training:
+        1×NVIDIA GPU, 8 CPU, 64Gi RAM. Operators apply it with:
+          oc apply -f tests/openshift/fixtures/hardware-profile-gpu-pragma-s.yaml \\
+            -n redhat-ods-applications
+
+        The fixture is a reference document for the platform configuration —
+        it is not consumed by the smoke pipeline itself.
+        """
+        fixture_path = (
+            pathlib.Path(__file__).parent
+            / "openshift"
+            / "fixtures"
+            / "hardware-profile-gpu-pragma-s.yaml"
+        )
+        assert fixture_path.exists(), (
+            f"GPU PRAGMA-S HardwareProfile fixture not found: {fixture_path}. "
+            "Create tests/openshift/fixtures/hardware-profile-gpu-pragma-s.yaml "
+            "documenting the expected GPU/CPU/memory shape for PRAGMA-S training."
+        )
+        content = fixture_path.read_text()
+        assert "HardwareProfile" in content, (
+            "hardware-profile-gpu-pragma-s.yaml must define a HardwareProfile resource."
+        )
+        assert "pragma-gpu-pragma-s" in content, (
+            "hardware-profile-gpu-pragma-s.yaml must define the 'pragma-gpu-pragma-s' profile."
+        )
+        assert "nvidia.com/gpu" in content, (
+            "hardware-profile-gpu-pragma-s.yaml must reference nvidia.com/gpu. "
+            "PRAGMA-S GPU training requires NVIDIA GPU scheduling."
         )

@@ -41,7 +41,7 @@ Three distinct execution paths are tested at different maturity levels:
 | Path | Level | Purpose | Status |
 |------|-------|---------|--------|
 | `batch/v1 Job` | 3b | **Diagnostic only.** Proves the training image is pullable and runs `--max-steps 1` to exit 0. One pod, no DDP, no S3, no KFP orchestration. | Implemented |
-| DSPA/KFP v2 | 3 | **Product pipeline path.** Compiles a decorated pipeline, uploads to the DSPA API, creates a KFP Run, polls until Succeeded. This is the real execution path. | In progress / xfail |
+| DSPA/KFP v2 | 3 | **Product pipeline path.** Compiles a decorated pipeline, uploads to the DSPA API, creates a KFP Run, polls until Succeeded. This is the real execution path. | Implemented |
 | PyTorchJob | 4 | **N-node distributed training.** Multi-node DDP via KFTO `kubeflow.org/v1 PyTorchJob`. Default smoke: nnodes=2 (minimal distributed case). Architecture is N-node capable. | Implemented |
 
 The `batch/v1 Job` smoke (Level 3b) is **not** a substitute for the DSPA/KFP
@@ -85,7 +85,7 @@ See `docs/openshift-ai-3.3-alignment.md` for the full primitive map and responsi
 | 0 | oc access + namespace checks | Implemented | `test_00_oc_access.py` |
 | 1 | Argo-managed substrate verification | Implemented | `test_01_cluster_prereqs.py` |
 | 2 | Decorated pipeline compile | Implemented | `test_02_pipeline_compile.py` |
-| 3 | OpenShift AI KFP v2 pipeline smoke | In progress / xfail | `test_03_pipeline_smoke_run.py` |
+| 3 | OpenShift AI KFP v2 pipeline smoke | Implemented | `test_03_pipeline_smoke_run.py` |
 | 3b | Training container Job smoke | Implemented | `test_03b_training_job_smoke.py` |
 | 4 | PyTorchJob N-node smoke (default: nnodes=2) | Implemented | `test_04_pytorchjob_smoke.py` |
 | 5 | S3-backed checkpoint/resume | Implemented | `test_05_s3_checkpoint_resume.py` |
@@ -246,7 +246,7 @@ PRAGMA_TEST_NAMESPACE=pragma-encoder \
 pytest tests/openshift/test_03_pipeline_smoke_run.py -v
 ```
 
-Expected: 5 prereqs PASS, 3 connectivity tests PASS, 1 smoke xfail.
+Expected: 5 prereqs PASS, 3 connectivity tests PASS, 1 smoke PASS (requires in-cluster access).
 
 ### Training container Job smoke (Level 3b — implemented)
 
@@ -378,11 +378,21 @@ in the environment). Only unit tests run.
 **Note**: Level 3b proves the training image works. It does NOT prove KFP v2 pipeline
 orchestration. Those are separate concerns at different maturity levels.
 
-### Level 3 — OpenShift AI KFP v2 pipeline smoke (In progress)
-- `TestKFPPipelineSmokePrereqs` (5 local tests, no cluster needed)
-- `TestKFPDSPAConnectivity` (3 opt-in cluster tests, require `RUN_OPENSHIFT_PIPELINE_SMOKE=1`)
-- `TestKFPPipelineSmoke` (1 opt-in cluster smoke, xfails until `pragma_smoke_training_pipeline`
-  component is implemented)
+### Level 3 — OpenShift AI KFP v2 pipeline smoke (Implemented)
+- `TestKFPPipelineSmokePrereqs` (5 local tests, no cluster needed):
+  - `test_submit_module_importable_without_kfp` — lazy kfp import verified
+  - `test_get_dspa_endpoint_uses_pragma_test_namespace` — endpoint URL construction
+  - `test_dspa_config_token_not_in_repr` — SA token redaction
+  - `test_wait_for_run_terminal_raises_timeout_error` — timeout semantics
+  - `test_smoke_pipeline_module_contract` — smoke vs production module isolation
+- `TestKFPDSPAConnectivity` (3 opt-in cluster tests, require `RUN_OPENSHIFT_PIPELINE_SMOKE=1`):
+  - `test_dspa_endpoint_resolves_in_cluster` — endpoint construction in active namespace
+  - `test_kfp_client_can_be_constructed` — kfp.Client init
+  - `test_kfp_client_can_list_pipelines` — real DSPA API network call
+- `TestKFPPipelineSmoke` (1 opt-in cluster smoke, requires `RUN_OPENSHIFT_PIPELINE_SMOKE=1`):
+  - `test_kfp_pipeline_smoke_run` — compile → upload → create KFP Run → wait →
+    assert SUCCEEDED + log markers (`PRAGMA-S`, `Reached --max-steps`,
+    `PRAGMA smoke training completed`)
 
 ### Level 4 — PyTorchJob N-node smoke (gated by RUN_PYTORCHJOB_TESTS=1)
 
@@ -433,14 +443,6 @@ independently to their own `emptyDir`, then `dist.barrier()`. 34 unit tests in
 ---
 
 ## What Is Future / xfail
-
-### Level 3 — Full KFP v2 pipeline smoke (smoke component not yet implemented)
-`TestKFPPipelineSmoke.test_kfp_pipeline_smoke_run` — xfail. Compiles a minimal
-`pragma_smoke_training_pipeline`, uploads to DSPA API, creates a Run, polls
-until Succeeded, asserts "PRAGMA-S" and "Reached --max-steps" in logs.
-Will xpass when a new `smoke_training` KFP component is implemented that runs
-`fit_tokenizer + train_pragma --max-steps 1` directly in the component pod
-(without S3 or PyTorchJob).
 
 ### Level 4 — N>2 node validation (scale testing)
 Large N-node validation (N>2) is future scale testing. The current Level 4 smoke
