@@ -403,7 +403,7 @@ def _render_s3_resume_manifest(
         "  --batch-size 1 \\",
         f"  --max-steps {max_steps} \\",
         f"  --s3-checkpoint-prefix {s3_prefix} \\",
-        "  --device cpu" + (f" \\\n  {resume_flag}" if resume_flag else ""),
+        "  --device cpu" + (f" {resume_flag}" if resume_flag else ""),
         "echo '[Level 5] torchrun complete'",
     ]
 
