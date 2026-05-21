@@ -348,7 +348,6 @@ No current tests cover model serving.
 | Distributed rank-safe resume | `src/pragma_encoder/training/checkpoints.py` |
 | Tokenizer, encoder, masking, MLM | `src/pragma_encoder/` |
 | CLI / module entrypoints | `scripts/`, `src/pragma_encoder/data/fit_tokenizer.py` |
-| Workbench Python API | `src/pragma_encoder/workbench/` |
 | Pipeline component logic | `pipeline/components_pragma.py` |
 
 ### Training image owns
@@ -377,8 +376,9 @@ No current tests cover model serving.
 ## Env Var Contract
 
 `pragma_encoder` training code reads the following env vars from the pod environment.
-These are injected by the `pragma-workbench-env` Secret (test fixture/default).
-In production, they would be injected by an RHOAI object-storage Connection.
+In production, these are injected by an OpenShift AI Connection. The
+`pragma-workbench-env` Secret is the test fixture/default representing that
+connection in this deployment.
 
 ### S3 / Object Storage
 
@@ -581,7 +581,6 @@ When TrainJob reaches GA in a future RHOAI release:
 - Distributed rank-safe resume
 - Tokenizer, encoder, masking
 - `fit_tokenizer` module
-- Workbench Python API
 - Pipeline component logic
 - Unit tests for all of the above
 

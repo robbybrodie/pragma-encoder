@@ -29,7 +29,8 @@ governed by a single rule set. Before modifying any training manifest, read:
 **[docs/openshift-storage-pattern.md](openshift-storage-pattern.md)**
 
 Short version: S3 is the source of truth. emptyDir is runtime scratch only.
-No dataset PVCs. Credentials come from `pragma-workbench-env` only.
+No dataset PVCs. Credentials come from the OpenShift AI Connection (represented
+in this deployment by the `pragma-workbench-env` Secret).
 
 ---
 

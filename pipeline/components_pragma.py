@@ -166,8 +166,8 @@ def upload_artifacts(
     nothing durable to upload; returns manifest_uri unchanged.  Full S3 upload
     (reading shards from manifest, uploading via boto3) is a future milestone.
 
-    S3 credentials come from the pragma-workbench-env Secret only
-    (openshift-storage-pattern.md rule 4).
+    S3 credentials come from MODEL_REGISTRY_* env vars supplied by the
+    OpenShift AI Connection (test fixture/default: pragma-workbench-env Secret).
 
     Args:
         manifest_uri: Prefix URI returned by prepare_dataset (S3 or local).

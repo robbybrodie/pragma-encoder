@@ -14,8 +14,8 @@ You start inside an **OpenShift AI workbench** — a JupyterLab environment
 running on the cluster with GPU access, pre-installed dependencies, and S3
 credentials already injected into the pod. You do not need to configure
 buckets, endpoints, or API keys manually. They are provided by the cluster
-operator via a Kubernetes Secret (`pragma-workbench-env`) that the workbench
-reads automatically at startup.
+operator via an OpenShift AI Connection (represented in this deployment by the
+`pragma-workbench-env` Secret) that the workbench reads automatically at startup.
 
 If you are running locally (laptop, CI), the same examples work. The only
 difference is that S3 credentials and GPU access are your responsibility to

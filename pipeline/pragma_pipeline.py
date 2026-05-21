@@ -55,7 +55,7 @@ def _pipeline(**kwargs):
 # Import pipeline components (pipeline/ -> src/ only; no circular dependency)
 # ---------------------------------------------------------------------------
 
-from pipeline.components_pragma import (  # noqa: E402
+from pipeline.components_pragma import (  # noqa: E402, I001
     prepare_dataset,
     upload_artifacts,
     submit_pytorchjob,
@@ -118,7 +118,7 @@ def pragma_pretraining_pipeline(
     )
 
     # Stage 3: Configure and submit KFTO PyTorchJob
-    submit_op = submit_pytorchjob(
+    submit_pytorchjob(
         manifest_uri=upload_op.output,
         model_size=model_size,
         nodes=nodes,
@@ -134,7 +134,7 @@ def pragma_pretraining_pipeline(
     )
 
     # Stage 5: Export model checkpoints and outputs to S3
-    export_op = export_checkpoint(
+    export_checkpoint(
         checkpoint_uri=train_op.output,
         model_size=model_size,
     )
@@ -178,7 +178,7 @@ def pragma_train_from_manifest_pipeline(
                       Default: 1.
     """
     # Stage 3: Configure and submit KFTO PyTorchJob
-    submit_op = submit_pytorchjob(
+    submit_pytorchjob(
         manifest_uri=manifest_uri,
         model_size=model_size,
         nodes=nodes,
@@ -194,7 +194,7 @@ def pragma_train_from_manifest_pipeline(
     )
 
     # Stage 5: Export model checkpoints and outputs to S3
-    export_op = export_checkpoint(
+    export_checkpoint(
         checkpoint_uri=train_op.output,
         model_size=model_size,
     )

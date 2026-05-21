@@ -104,9 +104,10 @@ After the job:
 
 ## Credentials
 
-All S3 access uses the `pragma-workbench-env` Secret in the `pragma-encoder`
-namespace. This secret is managed as a Sealed Secret in
-`openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml`.
+All S3 access uses credentials supplied by the OpenShift AI Connection. In this
+deployment those credentials are stored in the `pragma-workbench-env` Secret (a
+test fixture/default managed as a Sealed Secret in
+`openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml`).
 
 Required keys:
 
