@@ -4,7 +4,7 @@
 # requires PRAGMA_TRAINING_IMAGE to be built from this Dockerfile.
 #
 # The smoke test validates at runtime that:
-#   scripts/train_pragma.py  — present at WORKDIR
+#   pragma-encoder-train --help — console script installed (wheel entrypoint)
 #   python -c "import pragma_encoder" — succeeds (wheel installed)
 #   python -m pragma_encoder.data.fit_tokenizer — succeeds via wheel
 #
@@ -56,18 +56,20 @@
 #
 # WORKDIR:
 #   Inherited from the base image (/opt/app-root/src).
-#   scripts/ is placed at WORKDIR so train_pragma.py is accessible as a
-#   relative path. The pragma_encoder package is installed from the wheel
-#   into site-packages — no src/ tree or PYTHONPATH manipulation needed.
+#   scripts/ is kept at WORKDIR for compatibility only (scripts/train_pragma.py
+#   is now a thin wrapper around the installed console script pragma-encoder-train).
+#   The canonical entrypoint is: pragma-encoder-train (or python -m pragma_encoder.training.train).
+#   The pragma_encoder package is installed from the wheel into site-packages —
+#   no src/ tree or PYTHONPATH manipulation needed.
 #
 # Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 FROM image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
 
-# Copy the built wheel and training scripts into the image.
+# Copy the built wheel and compatibility scripts into the image.
 # WORKDIR is /opt/app-root/src (inherited from S2I base).
 # --chown=1001:0 matches the S2I uid:gid so RUN steps (UID 1001) can read files.
 # After this COPY:
-#   scripts/train_pragma.py        -> accessible as 'scripts/train_pragma.py'
+#   scripts/train_pragma.py        -> compatibility wrapper (delegates to console script)
 #   dist/pragma_encoder-*.whl      -> installed into site-packages below
 COPY --chown=1001:0 dist/ dist/
 COPY --chown=1001:0 scripts/ scripts/
@@ -85,9 +87,15 @@ RUN chmod -R a+rX dist/ scripts/
 # scikit-learn) are already present in the workbench base image.
 # The wheel registers pragma_encoder so 'import pragma_encoder' works
 # without source tree or PYTHONPATH manipulation.
+# The wheel also installs the pragma-encoder-train console script into PATH.
 RUN pip install --no-deps dist/pragma_encoder-*.whl
 
 # Verify the installed wheel is importable at build time.
 # This catches a missing __init__.py, broken imports, or an incomplete
 # wheel manifest at image build, not at job runtime.
 RUN python -c "import pragma_encoder; print('PRAGMA wheel install OK')"
+
+# Verify the console script entrypoint is installed and functional.
+# pragma-encoder-train --help exits 0 after printing argparse help.
+# This confirms the [project.scripts] entry point was registered by the wheel.
+RUN pragma-encoder-train --help > /dev/null && echo "pragma-encoder-train entrypoint OK"

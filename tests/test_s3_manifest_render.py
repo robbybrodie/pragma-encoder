@@ -89,17 +89,21 @@ class TestS3ResumeLocalPrereqs:
         )
 
     def test_train_pragma_has_resolve_resume_checkpoint(self) -> None:
-        """scripts/train_pragma.py must call resolve_resume_checkpoint.
+        """src/pragma_encoder/training/train.py must call resolve_resume_checkpoint.
 
-        This confirms TD-006 is integrated into the training script:
+        This confirms TD-006 is integrated into the canonical training module:
         all ranks download the checkpoint from S3, not just rank 0.
+
+        Note: scripts/train_pragma.py is now a thin compatibility wrapper that
+        delegates to pragma_encoder.training.train. The logic lives in train.py.
         """
-        train_script = (
-            pathlib.Path(__file__).parent.parent / "scripts" / "train_pragma.py"
+        train_module = (
+            pathlib.Path(__file__).parent.parent
+            / "src" / "pragma_encoder" / "training" / "train.py"
         )
-        text = train_script.read_text()
+        text = train_module.read_text()
         assert "resolve_resume_checkpoint" in text, (
-            "scripts/train_pragma.py must call resolve_resume_checkpoint() "
+            "src/pragma_encoder/training/train.py must call resolve_resume_checkpoint() "
             "from src/pragma_encoder/training/checkpoints.py. "
             "The TD-006 fix requires all ranks to download the checkpoint independently."
         )

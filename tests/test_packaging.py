@@ -106,6 +106,31 @@ def _get_or_build_wheel() -> pathlib.Path:
 class TestPackagingConfig:
     """Verify pyproject.toml [build-system] configuration is correct."""
 
+    def test_pyproject_has_pragma_encoder_train_script(self) -> None:
+        """pyproject.toml [project.scripts] must declare pragma-encoder-train.
+
+        The console script entrypoint must be:
+            pragma-encoder-train = "pragma_encoder.training.train:main"
+
+        This installs 'pragma-encoder-train' into the environment PATH so
+        training can be launched without specifying the full module path.
+        The same function is reachable as: python -m pragma_encoder.training.train
+        """
+        with open(_PYPROJECT, "rb") as fh:
+            data = tomllib.load(fh)
+
+        scripts = data.get("project", {}).get("scripts", {})
+        assert "pragma-encoder-train" in scripts, (
+            "pyproject.toml [project.scripts] must declare 'pragma-encoder-train'. "
+            "Add: [project.scripts]\n"
+            "pragma-encoder-train = \"pragma_encoder.training.train:main\""
+        )
+        entry = scripts["pragma-encoder-train"]
+        assert entry == "pragma_encoder.training.train:main", (
+            f"pragma-encoder-train entry point must be 'pragma_encoder.training.train:main'. "
+            f"Got: {entry!r}"
+        )
+
     def test_build_backend_is_setuptools_build_meta(self) -> None:
         """build-backend must be 'setuptools.build_meta'.
 
@@ -351,6 +376,36 @@ class TestWheelMetadata:
             "Check pyproject.toml [tool.setuptools.packages.find].where = ['src']."
         )
 
+    def test_wheel_entry_points_include_pragma_encoder_train(self) -> None:
+        """Built wheel must include the pragma-encoder-train console script entry point.
+
+        Reads entry_points.txt from inside the wheel zip and verifies the
+        [console_scripts] section declares pragma-encoder-train.
+
+        This confirms the [project.scripts] declaration in pyproject.toml
+        was picked up by the build system and baked into the wheel artifact.
+        The entry point makes 'pragma-encoder-train' available in PATH
+        after 'pip install pragma-encoder'.
+        """
+        wheel = _get_or_build_wheel()
+        with zipfile.ZipFile(wheel) as zf:
+            ep_entries = [n for n in zf.namelist() if n.endswith("/entry_points.txt")]
+            assert ep_entries, (
+                f"No entry_points.txt found in wheel {wheel.name}. "
+                "The [project.scripts] declaration in pyproject.toml must produce "
+                "an entry_points.txt inside the wheel. "
+                "Rebuild the wheel after adding [project.scripts]."
+            )
+            ep_text = zf.read(ep_entries[0]).decode()
+
+        assert "pragma-encoder-train" in ep_text, (
+            f"entry_points.txt in wheel {wheel.name} does not contain 'pragma-encoder-train'. "
+            f"Content:\n{ep_text}\n"
+            "Add [project.scripts] to pyproject.toml:\n"
+            "pragma-encoder-train = \"pragma_encoder.training.train:main\"\n"
+            "Then rebuild the wheel: python -m build --wheel"
+        )
+
     def test_src_is_not_installed_as_package(self) -> None:
         """'src' must not be importable as an installed package of pragma-encoder.
 
@@ -571,4 +626,82 @@ class TestWheelInstall:
         print(
             f"\n[TestWheelInstall] pip install --no-deps {wheel.name} and "
             f"import pragma_encoder succeeded (Python {sys.version.split()[0]})."
+        )
+
+
+class TestConsoleScript:
+    """Verify the pragma-encoder-train console script entrypoint.
+
+    Tests that the module can be invoked via 'python -m pragma_encoder.training.train'
+    and that the argparse --help path exits 0 in the current environment.
+
+    These tests require the full dependency set (torch, transformers, etc.)
+    to be installed, because pragma_encoder.training.train imports torch at
+    module level. They are skipped when torch is not importable (e.g. in a
+    stripped CI environment without ML deps).
+    """
+
+    def test_train_module_exists(self) -> None:
+        """src/pragma_encoder/training/train.py must exist.
+
+        This is the canonical training entrypoint installed by the wheel.
+        It backs both the 'pragma-encoder-train' console script and
+        'python -m pragma_encoder.training.train'.
+        """
+        train_module = _PROJECT_ROOT / "src" / "pragma_encoder" / "training" / "train.py"
+        assert train_module.exists(), (
+            f"src/pragma_encoder/training/train.py not found at {train_module}. "
+            "Create it: move training logic from scripts/train_pragma.py, "
+            "expose def main(argv=None) -> int, and register as the console script "
+            "entry point in pyproject.toml [project.scripts]."
+        )
+
+    def test_train_module_declares_main(self) -> None:
+        """src/pragma_encoder/training/train.py must declare def main.
+
+        The console script entry point references pragma_encoder.training.train:main.
+        The function must be present at module level in the source file.
+        This is a static check — no subprocess or import required.
+        """
+        train_module = _PROJECT_ROOT / "src" / "pragma_encoder" / "training" / "train.py"
+        if not train_module.exists():
+            return  # covered by test_train_module_exists
+        text = train_module.read_text()
+        assert "def main(" in text, (
+            "src/pragma_encoder/training/train.py must declare def main(...). "
+            "The console script entry point requires this function. "
+            "Signature: def main(argv: list[str] | None = None) -> int"
+        )
+
+    def test_module_help_exits_zero(self) -> None:
+        """python -m pragma_encoder.training.train --help must exit 0.
+
+        --help is handled by argparse before any training or I/O occurs.
+        The exit code must be 0 (success). This confirms the module is
+        importable and the argparse setup is valid in the current environment.
+
+        Skipped automatically when torch or other deps are not importable
+        (i.e. when 'No module named' appears in stderr).
+        """
+        import pytest  # noqa: PLC0415
+
+        result = subprocess.run(
+            [sys.executable, "-m", "pragma_encoder.training.train", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 and "No module named" in result.stderr:
+            pytest.skip(
+                f"Dependency not importable (skipping --help test): "
+                f"{result.stderr[:200]}"
+            )
+        assert result.returncode == 0, (
+            "python -m pragma_encoder.training.train --help must exit 0. "
+            f"Got return code: {result.returncode}\n"
+            f"stdout:\n{result.stdout[:500]}\n"
+            f"stderr:\n{result.stderr[:500]}"
+        )
+        assert "PRAGMA pretraining" in result.stdout or "--model-variant" in result.stdout, (
+            "python -m pragma_encoder.training.train --help must print argparse help. "
+            f"stdout:\n{result.stdout[:500]}"
         )

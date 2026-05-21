@@ -11,7 +11,7 @@
 #   Training outputs      ──rank-0 upload──► S3
 #
 # PVC is intentionally absent:
-#   - workbench-data PVC removed: code is git-cloned fresh by the init container
+#   - workbench-data PVC removed: code is baked into the training image (wheel install)
 #   - model-output PVC removed: outputs are uploaded to S3 by rank-0 post-training
 #   - emptyDir /workspace is ephemeral local execution storage only; it is
 #     destroyed when the pod exits. S3 is the durable store for all artifacts.
@@ -78,18 +78,17 @@ spec:
             nvidia.com/gpu.present: "true"
 
           # ----------------------------------------------------------------
-          # Init container — data staging
+          # Init container — data staging only
           #
-          # Responsibility: populate /workspace before the main container starts.
-          #   /workspace/repo/  — git clone of pragma-encoder (pragma-implementation)
+          # Responsibility: populate /workspace/data before the main container starts.
           #   /workspace/data/  — training data staged from S3
           #
-          # The main container assumes both are present and does not retry on
-          # missing data. A non-zero exit from this container prevents training.
+          # Code is baked into the training image (via wheel install) — no git clone.
+          # The main container assumes /workspace/data/ is present and does not retry
+          # on missing data. A non-zero exit from this container prevents training.
           #
           # Image: workbench image reused to avoid Docker Hub rate-limit risk.
-          # Already pulled on GPU nodes; contains git, Python 3, and boto3
-          # (boto3 is used directly by scripts/train_pragma.py for S3 checkpoint upload/download).
+          # Already pulled on GPU nodes; contains Python 3 and boto3.
           #
           # S3 is the source of truth for training data.
           # emptyDir /workspace is ephemeral local execution storage only.
@@ -140,18 +139,8 @@ spec:
                 - |
                   set -euo pipefail
 
-                  # ---- Clone repository ---------------------------------
-                  # GitHub holds code; S3 holds data. Clone fresh so the job
-                  # is decoupled from any PVC state or local modifications.
-                  echo "==> Cloning pragma-encoder (pragma-implementation) ..."
-                  git clone \
-                    https://github.com/robbybrodie/pragma-encoder.git \
-                    /workspace/repo \
-                    --branch pragma-implementation \
-                    --depth 1
-                  echo "==> Repo cloned: $(ls /workspace/repo)"
-
                   # ---- Stage training data from S3 ----------------------
+                  # Code is baked into the training image — no git clone needed.
                   # Exit non-zero on any failure — pod must not proceed to
                   # training with missing or partial data.
                   echo "==> Staging training data from S3 ..."
@@ -165,12 +154,13 @@ spec:
 
           # ----------------------------------------------------------------
           # Main training container
-          # Assumes /workspace/repo/ and /workspace/data/ are populated.
+          # Assumes /workspace/data/ is populated by the init container.
+          # Training code is baked into the image as the pragma_encoder wheel.
           # Rank 0 uploads outputs to S3 after training; rank > 0 skips.
           # ----------------------------------------------------------------
           containers:
             - name: pytorch
-              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
               imagePullPolicy: IfNotPresent
               env:
                 # Post-training S3 upload script — rank 0 only.
@@ -211,12 +201,10 @@ spec:
                   set -euo pipefail
 
                   # ---- Training ------------------------------------------
-                  # Run from repo root — train_pragma.py inserts
-                  # Path(__file__).parent.parent (= /workspace/repo) into
-                  # sys.path, which contains src/ for all PRAGMA imports.
+                  # pragma_encoder is installed in the training image (wheel).
+                  # Module invocation — no source tree or sys.path needed.
                   echo "==> Starting PRAGMA-S pretraining (rank=${RANK:-0}) ..."
-                  cd /workspace/repo
-                  python scripts/train_pragma.py \
+                  python -m pragma_encoder.training.train \
                     --model-variant pragma-s \
                     --csv-path  /workspace/data/tabformer/card_transaction.v1.csv \
                     --vocab-path /workspace/data/tabformer/vocab.pkl \
