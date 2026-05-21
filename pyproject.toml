@@ -63,3 +63,8 @@ ignore = ["N806", "N812"]
 # The Level 4 PyTorchJob smoke test embeds the TabFormer CSV header, shell script
 # lines with long path arguments, and diagnostic assertion messages.
 "tests/openshift/test_04_pytorchjob_smoke.py" = ["E501"]
+# The Level 5 S3 checkpoint/resume smoke embeds a TabFormer CSV header and has
+# long assertion messages that cannot be wrapped without losing diagnostic clarity.
+"tests/openshift/test_05_s3_checkpoint_resume.py" = ["E501"]
+# The Level 6 GPU smoke test has long shell script lines and assertion messages.
+"tests/openshift/test_06_gpu_training_smoke.py" = ["E501"]
