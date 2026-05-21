@@ -32,13 +32,13 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="torch not installed")
 
-from src.model.assembled_batch import AssembledBatch
-from src.model.assembler import EmbeddingAssembler
-from src.model.config import PRAGMAConfig
-from src.tokenizer.categorical import CategoricalTokenizer
-from src.tokenizer.numerical import NumericalTokenizer
-from src.tokenizer.pipeline import TokenizerPipeline
-from src.tokenizer.vocabulary import VocabularySpec
+from pragma_encoder.model.assembled_batch import AssembledBatch
+from pragma_encoder.model.assembler import EmbeddingAssembler
+from pragma_encoder.model.config import PRAGMAConfig
+from pragma_encoder.tokenizer.categorical import CategoricalTokenizer
+from pragma_encoder.tokenizer.numerical import NumericalTokenizer
+from pragma_encoder.tokenizer.pipeline import TokenizerPipeline
+from pragma_encoder.tokenizer.vocabulary import VocabularySpec
 
 # ---------------------------------------------------------------------------
 # Constants and fixtures

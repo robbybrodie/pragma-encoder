@@ -28,8 +28,8 @@ import pytest
 torch = pytest.importorskip("torch", reason="torch not installed")
 nn = torch.nn
 
-from src.encoders.event_encoder import EventEncoder
-from src.model.config import PRAGMAConfig
+from pragma_encoder.encoders.event_encoder import EventEncoder
+from pragma_encoder.model.config import PRAGMAConfig
 
 _CONFIG = PRAGMAConfig.pragma_s()
 

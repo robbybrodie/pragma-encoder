@@ -30,11 +30,11 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="torch not installed")
 
-from src.masking import MaskingStrategy
-from src.model import PRAGMA, PRAGMAConfig
-from src.model.assembler import EmbeddingAssembler
-from src.tokenizer.vocabulary import VocabularySpec
-from src.training.readiness import make_readiness_report
+from pragma_encoder.masking import MaskingStrategy
+from pragma_encoder.model import PRAGMA, PRAGMAConfig
+from pragma_encoder.model.assembler import EmbeddingAssembler
+from pragma_encoder.tokenizer.vocabulary import VocabularySpec
+from pragma_encoder.training.readiness import make_readiness_report
 
 # ---------------------------------------------------------------------------
 # Tiny config for convergence tests — fast, deterministic, no GPU needed
@@ -780,7 +780,7 @@ class TestNoSideEffects:
         boto3_was_present_before = "boto3" in sys.modules
 
         import importlib
-        importlib.import_module("src.training.readiness")
+        importlib.import_module("pragma_encoder.training.readiness")
 
         if not boto3_was_present_before:
             assert "boto3" not in sys.modules, (
@@ -797,7 +797,7 @@ class TestNoSideEffects:
         kfp_was_present_before = "kfp" in sys.modules
 
         import importlib
-        importlib.import_module("src.training.readiness")
+        importlib.import_module("pragma_encoder.training.readiness")
 
         if not kfp_was_present_before:
             assert "kfp" not in sys.modules, (
@@ -813,7 +813,7 @@ class TestNoSideEffects:
         import importlib
         oc_was_present_before = "kubernetes" in sys.modules
 
-        importlib.import_module("src.training.readiness")
+        importlib.import_module("pragma_encoder.training.readiness")
 
         if not oc_was_present_before:
             assert "kubernetes" not in sys.modules, (

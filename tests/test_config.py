@@ -16,7 +16,7 @@ with its paper source section.
 
 import pytest
 
-from src.model.config import PRAGMAConfig
+from pragma_encoder.model.config import PRAGMAConfig
 
 VARIANTS = ["pragma_s", "pragma_m", "pragma_l"]
 

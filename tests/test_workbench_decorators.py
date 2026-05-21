@@ -9,7 +9,7 @@ it to a KFP v2 pipeline YAML for submission to OpenShift Pipelines.
 
 Target UX:
 
-    from src.workbench import pragma_pipeline, dataset, train
+    from pragma_encoder.workbench import pragma_pipeline, dataset, train
 
     @pragma_pipeline(name="pragma-s-ibm-tabformer")
     def run():
@@ -39,15 +39,15 @@ import sys
 import pytest
 
 # These already exist and must remain importable.
-from src.workbench._api import train_pragma
-from src.workbench._decorators import PragmaPipeline, pragma_pipeline
+from pragma_encoder.workbench._api import train_pragma
+from pragma_encoder.workbench._decorators import PragmaPipeline, pragma_pipeline
 
 # ---------------------------------------------------------------------------
 # Imports from modules that do not exist yet (red phase).
 # These will raise ImportError until implementation is provided.
 # ---------------------------------------------------------------------------
-from src.workbench._intent import DatasetIntent, TrainIntent, dataset, train
-from src.workbench._run import PIPELINE_STEP_NAMES, PragmaRun
+from pragma_encoder.workbench._intent import DatasetIntent, TrainIntent, dataset, train
+from pragma_encoder.workbench._run import PIPELINE_STEP_NAMES, PragmaRun
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -137,7 +137,7 @@ class TestPragmaPipelineDecorator:
         mock_adapter.prepare = mock_prepare
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        monkeypatch.setattr("src.workbench._api.get_adapter",
+        monkeypatch.setattr("pragma_encoder.workbench._api.get_adapter",
                             lambda _name: mock_adapter_cls)
 
         # Decorating must not raise (prepare must not be called)
@@ -154,7 +154,7 @@ class TestPragmaPipelineDecorator:
         mock_run = MagicMock(side_effect=AssertionError(
             "subprocess.run() must NOT be called during @pragma_pipeline decoration"
         ))
-        monkeypatch.setattr("src.workbench._api.subprocess",
+        monkeypatch.setattr("pragma_encoder.workbench._api.subprocess",
                             MagicMock(run=mock_run))
 
         @pragma_pipeline(name="no-subprocess")
@@ -229,7 +229,7 @@ class TestDatasetIntent:
         spy = MagicMock(side_effect=AssertionError(
             "get_adapter() must NOT be called by dataset()"
         ))
-        monkeypatch.setattr("src.workbench._api.get_adapter", spy)
+        monkeypatch.setattr("pragma_encoder.workbench._api.get_adapter", spy)
 
         dataset("ibm-tabformer")  # must not raise
 
@@ -307,7 +307,7 @@ class TestTrainIntent:
         spy = MagicMock(side_effect=AssertionError(
             "subprocess.run() must NOT be called by train()"
         ))
-        monkeypatch.setattr("src.workbench._api.subprocess", MagicMock(run=spy))
+        monkeypatch.setattr("pragma_encoder.workbench._api.subprocess", MagicMock(run=spy))
 
         train(dataset=self._ds(), model_size="S")
 
@@ -524,7 +524,7 @@ class TestCompileNoSideEffects:
         p = _make_decorated_pipeline()
         output = str(tmp_path / "out.yaml")
 
-        with patch("src.workbench._api.get_adapter") as mock_get:
+        with patch("pragma_encoder.workbench._api.get_adapter") as mock_get:
             mock_get.return_value = MagicMock(
                 return_value=MagicMock(
                     prepare=MagicMock(side_effect=AssertionError(
@@ -555,7 +555,7 @@ class TestPipelineReuse:
         pipeline/components_pragma.py. The decorator layer must not
         reimplement it.
         """
-        src = pathlib.Path("src/workbench/_decorators.py").read_text()
+        src = pathlib.Path("src/pragma_encoder/workbench/_decorators.py").read_text()
         # These are signs of duplicated training logic:
         forbidden_patterns = [
             "DataLoader",     # training loop detail
@@ -575,7 +575,7 @@ class TestPipelineReuse:
         Using importlib.import_module is the expected pattern to avoid the
         src -> pipeline circular import guard.
         """
-        src = pathlib.Path("src/workbench/_decorators.py").read_text()
+        src = pathlib.Path("src/pragma_encoder/workbench/_decorators.py").read_text()
         # Either references the module by string (importlib) or via compile logic
         has_pipeline_ref = (
             "pipeline.pragma_pipeline" in src
@@ -595,7 +595,7 @@ class TestPipelineReuse:
         _decorators.py source — this would fail the existing circular-dependency
         guard in tests/test_pipeline_components.py::TestNoCircularDependency.
         """
-        src = pathlib.Path("src/workbench/_decorators.py").read_text()
+        src = pathlib.Path("src/pragma_encoder/workbench/_decorators.py").read_text()
         assert "from pipeline" not in src, (
             "_decorators.py must not contain 'from pipeline' — use "
             "importlib.import_module inside compile() to avoid the circular "
@@ -609,7 +609,7 @@ class TestPipelineReuse:
 
     def test_no_static_pipeline_import_in_intent(self) -> None:
         """ADR 004: src/workbench/_intent.py must not import from pipeline/."""
-        src = pathlib.Path("src/workbench/_intent.py").read_text()
+        src = pathlib.Path("src/pragma_encoder/workbench/_intent.py").read_text()
         assert "from pipeline" not in src
         assert "import pipeline" not in src
 
@@ -683,7 +683,7 @@ class TestTrainPragmaModeIntegration:
         """ADR 004: train_pragma(mode='pipeline') must not execute training."""
         from unittest.mock import MagicMock, patch
 
-        with patch("src.workbench._api.subprocess") as mock_subp:
+        with patch("pragma_encoder.workbench._api.subprocess") as mock_subp:
             mock_subp.run.return_value = MagicMock(returncode=0)
             train_pragma(
                 dataset=_VALID_DATASET,
@@ -766,8 +766,8 @@ class TestLocalModeUnchanged:
     def _local_run(self) -> PragmaRun:
         from unittest.mock import MagicMock, patch
 
-        from src.data.dataset_manifest import DatasetManifest, DatasetShard
-        from src.model.config import PRAGMAConfig
+        from pragma_encoder.data.dataset_manifest import DatasetManifest, DatasetShard
+        from pragma_encoder.model.config import PRAGMAConfig
         shard = DatasetShard(uri="local/shard.csv", format="csv", rows=4)
         manifest = DatasetManifest(
             dataset_name="ibm-tabformer", dataset_version="v1",
@@ -780,8 +780,8 @@ class TestLocalModeUnchanged:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-             patch("src.workbench._api.subprocess") as mock_subp, \
+        with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
              patch("pathlib.Path.mkdir"):
             mock_subp.run.return_value = MagicMock(returncode=0)
             run = train_pragma(
@@ -853,7 +853,7 @@ class TestNoPvcStorage:
 
     def test_decorators_source_no_pvc_strings(self) -> None:
         """ADR 004: _decorators.py source must not contain PVC-based path strings."""
-        src = pathlib.Path("src/workbench/_decorators.py").read_text()
+        src = pathlib.Path("src/pragma_encoder/workbench/_decorators.py").read_text()
         pvc_strings = [s for s in ("ReadWriteOnce", "PersistentVolumeClaim", "pvc_path")
                        if s in src]
         assert not pvc_strings, (
@@ -862,7 +862,7 @@ class TestNoPvcStorage:
 
     def test_intent_source_no_pvc_strings(self) -> None:
         """ADR 004: _intent.py source must not contain PVC-based path strings."""
-        src = pathlib.Path("src/workbench/_intent.py").read_text()
+        src = pathlib.Path("src/pragma_encoder/workbench/_intent.py").read_text()
         pvc_strings = [s for s in ("ReadWriteOnce", "PersistentVolumeClaim", "pvc_path")
                        if s in src]
         assert not pvc_strings, (

@@ -32,12 +32,12 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="torch not installed")
 
-from src.masking.strategy import MaskingStrategy
-from src.model.config import PRAGMAConfig
+from pragma_encoder.masking.strategy import MaskingStrategy
+from pragma_encoder.model.config import PRAGMAConfig
 
 _CONFIG = PRAGMAConfig.pragma_s()
 
-# Special token IDs — must match TokenizerPipeline (src/tokenizer/pipeline.py)
+# Special token IDs — must match TokenizerPipeline (src/pragma_encoder/tokenizer/pipeline.py)
 _MASK_TOKEN_ID = 1  # TokenizerPipeline.MASK_ID
 _UNK_TOKEN_ID = 0   # TokenizerPipeline.PAD_ID — used as UNK replacement (no global UNK)
 

@@ -9,12 +9,51 @@ description = "Open-source implementation of the PRAGMA foundation model archite
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
+authors = [{name = "pragma-encoder contributors"}]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.40.0",
+    "peft>=0.10.0",
+    "einops>=0.7.0",
+    "sentencepiece>=0.2.0",
+    "tokenizers>=0.19.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scikit-learn>=1.3.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["tests*"]
 
 [project.optional-dependencies]
 # kfp is optional: pipeline components and pragma_pipeline.py import it
 # conditionally (_KFP_AVAILABLE guard). Core training and the workbench API
 # work without kfp installed.
 workbench = ["kfp>=2", "kfp-kubernetes>=1.2"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "build>=1.0.0",
+]
+notebooks = [
+    "jupyter>=1.0.0",
+    "ipywidgets>=8.0.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "umap-learn>=0.5.0",
+]
 
 [tool.mypy]
 strict = true
@@ -51,7 +90,7 @@ ignore = ["N806", "N812"]
 # E402 (module-level import not at top) is intentional here.
 "tests/test_*.py" = ["E402"]
 # The IBM TabFormer smoke CSV header is a fixed-format string that cannot be wrapped.
-"src/data/adapters/ibm_tabformer_smoke.py" = ["E501"]
+"src/pragma_encoder/data/adapters/ibm_tabformer_smoke.py" = ["E501"]
 # The Level 3b smoke test embeds a TabFormer CSV header and assertion messages that
 # cannot be wrapped without altering the fixed IBM format or test clarity.
 "tests/openshift/test_03b_training_job_smoke.py" = ["E501"]
@@ -68,3 +107,17 @@ ignore = ["N806", "N812"]
 "tests/openshift/test_05_s3_checkpoint_resume.py" = ["E501"]
 # The Level 6 GPU smoke test has long shell script lines and assertion messages.
 "tests/openshift/test_06_gpu_training_smoke.py" = ["E501"]
+# The image contract runtime test has assertion messages that include long
+# pragma_encoder module paths — these cannot be shortened without losing clarity.
+"tests/openshift/test_02b_image_contract_runtime.py" = ["E501"]
+# The checkpoint resume tests have mock.patch strings and assertion messages
+# that include full pragma_encoder.training.checkpoints module paths.
+"tests/test_checkpoint_resume.py" = ["E501"]
+# The workbench API test has a with-statement that exceeds 100 chars after the
+# pragma_encoder namespace rename; the mock.patch path cannot be shortened.
+"tests/test_workbench_api.py" = ["E501"]
+# The workbench submit test has an error message with the full module path.
+"tests/test_workbench_submit.py" = ["E501"]
+# The image contract tests have assertion messages that include the full
+# src/pragma_encoder/training/checkpoints.py path — these cannot be shortened.
+"tests/test_image_contract.py" = ["E501"]

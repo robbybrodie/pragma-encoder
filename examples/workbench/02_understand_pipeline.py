@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # ── Imports ───────────────────────────────────────────────────────────────────
-from src.workbench import train_pragma, PIPELINE_STEP_NAMES
+from pragma_encoder.workbench import train_pragma, PIPELINE_STEP_NAMES
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Obtain a dry-run PragmaRun to inspect
@@ -161,8 +161,8 @@ S3 export path:
 This is the model that downstream tasks (linear probe, LoRA fine-tuning,
 embedding extraction) load via the adaptation API:
 
-  from src.adaptation.probe import EmbeddingProbe
-  from src.adaptation.lora import LoRAAdapter
+  from pragma_encoder.adaptation.probe import EmbeddingProbe
+  from pragma_encoder.adaptation.lora import LoRAAdapter
 
 The export stage is a no-op if the training job already uploaded
 checkpoints to S3 during training (which train_pragma.py does for

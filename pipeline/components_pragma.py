@@ -128,8 +128,8 @@ def prepare_dataset(
         ValueError:        If model_size is not "S", "M", or "L".
         FileNotFoundError: If source data is missing.
     """
-    from src.data.adapters import get_adapter
-    from src.model.config import PRAGMAConfig
+    from pragma_encoder.data.adapters import get_adapter
+    from pragma_encoder.model.config import PRAGMAConfig
 
     _config_map = {
         "S": PRAGMAConfig.pragma_s,
@@ -257,7 +257,7 @@ def run_pretraining(
     Returns:
         checkpoint_uri: S3 URI of the final model checkpoint.
     """
-    from src.model.config import PRAGMAConfig
+    from pragma_encoder.model.config import PRAGMAConfig
 
     # Same model_size -> PRAGMAConfig mapping as train_pragma()
     # (src/workbench/_api.py::_MODEL_SIZE_MAP) - no second implementation.

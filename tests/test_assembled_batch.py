@@ -27,8 +27,8 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="torch not installed")
 
-from src.model.assembled_batch import AssembledBatch
-from src.model.config import PRAGMAConfig
+from pragma_encoder.model.assembled_batch import AssembledBatch
+from pragma_encoder.model.config import PRAGMAConfig
 
 _CONFIG = PRAGMAConfig.pragma_s()
 

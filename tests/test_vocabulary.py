@@ -33,10 +33,10 @@ with its paper source section, or is derived from it.
 
 import pytest
 
-from src.tokenizer.categorical import CategoricalTokenizer
-from src.tokenizer.numerical import NumericalTokenizer
-from src.tokenizer.pipeline import TokenizerPipeline
-from src.tokenizer.vocabulary import VocabularyMap, VocabularySpec
+from pragma_encoder.tokenizer.categorical import CategoricalTokenizer
+from pragma_encoder.tokenizer.numerical import NumericalTokenizer
+from pragma_encoder.tokenizer.pipeline import TokenizerPipeline
+from pragma_encoder.tokenizer.vocabulary import VocabularyMap, VocabularySpec
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers

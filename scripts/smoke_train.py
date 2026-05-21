@@ -17,11 +17,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
-from src.model import PRAGMA, PRAGMAConfig
-from src.model.assembler import EmbeddingAssembler
-from src.model.assembled_batch import AssembledBatch
-from src.masking import MaskingStrategy
-from src.tokenizer.vocabulary import VocabularySpec
+from pragma_encoder.model import PRAGMA, PRAGMAConfig
+from pragma_encoder.model.assembler import EmbeddingAssembler
+from pragma_encoder.model.assembled_batch import AssembledBatch
+from pragma_encoder.masking import MaskingStrategy
+from pragma_encoder.tokenizer.vocabulary import VocabularySpec
 
 def make_synthetic_batch(config, vocab_spec, batch=2, ne=5, ni=8, na=6):
     """Generate a synthetic training batch."""

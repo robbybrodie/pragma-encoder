@@ -62,7 +62,7 @@ import unittest.mock as mock
 
 import pytest
 
-from src.workbench._submit import (
+from pragma_encoder.workbench._submit import (
     DSPAConfig,
     get_dspa_endpoint,
     get_run_status,  # noqa: F401 — imported for contract completeness
@@ -118,7 +118,7 @@ class TestKFPPipelineSmokePrereqs:
     def test_submit_module_importable_without_kfp(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """src.workbench._submit must import cleanly even when kfp is absent.
+        """pragma_encoder.workbench._submit must import cleanly even when kfp is absent.
 
         kfp is an optional dependency. The submit module must not import
         kfp at module level — only lazily inside make_kfp_client(). This
@@ -129,14 +129,14 @@ class TestKFPPipelineSmokePrereqs:
         monkeypatch.setitem(sys.modules, "kfp", None)  # type: ignore[arg-type]
 
         try:
-            submit_mod = importlib.import_module("src.workbench._submit")
+            submit_mod = importlib.import_module("pragma_encoder.workbench._submit")
             assert submit_mod is not None, (
-                "src.workbench._submit must be importable without kfp. "
+                "pragma_encoder.workbench._submit must be importable without kfp. "
                 "kfp must be imported lazily inside make_kfp_client(), not at module level."
             )
         except ImportError as exc:
             pytest.fail(
-                f"src.workbench._submit raised ImportError without kfp: {exc}. "
+                f"pragma_encoder.workbench._submit raised ImportError without kfp: {exc}. "
                 "kfp must be imported lazily inside make_kfp_client()."
             )
 
