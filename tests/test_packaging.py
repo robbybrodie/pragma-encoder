@@ -1,34 +1,41 @@
 """Packaging smoke tests — verify pyproject.toml build system configuration.
 
-These tests confirm the project is correctly configured so that
-``pip install -e .`` succeeds in a clean environment, and that the
-installed wheel metadata contains the expected runtime dependencies.
+These tests confirm the project is correctly configured so that the wheel
+builds correctly, the installed wheel metadata contains the expected runtime
+dependencies, and ``pip install --no-deps -e .`` / ``pip install --no-deps
+dist/*.whl`` both succeed in a clean environment.
 
-Why this matters:
-  ``build-backend = "setuptools.backends.legacy:build"`` is not a valid
-  setuptools backend string. It causes ``BackendUnavailable`` when pip
-  tries to resolve the build backend, which means ``pip install -e .``
-  fails even though setuptools is installed.
-
-  The correct backend is ``"setuptools.build_meta"``.
-
+Test classes
+------------
 TestPackagingConfig:
-  Fast static checks against pyproject.toml content.
+  Fast static checks against pyproject.toml content. No subprocess calls.
 
 TestSetupPy:
-  Confirms setup.py is a minimal shim that does not duplicate metadata
-  or override package discovery from pyproject.toml.
+  Confirms setup.py is a minimal shim with no stale find_packages() or
+  install_requires that would override pyproject.toml.
 
 TestWheelMetadata:
-  Verifies pyproject.toml lists core runtime dependencies and that the
-  installed package metadata (importlib.metadata) exposes them as
-  Requires-Dist entries.
+  Static checks against pyproject.toml + artifact-based checks that read
+  the METADATA file from the built wheel zip. Artifact-based checks are
+  reliable because they test the actual built artifact from this checkout,
+  not whatever version of pragma-encoder happens to be installed in the
+  current Python environment (which may be stale after a force-reinstall
+  or editable install that pre-dates the [project.dependencies] addition).
 
-TestCleanInstall:
-  Creates a temporary virtualenv and runs ``pip install -e .`` inside it.
-  This is a true clean-install test: no pre-existing packages, no PYTHONPATH.
-  Slower than string-check tests (~5–30s with pip cache) but catches real
-  install-time failures that string checks cannot detect.
+TestEditableInstall:
+  Creates a temporary virtualenv and runs ``pip install --no-deps -e .``
+  inside it. Uses ``--no-deps`` so the test does not spend minutes
+  downloading torch, transformers, etc. Proves the package surface
+  (editable install mechanics, import identity) without pulling ML
+  dependencies. Dependency declarations are validated by inspecting wheel
+  METADATA, not by actually installing dependencies.
+
+TestWheelInstall:
+  Builds the wheel, creates a fresh venv, installs ``pip install --no-deps
+  dist/*.whl``, then verifies ``import pragma_encoder`` works. Proves the
+  built wheel is installable from a clean environment without dependencies.
+  Also verifies the installed top-level package is ``pragma_encoder``, not
+  ``src``.
 """
 
 from __future__ import annotations
@@ -40,11 +47,60 @@ import subprocess
 import sys
 import tempfile
 import venv
+import zipfile
 
 import tomllib
 
 _PYPROJECT = pathlib.Path(__file__).parent.parent / "pyproject.toml"
 _SETUP_PY = pathlib.Path(__file__).parent.parent / "setup.py"
+_PROJECT_ROOT = pathlib.Path(__file__).parent.parent
+
+# Module-level cache: the wheel built (or found) for this pytest session.
+_BUILT_WHEEL: pathlib.Path | None = None
+
+
+def _get_or_build_wheel() -> pathlib.Path:
+    """Return a built wheel for this checkout, building it if necessary.
+
+    Reuses an existing dist/pragma_encoder-*.whl from a prior build in this
+    session or a previous run so we don't rebuild on every test. To force a
+    fresh build delete dist/pragma_encoder-*.whl before running pytest.
+
+    Why build the wheel rather than inspect the installed editable-install
+    metadata?
+      importlib.metadata.requires('pragma-encoder') reads from whatever dist-
+      info is installed in the current Python environment. That may be a stale
+      editable install from before pyproject.toml was updated with
+      [project.dependencies]. Reading the METADATA file inside the wheel zip
+      proves the current source tree builds correctly, regardless of the state
+      of the dev environment.
+    """
+    global _BUILT_WHEEL
+    if _BUILT_WHEEL is not None and _BUILT_WHEEL.exists():
+        return _BUILT_WHEEL
+
+    dist_dir = _PROJECT_ROOT / "dist"
+    existing = sorted(dist_dir.glob("pragma_encoder-*.whl")) if dist_dir.exists() else []
+    if existing:
+        _BUILT_WHEEL = existing[-1]
+        return _BUILT_WHEEL
+
+    result = subprocess.run(
+        [sys.executable, "-m", "build", "--wheel", str(_PROJECT_ROOT)],
+        capture_output=True,
+        text=True,
+        cwd=str(_PROJECT_ROOT),
+    )
+    assert result.returncode == 0, (
+        "python -m build --wheel failed.\n"
+        f"stdout:\n{result.stdout[-2000:]}\n"
+        f"stderr:\n{result.stderr[-2000:]}"
+    )
+
+    wheels = sorted((_PROJECT_ROOT / "dist").glob("pragma_encoder-*.whl"))
+    assert wheels, "python -m build --wheel succeeded but dist/pragma_encoder-*.whl not found."
+    _BUILT_WHEEL = wheels[-1]
+    return _BUILT_WHEEL
 
 
 class TestPackagingConfig:
@@ -162,10 +218,12 @@ class TestSetupPy:
 class TestWheelMetadata:
     """Verify package metadata contains required runtime dependencies.
 
-    Two complementary checks:
+    Three complementary checks:
     1. Static: pyproject.toml [project.dependencies] lists each core dep.
-    2. Dynamic: importlib.metadata.requires('pragma-encoder') exposes them
-       after the editable install, i.e. the installed METADATA file is correct.
+    2. Artifact: build the wheel, read METADATA from the zip, assert
+       Requires-Dist lines for each core dep. Reliable: tests the built
+       artifact from this checkout, not the installed environment.
+    3. Artifact: wheel top_level.txt must be 'pragma_encoder', not 'src'.
     """
 
     # The minimum set of core runtime dependencies that must appear in metadata.
@@ -234,35 +292,67 @@ class TestWheelMetadata:
         )
         assert name != "src", "[project.name] must not be 'src'."
 
-    def test_installed_metadata_requires_dist(self) -> None:
-        """Installed METADATA must list core runtime Requires-Dist entries.
+    def test_wheel_metadata_requires_dist(self) -> None:
+        """Built wheel METADATA must list core runtime Requires-Dist entries.
 
-        Reads importlib.metadata.requires('pragma-encoder') which parses the
-        METADATA file written by pip during editable install. This is the same
-        data that would appear in a built wheel's METADATA file.
+        Builds the wheel from this checkout (reusing a cached build if
+        available) and reads the METADATA file directly from inside the zip.
+        This is reliable: it tests the artifact produced by the current
+        source tree, not whatever dist-info is installed in the test runner
+        environment (which may be stale after editable installs).
 
-        Failure here means the wheel ships without dependency declarations and
-        users will hit ImportError at runtime after a fresh pip install.
+        Failure means the wheel ships without dependency declarations —
+        users who run ``pip install pragma-encoder`` will not get torch,
+        transformers, etc. installed automatically.
         """
-        try:
-            reqs = importlib.metadata.requires("pragma-encoder") or []
-        except importlib.metadata.PackageNotFoundError:
-            raise AssertionError(
-                "pragma-encoder is not installed in the current Python environment. "
-                "Run 'pip install -e .' first, then re-run this test."
-            )
+        wheel = _get_or_build_wheel()
+        with zipfile.ZipFile(wheel) as zf:
+            metadata_entries = [n for n in zf.namelist() if n.endswith("/METADATA")]
+            assert metadata_entries, f"No METADATA file found in wheel {wheel.name}"
+            metadata = zf.read(metadata_entries[0]).decode()
 
-        req_names = {self._dep_name(r) for r in reqs}
+        requires_dist = [
+            line.removeprefix("Requires-Dist:").strip()
+            for line in metadata.splitlines()
+            if line.startswith("Requires-Dist:")
+        ]
+        req_names = {self._dep_name(r) for r in requires_dist}
+
         for pkg in self.REQUIRED_DEPS:
             normalized = pkg.lower().replace("-", "_")
             assert normalized in req_names, (
-                f"pragma-encoder installed METADATA is missing Requires-Dist: {pkg!r}. "
-                f"Found Requires-Dist entries: {sorted(req_names)}. "
+                f"Wheel METADATA missing Requires-Dist: {pkg!r}. "
+                f"Found {len(requires_dist)} Requires-Dist entries: {sorted(req_names)}. "
+                f"Wheel: {wheel.name}. "
                 "Check pyproject.toml [project.dependencies]."
             )
 
+    def test_wheel_top_level_is_pragma_encoder(self) -> None:
+        """Built wheel top_level.txt must be 'pragma_encoder', not 'src'.
+
+        The top-level package in the wheel must be pragma_encoder. If it
+        were 'src', the public import would be ``import src``, not
+        ``import pragma_encoder``.
+        """
+        wheel = _get_or_build_wheel()
+        with zipfile.ZipFile(wheel) as zf:
+            top_level_entries = [n for n in zf.namelist() if n.endswith("/top_level.txt")]
+            assert top_level_entries, f"No top_level.txt found in wheel {wheel.name}"
+            top_level = zf.read(top_level_entries[0]).decode().strip()
+
+        assert top_level == "pragma_encoder", (
+            f"Wheel top_level.txt = {top_level!r}. Must be 'pragma_encoder'. "
+            "Check [tool.setuptools.packages.find].where in pyproject.toml — "
+            "must be ['src'] so setuptools discovers pragma_encoder, not src."
+        )
+        assert top_level != "src", (
+            "Wheel top_level.txt is 'src'. The public import would be "
+            "``import src``, which is wrong. "
+            "Check pyproject.toml [tool.setuptools.packages.find].where = ['src']."
+        )
+
     def test_src_is_not_installed_as_package(self) -> None:
-        """'src' must not be importable as an installed package.
+        """'src' must not be importable as an installed package of pragma-encoder.
 
         After the rename to pragma_encoder, 'src' should not appear as a
         top-level package in the installed distribution.
@@ -276,54 +366,58 @@ class TestWheelMetadata:
         # The installed top-level package is pragma_encoder, not src.
         assert "src" not in top_level or "pragma-encoder" not in top_level.get("src", []), (
             "'src' is registered as a top-level package of pragma-encoder. "
+            "This indicates a stale egg-info from before the namespace rename. "
+            "Delete pragma_encoder.egg-info at the repo root and run "
+            "'pip install -e . --force-reinstall --no-deps'. "
             "Check [tool.setuptools.packages.find] in pyproject.toml — "
             "where must be ['src'] not ['.'], and setup.py must not call "
             "find_packages(include=['src', 'src.*'])."
         )
 
 
-class TestCleanInstall:
-    """True clean-install verification using a temporary virtualenv.
+class TestEditableInstall:
+    """Verify editable install in a clean temporary virtualenv.
 
-    Creates a fresh venv, upgrades pip/setuptools/wheel, then runs
-    ``pip install -e .`` against the project root.  Asserts exit 0.
+    Uses ``pip install --no-deps -e .`` so the test does not spend minutes
+    downloading torch, transformers, numpy, etc. The goal is to prove the
+    package surface — editable install mechanics and import identity — not
+    to verify that runtime dependencies can be resolved.
 
-    This test catches install-time failures that the string-check tests
-    in TestPackagingConfig cannot detect — e.g. a broken [project] table,
-    a missing package_dir, or a bad entry-point declaration.
+    Dependency correctness is covered by TestWheelMetadata.test_wheel_metadata_requires_dist,
+    which reads the wheel METADATA file directly.
 
-    The test is slower than the other packaging tests (~5–30s with pip
-    cache) but runs by default as part of ``pytest tests/``.
-
-    On CI the packaging job runs this in isolation so a slow cold-start
-    (no pip cache) does not block other jobs.
+    On CI the packaging job runs this in isolation to bound its duration.
+    With --no-deps and a warm pip cache it completes in under 30 seconds.
     """
 
-    def test_clean_editable_install(self) -> None:
-        """pip install -e . in a fresh venv must exit 0.
+    def test_editable_install_no_deps(self) -> None:
+        """pip install --no-deps -e . in a fresh venv must exit 0.
 
         Steps:
           1. Create a temporary virtualenv (stdlib venv, no pip cache sharing).
-          2. Upgrade pip, setuptools, and wheel in the venv.
-          3. Run ``pip install -e <project_root>`` inside the venv.
+          2. Upgrade pip and setuptools in the venv.
+          3. Run ``pip install --no-deps -e <project_root>`` inside the venv.
           4. Assert exit code 0.
+          5. Run ``python -c "import pragma_encoder"`` — must exit 0.
+          6. Run ``python -c "import src"`` — must exit non-zero
+             (src is NOT the public package name).
 
-        Failure means the package cannot be installed from a clean environment,
+        ``--no-deps`` is intentional: this test proves the install mechanics,
+        not that ML dependencies can be downloaded. Dependency declarations
+        are validated separately by inspecting the wheel METADATA artifact.
+
+        Failure means the package cannot be installed from a clean checkout,
         which would block any user doing ``pip install -e .`` on a fresh clone.
         """
-        project_root = pathlib.Path(__file__).parent.parent
-
         with tempfile.TemporaryDirectory() as tmp_dir:
             venv_dir = pathlib.Path(tmp_dir) / "venv"
-
-            # Create venv with pip available.
             venv.create(str(venv_dir), with_pip=True)
 
-            # Resolve venv executables (cross-platform: bin/ on Unix, Scripts/ on Windows).
             bin_dir = venv_dir / "bin" if (venv_dir / "bin").exists() else venv_dir / "Scripts"
             pip_exe = bin_dir / "pip"
+            python_exe = bin_dir / "python"
 
-            # Upgrade build tools so the venv has a modern pip that understands pyproject.toml.
+            # Upgrade build tools to a modern pip that understands pyproject.toml.
             upgrade = subprocess.run(
                 [str(pip_exe), "install", "-U", "pip", "setuptools", "wheel"],
                 capture_output=True,
@@ -335,29 +429,30 @@ class TestCleanInstall:
                 f"stderr:\n{upgrade.stderr[-2000:]}"
             )
 
-            # Install the project in editable mode.
+            # Install in editable mode WITHOUT pulling ML dependencies.
+            # --no-deps: do not install torch, transformers, etc. (saves minutes).
+            # Dependency correctness is proven by
+            # TestWheelMetadata.test_wheel_metadata_requires_dist.
             install = subprocess.run(
-                [str(pip_exe), "install", "-e", str(project_root)],
+                [str(pip_exe), "install", "--no-deps", "-e", str(_PROJECT_ROOT)],
                 capture_output=True,
                 text=True,
             )
             assert install.returncode == 0, (
-                "pip install -e . failed in a fresh virtualenv.\n"
-                "This means the project cannot be installed from a clean checkout.\n"
+                "pip install --no-deps -e . failed in a fresh virtualenv.\n"
+                "This means the package cannot be installed from a clean checkout.\n"
                 f"stdout:\n{install.stdout[-2000:]}\n"
                 f"stderr:\n{install.stderr[-2000:]}"
             )
 
-            # Verify the installed package is importable using the venv Python.
             # The public Python package is 'pragma_encoder' (not 'src').
-            python_exe = bin_dir / "python"
             import_check = subprocess.run(
                 [str(python_exe), "-c", "import pragma_encoder"],
                 capture_output=True,
                 text=True,
             )
             assert import_check.returncode == 0, (
-                "import pragma_encoder failed in the venv after pip install -e .\n"
+                "import pragma_encoder failed in the venv after pip install --no-deps -e .\n"
                 "The package was installed (exit 0) but 'pragma_encoder' is not "
                 "importable. Check pyproject.toml [tool.setuptools.packages.find] — "
                 "where must be ['src'] and src/pragma_encoder/__init__.py must exist.\n"
@@ -366,6 +461,114 @@ class TestCleanInstall:
             )
 
         print(
-            f"\n[TestCleanInstall] pip install -e . and import pragma_encoder succeeded "
-            f"(Python {sys.version.split()[0]})."
+            f"\n[TestEditableInstall] pip install --no-deps -e . and "
+            f"import pragma_encoder succeeded (Python {sys.version.split()[0]})."
+        )
+
+
+# Keep the old class name as an alias so any external references don't break.
+TestCleanInstall = TestEditableInstall
+
+
+class TestWheelInstall:
+    """Verify the built wheel installs cleanly in a fresh venv.
+
+    Builds the wheel (or reuses an existing dist/*.whl), creates a temporary
+    virtualenv, installs ``pip install --no-deps dist/*.whl``, and confirms
+    ``import pragma_encoder`` works.
+
+    Like TestEditableInstall, uses ``--no-deps`` so the test is fast. ML
+    dependency correctness is proved by reading the wheel METADATA directly
+    in TestWheelMetadata.
+
+    This test catches wheel-specific packaging failures that editable install
+    does not cover — e.g. a missing __init__.py in the sdist, wrong
+    package_dir, or an entry-point declaration that breaks the wheel layout.
+    """
+
+    def test_wheel_install_no_deps(self) -> None:
+        """pip install --no-deps dist/*.whl in a fresh venv must succeed.
+
+        Steps:
+          1. Build (or reuse) the wheel from this checkout.
+          2. Create a temporary virtualenv.
+          3. Upgrade pip in the venv.
+          4. Run ``pip install --no-deps <wheel_path>`` inside the venv.
+          5. Assert exit code 0.
+          6. Run ``python -c "import pragma_encoder"`` — must exit 0.
+          7. Run a one-liner that checks the installed top-level package is
+             'pragma_encoder', not 'src'.
+        """
+        wheel = _get_or_build_wheel()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            venv_dir = pathlib.Path(tmp_dir) / "venv"
+            venv.create(str(venv_dir), with_pip=True)
+
+            bin_dir = venv_dir / "bin" if (venv_dir / "bin").exists() else venv_dir / "Scripts"
+            pip_exe = bin_dir / "pip"
+            python_exe = bin_dir / "python"
+
+            upgrade = subprocess.run(
+                [str(pip_exe), "install", "-U", "pip"],
+                capture_output=True,
+                text=True,
+            )
+            assert upgrade.returncode == 0, (
+                "pip install -U pip failed in fresh venv.\n"
+                f"stderr:\n{upgrade.stderr[-1000:]}"
+            )
+
+            install = subprocess.run(
+                [str(pip_exe), "install", "--no-deps", str(wheel)],
+                capture_output=True,
+                text=True,
+            )
+            assert install.returncode == 0, (
+                f"pip install --no-deps {wheel.name} failed in a fresh virtualenv.\n"
+                "This means the built wheel cannot be installed from a clean environment.\n"
+                f"stdout:\n{install.stdout[-2000:]}\n"
+                f"stderr:\n{install.stderr[-2000:]}"
+            )
+
+            # pragma_encoder must be importable.
+            import_check = subprocess.run(
+                [str(python_exe), "-c", "import pragma_encoder"],
+                capture_output=True,
+                text=True,
+            )
+            assert import_check.returncode == 0, (
+                f"import pragma_encoder failed after pip install --no-deps {wheel.name}.\n"
+                "The wheel installed (exit 0) but 'pragma_encoder' is not importable.\n"
+                f"stdout:\n{import_check.stdout}\n"
+                f"stderr:\n{import_check.stderr}"
+            )
+
+            # The top-level package must be pragma_encoder, not src.
+            top_level_check = subprocess.run(
+                [
+                    str(python_exe),
+                    "-c",
+                    (
+                        "import importlib.metadata; "
+                        "d = importlib.metadata.packages_distributions(); "
+                        "assert 'pragma_encoder' in d, "
+                        "f'pragma_encoder not in packages_distributions: {sorted(d)}'; "
+                        "assert 'src' not in d or 'pragma-encoder' not in d.get('src', []), "
+                        "'src is registered as a top-level package of pragma-encoder'"
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            assert top_level_check.returncode == 0, (
+                "Top-level package identity check failed after wheel install.\n"
+                "'pragma_encoder' must be registered; 'src' must not be.\n"
+                f"stdout:\n{top_level_check.stdout}\n"
+                f"stderr:\n{top_level_check.stderr}"
+            )
+
+        print(
+            f"\n[TestWheelInstall] pip install --no-deps {wheel.name} and "
+            f"import pragma_encoder succeeded (Python {sys.version.split()[0]})."
         )

@@ -18,7 +18,7 @@ Four categories:
       kfp_kubernetes is absent, and must never be called at module import
       time (only when secret injection is explicitly requested).
 
-  TestKfpKubernetesBoundary — src/training/checkpoints.py and
+  TestKfpKubernetesBoundary — src/pragma_encoder/training/checkpoints.py and
       scripts/train_pragma.py must not import kfp or kfp_kubernetes.
       These run in the training image where kfp is a workbench-only dep.
       KFP/kfp-kubernetes belong only in the workbench compile environment.
@@ -341,7 +341,7 @@ class TestKfpKubernetesBoundary:
     Category: image-contract / kfp-boundary
 
     The training image runtime must NOT import kfp or kfp-kubernetes:
-      - src/training/checkpoints.py runs inside training pods (emptyDir, CPU/GPU)
+      - src/pragma_encoder/training/checkpoints.py runs inside training pods (emptyDir, CPU/GPU)
       - scripts/train_pragma.py runs inside training pods
 
     kfp and kfp-kubernetes are compile-time workbench dependencies only.
@@ -352,25 +352,25 @@ class TestKfpKubernetesBoundary:
     """
 
     def test_checkpoints_module_exists(self) -> None:
-        """src/training/checkpoints.py must exist (TD-006 fix implementation).
+        """src/pragma_encoder/training/checkpoints.py must exist (TD-006 fix implementation).
 
         This test will fail until checkpoints.py is created (expected red phase).
         Once created it acts as a guard against accidental deletion.
         """
         assert _CHECKPOINTS_PY.exists(), (
-            f"src/training/checkpoints.py not found at {_CHECKPOINTS_PY}. "
+            f"src/pragma_encoder/training/checkpoints.py not found at {_CHECKPOINTS_PY}. "
             "Create it to implement the all-rank S3 download pattern (TD-006 fix). "
             "See tests/test_checkpoint_resume.py for the full API contract."
         )
 
     def test_checkpoints_does_not_import_kfp_at_module_level(self) -> None:
-        """src/training/checkpoints.py must not have top-level kfp imports.
+        """src/pragma_encoder/training/checkpoints.py must not have top-level kfp imports.
 
         This module runs inside training pods that may not have kfp installed.
         Any top-level kfp import would cause ImportError at job startup.
         """
         if not _CHECKPOINTS_PY.exists():
-            pytest.skip("src/training/checkpoints.py does not exist yet.")
+            pytest.skip("src/pragma_encoder/training/checkpoints.py does not exist yet.")
         text = _CHECKPOINTS_PY.read_text()
         for line in text.splitlines():
             stripped = line.strip()
@@ -380,16 +380,16 @@ class TestKfpKubernetesBoundary:
             if not line.startswith(" ") and not line.startswith("\t"):
                 if stripped.startswith("import kfp") or stripped.startswith("from kfp"):
                     pytest.fail(
-                        f"src/training/checkpoints.py must not import kfp at module level. "
+                        f"src/pragma_encoder/training/checkpoints.py must not import kfp at module level. "
                         f"Found: {line!r}. "
                         "kfp belongs only in the workbench compile environment. "
                         "See docs/openshift-image-contract.md."
                     )
 
     def test_checkpoints_does_not_import_kfp_kubernetes_at_module_level(self) -> None:
-        """src/training/checkpoints.py must not have top-level kfp_kubernetes imports."""
+        """src/pragma_encoder/training/checkpoints.py must not have top-level kfp_kubernetes imports."""
         if not _CHECKPOINTS_PY.exists():
-            pytest.skip("src/training/checkpoints.py does not exist yet.")
+            pytest.skip("src/pragma_encoder/training/checkpoints.py does not exist yet.")
         text = _CHECKPOINTS_PY.read_text()
         for line in text.splitlines():
             stripped = line.strip()
@@ -400,7 +400,7 @@ class TestKfpKubernetesBoundary:
                     stripped.startswith("import") or stripped.startswith("from")
                 ):
                     pytest.fail(
-                        f"src/training/checkpoints.py must not import kfp_kubernetes. "
+                        f"src/pragma_encoder/training/checkpoints.py must not import kfp_kubernetes. "
                         f"Found: {line!r}. "
                         "kfp-kubernetes belongs only in the workbench compile environment."
                     )
@@ -414,7 +414,7 @@ class TestKfpKubernetesBoundary:
         The checkpoints module must import cleanly — no kfp-related ImportError.
         """
         if not _CHECKPOINTS_PY.exists():
-            pytest.skip("src/training/checkpoints.py does not exist yet.")
+            pytest.skip("src/pragma_encoder/training/checkpoints.py does not exist yet.")
         # Simulate kfp being absent
         monkeypatch.setitem(sys.modules, "kfp", None)
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
@@ -466,7 +466,7 @@ class TestKfpKubernetesBoundary:
         text = _TRAIN_SCRIPT.read_text()
         assert "resolve_resume_checkpoint" in text, (
             "scripts/train_pragma.py must call resolve_resume_checkpoint() "
-            "from src/training/checkpoints.py. "
+            "from src/pragma_encoder/training/checkpoints.py. "
             "The TD-006 fix requires ALL ranks to independently download the checkpoint. "
             "Until this is integrated, Level 5 (S3 resume smoke) cannot pass. "
             "See tests/openshift/test_05_s3_checkpoint_resume.py."

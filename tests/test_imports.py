@@ -18,35 +18,35 @@ class TestModuleImports:
     """Verify all src/ modules import without errors."""
 
     def test_config_imports(self) -> None:
-        """src/model/config.py must import cleanly."""
+        """src/pragma_encoder/model/config.py must import cleanly."""
         import pragma_encoder.model.config  # noqa: F401
 
     def test_tokenizer_imports(self) -> None:
-        """src/tokenizer/ must import cleanly."""
+        """src/pragma_encoder/tokenizer/ must import cleanly."""
         import pragma_encoder.tokenizer  # noqa: F401
 
     def test_encoders_imports(self) -> None:
-        """src/encoders/ must import cleanly."""
+        """src/pragma_encoder/encoders/ must import cleanly."""
         import pragma_encoder.encoders  # noqa: F401
 
     def test_masking_imports(self) -> None:
-        """src/masking/ must import cleanly."""
+        """src/pragma_encoder/masking/ must import cleanly."""
         import pragma_encoder.masking  # noqa: F401
 
     def test_model_imports(self) -> None:
-        """src/model/ must import cleanly."""
+        """src/pragma_encoder/model/ must import cleanly."""
         import pragma_encoder.model  # noqa: F401
 
     def test_adaptation_imports(self) -> None:
-        """src/adaptation/ must import cleanly."""
+        """src/pragma_encoder/adaptation/ must import cleanly."""
         import pragma_encoder.adaptation  # noqa: F401
 
     def test_training_imports(self) -> None:
-        """src/training/ must import cleanly."""
+        """src/pragma_encoder/training/ must import cleanly."""
         import pragma_encoder.training  # noqa: F401
 
     def test_evaluation_imports(self) -> None:
-        """src/evaluation/ must import cleanly."""
+        """src/pragma_encoder/evaluation/ must import cleanly."""
         import pragma_encoder.evaluation  # noqa: F401
 
 
@@ -78,11 +78,11 @@ class TestDependencyGraph:
         ]
         for pattern in forbidden:
             assert pattern not in source, (
-                f"config.py must not import from src/: found '{pattern}'"
+                f"config.py must not import from pragma_encoder.*: found '{pattern}'"
             )
 
     def test_tokenizer_does_not_import_encoders(self) -> None:
-        """src/tokenizer/ must not import from src/encoders/."""
+        """src/pragma_encoder/tokenizer/ must not import from src/pragma_encoder/encoders/."""
         import pragma_encoder.tokenizer as tok_module
 
         source = inspect.getsource(tok_module)
@@ -99,7 +99,7 @@ class TestDependencyGraph:
             )
 
     def test_encoders_do_not_import_model(self) -> None:
-        """src/encoders/ must not import from src/model/pragma.py.
+        """src/pragma_encoder/encoders/ must not import from src/pragma_encoder/model/pragma.py.
 
         Encoders depend on config and rope only.
         They must not create circular dependencies with the model.

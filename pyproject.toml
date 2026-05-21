@@ -118,3 +118,6 @@ ignore = ["N806", "N812"]
 "tests/test_workbench_api.py" = ["E501"]
 # The workbench submit test has an error message with the full module path.
 "tests/test_workbench_submit.py" = ["E501"]
+# The image contract tests have assertion messages that include the full
+# src/pragma_encoder/training/checkpoints.py path — these cannot be shortened.
+"tests/test_image_contract.py" = ["E501"]

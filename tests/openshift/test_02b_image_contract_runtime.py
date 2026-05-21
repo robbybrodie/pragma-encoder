@@ -3,9 +3,9 @@
 Purpose:
   Prove that the two-image contract holds at runtime in the cluster:
     - Workbench image: kfp + kfp-kubernetes importable
-    - Training image: src.model, src.data, src.workbench importable
+    - Training image: pragma_encoder.model, pragma_encoder.data, pragma_encoder.workbench importable
     - Training image: kfp-kubernetes is present (inherited from workbench base)
-      but src/training/checkpoints.py does NOT require it at import time
+      but src/pragma_encoder/training/checkpoints.py does NOT require it at import time
     - Training image: no runtime git clone required
 
 These tests are read-only from the cluster perspective (namespace, RBAC,

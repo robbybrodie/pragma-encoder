@@ -47,7 +47,7 @@ class TestS3ResumeLocalPrereqs:
 
     Run by default (no opt-in flag required). These tests confirm that:
       - The job-name prefix is safe for RFC 1035 DNS label limits.
-      - src/training/checkpoints.py exists (TD-006 fix module).
+      - src/pragma_encoder/training/checkpoints.py exists (TD-006 fix module).
       - scripts/train_pragma.py calls resolve_resume_checkpoint (integration).
 
     No cluster, no S3 credentials, no oc binary required.
@@ -73,7 +73,7 @@ class TestS3ResumeLocalPrereqs:
         )
 
     def test_checkpoints_module_exists(self) -> None:
-        """src/training/checkpoints.py must exist.
+        """src/pragma_encoder/training/checkpoints.py must exist.
 
         This module implements the all-rank S3 download pattern that fixes
         TD-006 (multi-node checkpoint resume with per-pod emptyDir).
@@ -83,7 +83,7 @@ class TestS3ResumeLocalPrereqs:
             / "src" / "pragma_encoder" / "training" / "checkpoints.py"
         )
         assert checkpoints_path.exists(), (
-            "src/training/checkpoints.py not found. "
+            "src/pragma_encoder/training/checkpoints.py not found. "
             "The TD-006 fix requires this module. "
             "Implement it before the Level 5 runtime smoke can pass."
         )
@@ -100,7 +100,7 @@ class TestS3ResumeLocalPrereqs:
         text = train_script.read_text()
         assert "resolve_resume_checkpoint" in text, (
             "scripts/train_pragma.py must call resolve_resume_checkpoint() "
-            "from src/training/checkpoints.py. "
+            "from src/pragma_encoder/training/checkpoints.py. "
             "The TD-006 fix requires all ranks to download the checkpoint independently."
         )
 
