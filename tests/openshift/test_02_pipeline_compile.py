@@ -195,7 +195,7 @@ class TestDecoratedPipelineExample:
         if not _KFP_AVAILABLE:
             # Without kfp, compile() raises ImportError before any oc call.
             # That is the correct and expected behaviour — document it.
-            from tools.openshift_ai.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
+            from tools.openshift_ai.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415, I001
 
             @pragma_pipeline(name="pragma-s-no-oc-check")
             def _test_pipeline() -> None:
@@ -211,7 +211,7 @@ class TestDecoratedPipelineExample:
             )
             return
 
-        from tools.openshift_ai.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
+        from tools.openshift_ai.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415, I001
 
         @pragma_pipeline(name="pragma-s-no-oc-check")
         def _test_pipeline() -> None:
