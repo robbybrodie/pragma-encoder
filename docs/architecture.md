@@ -96,6 +96,45 @@ Key properties of each layer:
 
 ---
 
+## One OpenShift AI primitive pathway
+
+There is one platform-facing pathway: **OpenShift AI primitives**.
+
+The RHOAI GUI is the preferred visible surface for data scientists and operators,
+but it is not a separate architecture. Other surfaces interact with the same
+underlying primitives:
+
+| Surface | Role |
+|---|---|
+| RHOAI GUI | User-facing surface for workbenches, pipelines, hardware profiles, connections |
+| Workbench / KFP SDK | Author and submit pipeline code; interact with DSPA API |
+| ArgoCD | Declare and promote stable platform substrate into the cluster |
+| `oc` / `kubectl` | Direct access to the same OpenShift/Kubernetes primitives |
+| CI/CD | Validate, build, and promote images and compiled pipeline artifacts |
+| Tests | Verify primitives and contracts through opt-in cluster integration tests |
+
+`pragma_encoder` does not define a deployment abstraction of its own. It is a
+portable Python wheel that consumes platform-supplied configuration through
+standard env vars. Platform resources are OpenShift AI primitives — not custom
+pragma abstractions.
+
+Runtime jobs (PyTorchJob training runs, pipeline runs) are dynamic objects. A
+pipeline run launched from the RHOAI GUI and a pipeline run submitted by
+`kfp.Client()` from the Workbench are the same OpenShift AI primitive. ArgoCD
+does not own them by default.
+
+**Placement rule:**
+
+| What it is | Where it belongs |
+|---|---|
+| User/platform-facing resource | Map to an OpenShift AI/OpenShift primitive |
+| Application behaviour | Keep in the wheel (`pragma_encoder`) |
+| Executable runtime | Put in the training image |
+| Declared platform state | Promote through ArgoCD (`openshift/gitops/`) |
+| Execution instance | Treat as runtime/dynamic — not GitOps-managed |
+
+---
+
 ## Workbench-to-wheel promotion workflow
 
 Notebooks are the discovery and authoring surface. During exploration they
@@ -203,9 +242,10 @@ MODEL_REGISTRY_ACCESS_KEY
 MODEL_REGISTRY_SECRET_KEY
 ```
 
-These are supplied by an OpenShift AI Connection (or the `pragma-workbench-env`
-Secret which is a fixture/default representation of that connection). The wheel
-must not create Connections, Secrets, or S3 buckets.
+These are supplied by an OpenShift AI Connection. The wheel must not create
+Connections, Secrets, or S3 buckets. The `pragma-workbench-env` Secret is the
+test fixture/default representing that connection in this deployment — it is not
+the product abstraction.
 
 | Concern | Owner |
 |---|---|
@@ -329,9 +369,9 @@ Opt-in tests are gated by environment variables (`RUN_OPENSHIFT_TESTS=1`,
 | TD-009 | Resolved 2026-05-21 |
 | Test suite | 715 passed, 119 skipped (as of 2026-05-21) |
 
-Next major milestone: GUI-native OpenShift AI path — Workbench-to-pipeline
-user flow end-to-end, including compiled pipeline registration in RHOAI GUI
-and evaluation of Kubeflow Trainer v2 for RHOAI 3.4.
+Next major milestone: Workbench-to-pipeline user flow end-to-end — compiled
+pipeline registration in RHOAI GUI and evaluation of Kubeflow Trainer v2
+for RHOAI 3.4.
 
 ---
 

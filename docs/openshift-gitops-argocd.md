@@ -4,10 +4,20 @@ This document describes what ArgoCD and OpenShift GitOps own in the
 `pragma-encoder` project, with particular attention to the pipeline authoring
 lifecycle and where each artifact belongs.
 
-**Key principle:** ArgoCD owns the stable platform substrate. The Workbench is
-the primary authoring surface for pipeline code. OpenShift AI (RHOAI) is the
-runtime and GUI surface for pipeline definitions, versions, and runs. These
-three roles must not be conflated.
+**Key principle:** ArgoCD is a promotion and control surface for declared
+OpenShift AI/OpenShift resources — not a separate deployment path. The GUI,
+Workbench SDK, ArgoCD, `oc`, CI/CD, and tests all interact with the same
+underlying OpenShift AI primitives. ArgoCD promotes stable, long-lived platform
+substrate into the cluster. The Workbench is the primary authoring surface for
+pipeline code. OpenShift AI (RHOAI) is the runtime and GUI surface for pipeline
+definitions, versions, and runs. These roles must not be conflated.
+
+ArgoCD may own: namespace, RBAC, SealedSecrets, Connection templates,
+ExternalSecrets, HardwareProfiles, DSPA, workbench manifests, BuildConfigs,
+ImageStreams, and promoted compiled pipeline artifacts.
+
+ArgoCD must not own: ad hoc PyTorchJob training runs, pipeline runs, or
+exploratory notebook state.
 
 See also:
 - `docs/deployment.md` — bootstrap steps, sync wave order, ArgoCD prerequisites
@@ -214,9 +224,11 @@ TestSmokePipelineCompile::test_smoke_pipeline_compiles_to_yaml
 All compile tests use `pytest.importorskip("kfp")` or `find_spec("kfp")` to
 skip cleanly when kfp is not installed. This keeps default CI cluster-free.
 
-The kfp optional dependency is installed via the `[workbench]` extra:
+`kfp` is not a `pragma_encoder` wheel dependency. It is installed into the
+workbench image via `openshift/notebook-image/requirements.txt`. To run compile
+tests locally, install it directly:
 ```bash
-pip install 'pragma-encoder[workbench]'
+pip install kfp
 ```
 
 ---

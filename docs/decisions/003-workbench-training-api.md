@@ -141,8 +141,8 @@ Constrains:
   only — no circular imports introduced
 - KFP remains an optional dependency (`pip install pragma[workbench]`)
   — `train_pragma()` works without KFP (local mode fallback)
-- All S3 credentials come from `pragma-workbench-env` Secret only
-  (openshift-storage-pattern.md rule 4)
+- S3 credentials come from the OpenShift AI Connection (test fixture/default:
+  `pragma-workbench-env` Secret) — see openshift-storage-pattern.md
 - DatasetManifest is immutable once created — not modified by training
 
 What future sessions must not contradict:
