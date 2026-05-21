@@ -47,7 +47,8 @@ spec:
     image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
     command:
       - torchrun
-      - scripts/train_pragma.py
+      - -m
+      - pragma_encoder.training.train
     args:
       - --csv-path
       - /data/tabformer/card_transaction.v1.csv

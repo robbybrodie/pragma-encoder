@@ -542,8 +542,10 @@ implemented and ready to run against a cluster with `RUN_OPENSHIFT_PIPELINE_SMOK
 
 ### Target state
 
-The RHOAI Data Science Pipeline GUI should be the repeatable training workflow
-surface for data scientists. The pipeline accepts these parameters:
+The Data Science Pipeline is an OpenShift AI primitive (managed by the DSPA).
+Submitting KFP pipelines via the RHOAI dashboard, the KFP SDK, or the workbench
+API are all surfaces over this same primitive — there is one platform pathway.
+The pipeline accepts these parameters:
 
 | Parameter | Description |
 |---|---|
