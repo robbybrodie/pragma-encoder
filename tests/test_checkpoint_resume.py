@@ -38,7 +38,11 @@ torch = pytest.importorskip("torch")
 # src/training/checkpoints.py is created. That is the expected red phase.
 # ---------------------------------------------------------------------------
 from pragma_encoder.training.checkpoints import (  # noqa: E402
+    CheckpointStore,
+    LocalCheckpointStore,
+    S3CheckpointStore,
     barrier_if_distributed,
+    build_checkpoint_store,
     download_checkpoint_for_rank,
     list_checkpoint_keys,
     parse_s3_config_from_env,
@@ -904,3 +908,288 @@ class TestNoKfpImport:
                     "See docs/openshift-image-contract.md."
                 )
             # Other ImportErrors (e.g. boto3 not installed) are acceptable
+
+
+# ---------------------------------------------------------------------------
+# 10. TestCheckpointStoreBoundary
+#     CheckpointStore Protocol and concrete adapters
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpointStoreBoundary:
+    """Validate the CheckpointStore Protocol and both concrete adapter classes.
+
+    Ensures the storage-transport boundary is correctly defined:
+    - LocalCheckpointStore operates purely on the filesystem (no S3 calls).
+    - S3CheckpointStore delegates all I/O to boto3 (no local filesystem assumptions).
+    - build_checkpoint_store() returns the right adapter based on env config.
+    - Both concrete classes satisfy the CheckpointStore Protocol at runtime.
+    """
+
+    # ---- Protocol conformance -------------------------------------------
+
+    def test_local_store_is_checkpoint_store_instance(self, tmp_path: pathlib.Path) -> None:
+        """LocalCheckpointStore satisfies the CheckpointStore Protocol."""
+        store = LocalCheckpointStore(tmp_path)
+        assert isinstance(store, CheckpointStore), (
+            "LocalCheckpointStore must satisfy the CheckpointStore Protocol. "
+            "Add latest_key(), fetch(), and put() methods matching the Protocol signature."
+        )
+
+    def test_s3_store_is_checkpoint_store_instance(self) -> None:
+        """S3CheckpointStore satisfies the CheckpointStore Protocol."""
+        config = {"bucket": "b", "endpoint": "e", "access_key": "k", "secret_key": "s"}
+        store = S3CheckpointStore(config, prefix="prefix/ckpts")  # type: ignore[arg-type]
+        assert isinstance(store, CheckpointStore), (
+            "S3CheckpointStore must satisfy the CheckpointStore Protocol. "
+            "Add latest_key(), fetch(), and put() methods matching the Protocol signature."
+        )
+
+    # ---- LocalCheckpointStore -------------------------------------------
+
+    def test_local_latest_key_returns_none_when_empty(self, tmp_path: pathlib.Path) -> None:
+        """LocalCheckpointStore.latest_key() returns None when no .pt files exist."""
+        store = LocalCheckpointStore(tmp_path)
+        assert store.latest_key() is None, (
+            "LocalCheckpointStore.latest_key() must return None when output_dir has no .pt files."
+        )
+
+    def test_local_latest_key_returns_lexicographically_latest_filename(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """LocalCheckpointStore.latest_key() returns the filename of the latest .pt file."""
+        (tmp_path / "checkpoint_epoch0001.pt").write_bytes(b"ckpt1")
+        (tmp_path / "checkpoint_epoch0002.pt").write_bytes(b"ckpt2")
+        (tmp_path / "checkpoint_epoch0003.pt").write_bytes(b"ckpt3")
+        store = LocalCheckpointStore(tmp_path)
+        key = store.latest_key()
+        assert key == "checkpoint_epoch0003.pt", (
+            f"LocalCheckpointStore.latest_key() must return the latest filename. "
+            f"Got: {key!r}"
+        )
+
+    def test_local_fetch_returns_path_in_output_dir(self, tmp_path: pathlib.Path) -> None:
+        """LocalCheckpointStore.fetch() returns output_dir / key (file already local)."""
+        (tmp_path / "checkpoint_epoch0001.pt").write_bytes(b"ckpt1")
+        store = LocalCheckpointStore(tmp_path)
+        result = store.fetch("checkpoint_epoch0001.pt", tmp_path)
+        assert result == tmp_path / "checkpoint_epoch0001.pt", (
+            f"LocalCheckpointStore.fetch() must return output_dir / key. Got: {result!r}"
+        )
+
+    def test_local_put_is_noop_no_s3_calls(self, tmp_path: pathlib.Path) -> None:
+        """LocalCheckpointStore.put() does not make any S3 calls."""
+        ckpt_path = tmp_path / "checkpoint_epoch0001.pt"
+        ckpt_path.write_bytes(b"ckpt1")
+        store = LocalCheckpointStore(tmp_path)
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client") as mock_client:
+            store.put(ckpt_path)
+        mock_client.assert_not_called(), (
+            "LocalCheckpointStore.put() must not call _make_s3_client. "
+            "Local store does not upload to S3 — the training loop already saved the file."
+        )
+
+    def test_local_put_does_not_raise(self, tmp_path: pathlib.Path) -> None:
+        """LocalCheckpointStore.put() does not raise for a valid file."""
+        ckpt_path = tmp_path / "checkpoint_epoch0001.pt"
+        ckpt_path.write_bytes(b"ckpt1")
+        store = LocalCheckpointStore(tmp_path)
+        store.put(ckpt_path)  # Must not raise
+
+    # ---- S3CheckpointStore ----------------------------------------------
+
+    def test_s3_latest_key_delegates_to_select_latest(self) -> None:
+        """S3CheckpointStore.latest_key() calls select_latest_checkpoint_key."""
+        config = {"bucket": "my-bucket", "endpoint": "s3.example.com",
+                  "access_key": "key", "secret_key": "secret"}
+        store = S3CheckpointStore(config, prefix="pragma-encoder/ckpts")  # type: ignore[arg-type]
+        mock_client = mock.MagicMock()
+        mock_client.list_objects_v2.return_value = {
+            "Contents": [
+                _make_s3_object("pragma-encoder/ckpts/checkpoint_epoch0001.pt", _utc(2026, 1, 1)),
+            ]
+        }
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
+                        return_value=mock_client):
+            key = store.latest_key()
+        assert key == "pragma-encoder/ckpts/checkpoint_epoch0001.pt", (
+            f"S3CheckpointStore.latest_key() must return the latest S3 key. Got: {key!r}"
+        )
+
+    def test_s3_fetch_downloads_file_and_returns_local_path(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """S3CheckpointStore.fetch() calls download_file and returns the local path."""
+        config = {"bucket": "my-bucket", "endpoint": "s3.example.com",
+                  "access_key": "key", "secret_key": "secret"}
+        store = S3CheckpointStore(config, prefix="pragma-encoder/ckpts")  # type: ignore[arg-type]
+        mock_client = mock.MagicMock()
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
+                        return_value=mock_client):
+            result = store.fetch(
+                "pragma-encoder/ckpts/checkpoint_epoch0001.pt", tmp_path
+            )
+        mock_client.download_file.assert_called_once(), (
+            "S3CheckpointStore.fetch() must call client.download_file."
+        )
+        assert result == tmp_path / "checkpoint_epoch0001.pt", (
+            f"S3CheckpointStore.fetch() must return output_dir / filename. Got: {result!r}"
+        )
+
+    def test_s3_put_uploads_with_correct_key(self, tmp_path: pathlib.Path) -> None:
+        """S3CheckpointStore.put() uploads the file under prefix/filename."""
+        config = {"bucket": "my-bucket", "endpoint": "s3.example.com",
+                  "access_key": "key", "secret_key": "secret"}
+        store = S3CheckpointStore(config, prefix="pragma-encoder/ckpts")  # type: ignore[arg-type]
+        ckpt_path = tmp_path / "checkpoint_epoch0005.pt"
+        ckpt_path.write_bytes(b"ckpt5")
+        mock_client = mock.MagicMock()
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
+                        return_value=mock_client):
+            store.put(ckpt_path)
+        call_args = mock_client.upload_file.call_args
+        assert call_args is not None, "S3CheckpointStore.put() must call client.upload_file."
+        s3_key = call_args.args[2] if len(call_args.args) > 2 else call_args[0][2]
+        assert s3_key == "pragma-encoder/ckpts/checkpoint_epoch0005.pt", (
+            f"S3CheckpointStore.put() must upload to 'prefix/filename'. Got: {s3_key!r}"
+        )
+
+    # ---- build_checkpoint_store factory ---------------------------------
+
+    def test_factory_returns_local_store_when_no_s3_config(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """build_checkpoint_store returns LocalCheckpointStore when S3 config absent."""
+        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
+        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
+        store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="some/prefix")
+        assert isinstance(store, LocalCheckpointStore), (
+            "build_checkpoint_store must return LocalCheckpointStore when "
+            "MODEL_REGISTRY_BUCKET / MODEL_REGISTRY_ENDPOINT are absent. "
+            f"Got: {type(store).__name__}"
+        )
+
+    def test_factory_returns_local_store_when_no_prefix(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """build_checkpoint_store returns LocalCheckpointStore when s3_prefix is empty."""
+        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "my-bucket")
+        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "s3.example.com")
+        store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="")
+        assert isinstance(store, LocalCheckpointStore), (
+            "build_checkpoint_store must return LocalCheckpointStore when s3_prefix is empty, "
+            "even if S3 env vars are set. An empty prefix disables S3. "
+            f"Got: {type(store).__name__}"
+        )
+
+    def test_factory_returns_s3_store_when_config_and_prefix_present(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """build_checkpoint_store returns S3CheckpointStore when env vars + prefix set."""
+        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "my-bucket")
+        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "s3.example.com")
+        monkeypatch.setenv("MODEL_REGISTRY_ACCESS_KEY", "key")
+        monkeypatch.setenv("MODEL_REGISTRY_SECRET_KEY", "secret")
+        store = build_checkpoint_store(
+            output_dir=tmp_path, s3_prefix="pragma-encoder/ckpts"
+        )
+        assert isinstance(store, S3CheckpointStore), (
+            "build_checkpoint_store must return S3CheckpointStore when "
+            "MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT, and s3_prefix are all set. "
+            f"Got: {type(store).__name__}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 11. TestPlatformNameBoundary
+#     No platform fixture names in src/pragma_encoder
+# ---------------------------------------------------------------------------
+
+
+class TestPlatformNameBoundary:
+    """Validate that platform fixture names are absent from the pragma_encoder package.
+
+    The pragma_encoder wheel must not contain OpenShift-specific fixture names
+    such as 'pragma-workbench-env' (a Kubernetes Secret name used as a test
+    default). The package reads MODEL_REGISTRY_* env vars; it does not care
+    which Secret provided them.
+
+    This test scans the source tree to enforce the boundary mechanically.
+    """
+
+    def _src_pragma_encoder_dir(self) -> pathlib.Path:
+        return pathlib.Path(__file__).parent.parent / "src" / "pragma_encoder"
+
+    def test_no_pragma_workbench_env_in_src_pragma_encoder(self) -> None:
+        """'pragma-workbench-env' must not appear in any src/pragma_encoder source file.
+
+        'pragma-workbench-env' is a Kubernetes Secret name — a platform fixture
+        defined in openshift/secrets/ and tests/openshift/fixtures/. It must not
+        appear in the installable package source. The package reads
+        MODEL_REGISTRY_* env vars directly; it does not know which Secret
+        provided them.
+        """
+        src_dir = self._src_pragma_encoder_dir()
+        assert src_dir.exists(), f"src/pragma_encoder must exist at {src_dir}"
+        violations = []
+        for py_file in sorted(src_dir.rglob("*.py")):
+            text = py_file.read_text()
+            if "pragma-workbench-env" in text:
+                violations.append(str(py_file.relative_to(src_dir.parent.parent)))
+        assert not violations, (
+            "These src/pragma_encoder files reference 'pragma-workbench-env', "
+            "which is a Kubernetes Secret name (OpenShift platform fixture). "
+            "Replace with platform-neutral language referencing MODEL_REGISTRY_* env vars.\n"
+            + "\n".join(f"  {v}" for v in violations)
+        )
+
+    def test_checkpoint_store_protocol_is_importable(self) -> None:
+        """CheckpointStore Protocol is importable from pragma_encoder.training.checkpoints."""
+        from pragma_encoder.training.checkpoints import CheckpointStore  # noqa: PLC0415
+        assert CheckpointStore is not None, (
+            "CheckpointStore Protocol must be importable from "
+            "pragma_encoder.training.checkpoints."
+        )
+
+    def test_local_and_s3_adapters_are_importable(self) -> None:
+        """LocalCheckpointStore and S3CheckpointStore are importable from the package."""
+        from pragma_encoder.training.checkpoints import (  # noqa: PLC0415
+            LocalCheckpointStore,
+            S3CheckpointStore,
+        )
+        assert LocalCheckpointStore is not None
+        assert S3CheckpointStore is not None
+
+    def test_build_checkpoint_store_factory_is_importable(self) -> None:
+        """build_checkpoint_store factory is importable from the package."""
+        from pragma_encoder.training.checkpoints import build_checkpoint_store  # noqa: PLC0415
+        assert build_checkpoint_store is not None
+
+    def test_checkpoint_store_protocol_is_runtime_checkable(self) -> None:
+        """CheckpointStore is decorated with @runtime_checkable.
+
+        isinstance() checks against CheckpointStore must work at runtime
+        so that factory functions and tests can verify adapter compliance
+        without static type analysis.
+        """
+        import pathlib  # noqa: PLC0415
+        import tempfile  # noqa: PLC0415
+
+        from pragma_encoder.training.checkpoints import (  # noqa: PLC0415
+            CheckpointStore,
+            LocalCheckpointStore,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            store = LocalCheckpointStore(pathlib.Path(tmp))
+            # This raises TypeError if CheckpointStore is not @runtime_checkable
+            try:
+                result = isinstance(store, CheckpointStore)
+            except TypeError as exc:
+                pytest.fail(
+                    f"isinstance() against CheckpointStore raised TypeError: {exc}. "
+                    "CheckpointStore must be decorated with @runtime_checkable."
+                )
+            assert result is True, (
+                "LocalCheckpointStore must be recognised as a CheckpointStore instance. "
+                "All three Protocol methods (latest_key, fetch, put) must be present."
+            )

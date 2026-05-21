@@ -16,6 +16,18 @@ Implements the all-rank checkpoint download pattern that fixes TD-006:
     All ranks call dist.barrier() after download.
     All ranks load from their own local copy.
 
+Storage adapter boundary
+------------------------
+``CheckpointStore`` (Protocol) separates storage transport from checkpoint
+semantics. Two concrete adapters are provided:
+
+  ``LocalCheckpointStore``  — local filesystem; ``put()`` is a no-op.
+  ``S3CheckpointStore``     — S3-compatible object store via boto3.
+
+Use ``build_checkpoint_store()`` to select the right adapter at runtime.
+The adapter reads ``MODEL_REGISTRY_*`` env vars; it does not know which
+Kubernetes Secret or OpenShift Connection provided them.
+
 No shared filesystem (emptyDir) is assumed between ranks.
 No kfp / kfp-kubernetes is imported — this is a training-image-only module.
 boto3 is imported lazily inside functions so the module can be loaded in
@@ -30,7 +42,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-from typing import Optional
+from typing import Optional, Protocol, runtime_checkable
 
 import torch
 import torch.distributed as dist
@@ -170,6 +182,143 @@ def _find_latest_local_checkpoint(output_dir: pathlib.Path) -> Optional[pathlib.
     """
     pt_files = sorted(output_dir.glob("*.pt"))
     return pt_files[-1] if pt_files else None
+
+
+# ---------------------------------------------------------------------------
+# CheckpointStore Protocol and concrete adapters
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class CheckpointStore(Protocol):
+    """Storage-transport abstraction for checkpoint files.
+
+    Checkpoint semantics (what to save, when to save, rank coordination)
+    remain in ``resolve_resume_checkpoint`` and ``train.py``. This Protocol
+    answers only: where checkpoints live and how to list / fetch / persist them.
+
+    Keys are opaque strings whose meaning is adapter-specific:
+      - ``LocalCheckpointStore``: the filename (e.g. ``checkpoint_epoch0001.pt``)
+      - ``S3CheckpointStore``:    the full S3 key (e.g. ``prefix/checkpoint_epoch0001.pt``)
+    """
+
+    def latest_key(self) -> Optional[str]:
+        """Return an opaque identifier for the most recent checkpoint, or None."""
+        ...
+
+    def fetch(self, key: str, output_dir: pathlib.Path) -> pathlib.Path:
+        """Make the checkpoint available locally and return its local path.
+
+        For ``LocalCheckpointStore`` the checkpoint is already local; the path
+        is returned directly.  For ``S3CheckpointStore`` the file is downloaded
+        from S3 into ``output_dir`` before the path is returned.
+        """
+        ...
+
+    def put(self, ckpt_path: pathlib.Path) -> None:
+        """Persist the checkpoint to the backing store.
+
+        ``LocalCheckpointStore`` treats this as a no-op (the training loop
+        already saves the file locally before calling ``put``).
+        ``S3CheckpointStore`` uploads the file to S3.
+        """
+        ...
+
+
+class LocalCheckpointStore:
+    """Checkpoint store backed by the local filesystem.
+
+    Suitable for single-node training or any run that does not need
+    cross-pod checkpoint sharing.  ``put()`` is a deliberate no-op because
+    the training loop saves the ``.pt`` file to ``output_dir`` before
+    calling ``put``; there is nothing extra to do.
+    """
+
+    def __init__(self, output_dir: pathlib.Path) -> None:
+        self._dir = output_dir
+
+    def latest_key(self) -> Optional[str]:
+        """Return the filename of the lexicographically latest .pt file, or None."""
+        pt_files = sorted(self._dir.glob("*.pt"))
+        return pt_files[-1].name if pt_files else None
+
+    def fetch(self, key: str, output_dir: pathlib.Path) -> pathlib.Path:
+        """Return the local path; the file is already in output_dir."""
+        return output_dir / key
+
+    def put(self, ckpt_path: pathlib.Path) -> None:  # noqa: ARG002
+        """No-op: training loop writes to local filesystem directly."""
+
+
+class S3CheckpointStore:
+    """Checkpoint store backed by an S3-compatible object store.
+
+    Reads ``MODEL_REGISTRY_*`` env vars for connection config (via the
+    ``_S3Config`` passed at construction).  Does not know which Kubernetes
+    Secret or OpenShift AI Connection provided those env vars.
+
+    Used for distributed (multi-node) training where each pod has its own
+    ephemeral emptyDir and must independently download checkpoints from S3.
+    """
+
+    def __init__(self, config: _S3Config, prefix: str) -> None:
+        self._config = config
+        self._prefix = prefix
+
+    def latest_key(self) -> Optional[str]:
+        """Return the S3 key of the most recently modified .pt checkpoint, or None."""
+        client = _make_s3_client(self._config)
+        return select_latest_checkpoint_key(client, self._config["bucket"], self._prefix)
+
+    def fetch(self, key: str, output_dir: pathlib.Path) -> pathlib.Path:
+        """Download checkpoint ``key`` from S3 into ``output_dir`` and return the path."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        local_path = output_dir / pathlib.Path(key).name
+        client = _make_s3_client(self._config)
+        client.download_file(self._config["bucket"], key, str(local_path))
+        logger.info(f"Downloaded checkpoint from S3: {key} -> {local_path}")
+        return local_path
+
+    def put(self, ckpt_path: pathlib.Path) -> None:
+        """Upload ``ckpt_path`` to S3 under the configured prefix."""
+        client = _make_s3_client(self._config)
+        s3_key = f"{self._prefix.rstrip('/')}/{ckpt_path.name}"
+        client.upload_file(str(ckpt_path), self._config["bucket"], s3_key)
+        logger.info(
+            f"Checkpoint uploaded to S3: s3://{self._config['bucket']}/{s3_key}"
+        )
+
+
+def build_checkpoint_store(
+    output_dir: pathlib.Path,
+    s3_prefix: str = "",
+) -> CheckpointStore:
+    """Factory: return the appropriate CheckpointStore for the current environment.
+
+    Returns ``S3CheckpointStore`` when both ``MODEL_REGISTRY_*`` env vars are
+    present (bucket + endpoint) and ``s3_prefix`` is non-empty.
+
+    Returns ``LocalCheckpointStore`` otherwise (local development, CI, or any
+    run where S3 is not configured).
+
+    The caller (``train.py``) passes ``--s3-checkpoint-prefix`` as ``s3_prefix``.
+    The ``MODEL_REGISTRY_*`` env vars are read from the process environment;
+    the factory does not care whether they came from a Kubernetes Secret,
+    an OpenShift AI Connection, a ``.env`` file, or a shell export.
+
+    Args:
+        output_dir: Local checkpoint directory (used by LocalCheckpointStore
+                    and as the download target for S3CheckpointStore).
+        s3_prefix:  S3 key prefix (empty string disables S3 even if env vars
+                    are present).
+
+    Returns:
+        A ``CheckpointStore`` instance.
+    """
+    config = parse_s3_config_from_env()
+    if config and s3_prefix:
+        return S3CheckpointStore(config, s3_prefix)
+    return LocalCheckpointStore(output_dir)
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ Transforms the IBM TabFormer synthetic credit-card CSV into a DatasetManifest:
   3. Fits FinancialTokenizerPipeline on the first 80% of customers (training split).
   4. Rebuilds the vocabulary layout after fitting (required — see fit_tokenizer.py).
   5. Serialises the fitted pipeline to a local vocab file (pickle).
-  6. If upload=True: uploads CSV and vocab to S3 via pragma-workbench-env credentials.
+  6. If upload=True: uploads CSV and vocab to S3 via MODEL_REGISTRY_* env vars.
   7. Returns a DatasetManifest with one CSV shard, vocab_uri, source metadata, and
      the exact PRAGMAConfig instance passed in.
 
@@ -212,7 +212,7 @@ class IBMTabFormerAdapter:
         )
 
     def _upload_to_s3(self) -> None:
-        """Upload CSV and vocab to S3 using pragma-workbench-env credentials.
+        """Upload CSV and vocab to S3 using MODEL_REGISTRY_* env vars.
 
         Reads credentials from environment variables:
             MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT,
@@ -233,8 +233,7 @@ class IBMTabFormerAdapter:
         missing = [k for k in required if not os.environ.get(k)]
         if missing:
             raise EnvironmentError(
-                f"S3 upload requires these env vars (from pragma-workbench-env): "
-                f"{missing}"
+                f"S3 upload requires these MODEL_REGISTRY_* env vars: {missing}"
             )
 
         bucket = os.environ["MODEL_REGISTRY_BUCKET"]
