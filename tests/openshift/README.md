@@ -42,7 +42,7 @@ Three distinct execution paths are tested at different maturity levels:
 |------|-------|---------|--------|
 | `batch/v1 Job` | 3b | **Diagnostic only.** Proves the training image is pullable and runs `--max-steps 1` to exit 0. One pod, no DDP, no S3, no KFP orchestration. | Implemented |
 | DSPA/KFP v2 | 3 | **Product pipeline path.** Compiles a decorated pipeline, uploads to the DSPA API, creates a KFP Run, polls until Succeeded. This is the real execution path. | In progress / xfail |
-| PyTorchJob | 4 | **Distributed training.** Multi-node DDP via KFTO `kubeflow.org/v1 PyTorchJob`. Requires KFTO operator. | Future / xfail |
+| PyTorchJob | 4 | **N-node distributed training.** Multi-node DDP via KFTO `kubeflow.org/v1 PyTorchJob`. Default smoke: nnodes=2 (minimal distributed case). Architecture is N-node capable. | Implemented |
 
 The `batch/v1 Job` smoke (Level 3b) is **not** a substitute for the DSPA/KFP
 pipeline smoke (Level 3). Level 3b passing means the image works. Level 3
@@ -82,7 +82,7 @@ Tests never write to S3 unless explicitly authorised.
 | 2 | Decorated pipeline compile | Implemented | `test_02_pipeline_compile.py` |
 | 3 | OpenShift AI KFP v2 pipeline smoke | In progress / xfail | `test_03_pipeline_smoke_run.py` |
 | 3b | Training container Job smoke | Implemented | `test_03b_training_job_smoke.py` |
-| 4 | PyTorchJob / two-node smoke | Future / xfail | `test_04_pytorchjob_smoke.py` |
+| 4 | PyTorchJob N-node smoke (default: nnodes=2) | Implemented | `test_04_pytorchjob_smoke.py` |
 | 5 | S3-backed checkpoint/resume | Future | — |
 | 6 | Scaled training validation | Future | — |
 | 7 | Bank-data adapter validation | Future | — |
@@ -108,7 +108,10 @@ Tests never write to S3 unless explicitly authorised.
 | `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset) | Name of the image pull Secret. Test verifies existence only; data is never read. |
 | `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 KFP v2 DSPA pipeline run smoke tests. |
 | `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1` | (unset) | Opt-in for Level 3b batch/v1 Job training container smoke. |
-| `RUN_PYTORCHJOB_TESTS=1` | (unset) | Opt-in for Level 4 PyTorchJob tests. |
+| `RUN_PYTORCHJOB_TESTS=1` | (unset) | Opt-in for Level 4 PyTorchJob tests (static checks + CRD check). |
+| `RUN_PYTORCHJOB_SMOKE=1` | (unset) | Opt-in for Level 4 runtime smoke (creates a short-lived PyTorchJob). Also requires `RUN_PYTORCHJOB_TESTS=1`. |
+| `PRAGMA_PYTORCHJOB_NNODES` | `2` | Number of nodes for the Level 4 N-node smoke. Minimum 2 (nnodes=1 is non-distributed; use Level 3b). Values >2 require `PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1`. |
+| `PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1` | (unset) | Permit N>2 node smoke. Guards against accidental cluster overload. Required when `PRAGMA_PYTORCHJOB_NNODES > 2`. |
 | `RUN_TEKTON_TESTS=1` | (unset) | Opt-in for Tekton PipelineRun/TaskRun CRD checks. Not required for OpenShift AI KFP v2. |
 | `PRAGMA_TEST_TIMEOUT_SECONDS` | `300` | Timeout for cluster wait loops (minimum 30s). |
 
@@ -251,13 +254,40 @@ PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder-training:latest \
 pytest tests/openshift/test_03b_training_job_smoke.py -q
 ```
 
-### Future: PyTorchJob smoke (Level 4, xfail until implemented)
+### PyTorchJob N-node smoke (Level 4 — static checks + runtime smoke)
+
+Static checks (CRD, manifest, DNS naming — no cluster resources created):
 
 ```bash
 RUN_OPENSHIFT_TESTS=1 \
 RUN_PYTORCHJOB_TESTS=1 \
 PRAGMA_TEST_NAMESPACE=pragma-encoder \
 pytest tests/openshift/test_04_pytorchjob_smoke.py -q
+```
+
+Expected: 9 passed (CRD check + 5 manifest checks + 3 naming checks), 1 skipped (runtime smoke).
+
+Runtime smoke (creates a short-lived 2-node PyTorchJob):
+
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_PYTORCHJOB_TESTS=1 \
+RUN_PYTORCHJOB_SMOKE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder-training:latest \
+pytest tests/openshift/test_04_pytorchjob_smoke.py -q
+```
+
+Expected: 10 passed (9 static + 1 runtime N-node smoke). Default nnodes=2.
+
+Override N (N≥2, requires `PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1` for N>2):
+
+```bash
+PRAGMA_PYTORCHJOB_NNODES=3 PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1 \
+RUN_OPENSHIFT_TESTS=1 RUN_PYTORCHJOB_TESTS=1 RUN_PYTORCHJOB_SMOKE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder-training:latest \
+pytest tests/openshift/test_04_pytorchjob_smoke.py::TestPyTorchJobSmoke -q
 ```
 
 ---
@@ -323,11 +353,30 @@ orchestration. Those are separate concerns at different maturity levels.
 - `TestKFPPipelineSmoke` (1 opt-in cluster smoke, xfails until `pragma_smoke_training_pipeline`
   component is implemented)
 
-### Level 4 — Manifest structure (read-only, gated by RUN_PYTORCHJOB_TESTS=1)
-- `test_two_node_manifest_exists`
-- `test_two_node_manifest_has_no_pvc_canonical_storage`
-- `test_two_node_manifest_mentions_world_size_or_torchrun`
-- `test_two_node_manifest_has_master_and_worker`
+### Level 4 — PyTorchJob N-node smoke (gated by RUN_PYTORCHJOB_TESTS=1)
+
+**10 tests total.** Tests 1–9 are static (no cluster resources). Test 10 requires `RUN_PYTORCHJOB_SMOKE=1`.
+
+- `TestPyTorchJobCRD` (1 cluster read-only, requires `RUN_PYTORCHJOB_TESTS=1`):
+  - `test_pytorchjob_crd_exists_when_enabled` — `pytorchjobs.kubeflow.org` CRD present (KFTO installed)
+- `TestNNodeManifest` (5 static manifest checks, no cluster access):
+  - `test_production_manifest_exists` — `openshift/training/pytorchjob-pragma-s-2node.yaml` present
+  - `test_production_manifest_has_master_and_worker` — Master + Worker replicas defined
+  - `test_production_manifest_has_no_canonical_pvc` — no PVC (uses emptyDir + S3 pattern)
+  - `test_production_manifest_mentions_torchrun_or_distributed` — torchrun / WORLD_SIZE / MASTER_ADDR present
+  - `test_production_manifest_warns_about_td006` — TD-006 --resume limitation documented
+- `TestSmokeManifestNaming` (3 static DNS length checks, no cluster access):
+  - `test_smoke_job_prefix_length_is_safe` — prefix ≤ 18 chars (leaves room for test_id + KFTO suffix)
+  - `test_generated_master_pod_name_under_dns_limit` — master pod name ≤ 63 chars (RFC 1035)
+  - `test_generated_worker_pod_name_under_dns_limit` — worker pod name ≤ 63 chars (RFC 1035)
+- `TestPyTorchJobSmoke` (1 runtime test, requires `RUN_PYTORCHJOB_SMOKE=1`):
+  - `test_pytorchjob_nnode_smoke` — applies a purpose-built N-node PyTorchJob (default nnodes=2),
+    waits for all pods, asserts `Succeeded`, verifies `PRAGMA-S` / `Reached --max-steps` / DDP
+    markers in logs, cleans up via label-scoped fixture.
+
+**Architecture**: The Level 4 smoke validates the minimal distributed case (nnodes=2). The
+architecture is N-node capable through `torchrun/KFTO`; larger N-node validation is
+Level 6 (future scale testing).
 
 ---
 
@@ -341,10 +390,15 @@ Will xpass when a new `smoke_training` KFP component is implemented that runs
 `fit_tokenizer + train_pragma --max-steps 1` directly in the component pod
 (without S3 or PyTorchJob).
 
-### Level 4 — PyTorchJob execution smoke
-`test_pytorchjob_two_node_smoke_future` — xfail. Apply two-node manifest with
-test labels, wait for Master + Worker pods, verify DDP logs, cleanup.
-Will xpass when the safe apply + wait + cleanup path is implemented.
+### Level 4 — N>2 node validation (scale testing)
+Large N-node validation (N>2) is future scale testing. The current Level 4 smoke
+proves the 2-node minimal distributed case. To test N>2:
+set `PRAGMA_PYTORCHJOB_NNODES=<N>` and `PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1`.
+This is not in CI; it is manual cluster validation only.
+
+### Level 5 — S3-backed checkpoint/resume (TD-006)
+Multi-node checkpoint resume with per-pod emptyDir. TD-006 is open. Resolution:
+all ranks download from S3 independently on restart. Not yet implemented.
 
 ---
 

@@ -2,7 +2,7 @@
 
 A data-scientist-friendly guide to training, inspecting, and understanding the
 PRAGMA foundation model pipeline — from your first workbench call to a
-distributed two-node training run.
+distributed N-node training run (2-node smoke proven).
 
 > Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 
@@ -304,7 +304,7 @@ scheduling constraint.
 
 By putting data in S3 (which any node can read) and using `emptyDir` for the
 local workspace, the scheduler is free to place training pods on any available
-GPU node. For two-node training this is essential — the two pods may end up on
+GPU node. For N-node training this is essential — pods may end up on
 completely different physical nodes.
 
 PVCs may appear elsewhere in the platform (for the data science pipeline server,
@@ -312,22 +312,26 @@ for example), but they are not part of the PRAGMA training data path.
 
 ---
 
-## Step 7 — Two-node distributed training
+## Step 7 — N-node distributed training (2-node smoke proven)
 
-To see the two-node topology in action, run:
+PRAGMA's training architecture is N-node capable through `torchrun/KFTO`.
+The committed manifest demonstrates the minimal distributed case (2 nodes).
+
+To see the 2-node topology in action, run:
 
 ```bash
 python examples/workbench/03_two_node_training_demo.py
 ```
 
-Setting `nodes=2` in `train_pragma()` selects the two-node PyTorchJob manifest
+Setting `nodes=2` in `train_pragma()` selects the 2-node PyTorchJob manifest
 (`openshift/training/pytorchjob-pragma-s-2node.yaml`). This creates two pods:
 
 - **Master** (rank 0) — coordinates rendezvous, handles logging and checkpointing
-- **Worker** (rank 1) — participates in gradient averaging, skips checkpointing
+- **Worker** (rank 1..N-1) — participates in gradient averaging, skips checkpointing
 
-Both pods run `torchrun --nnodes=2 --nproc_per_node=1`, giving a `WORLD_SIZE`
-of 2. The training script detects this automatically and:
+For N nodes, KFTO creates 1 Master + (N-1) Worker replicas.
+Each pod runs `torchrun --nnodes=N --nproc_per_node=1`, giving `WORLD_SIZE=N`.
+The training script detects this automatically and:
 
 - Uses `DistributedSampler` to split the training data between pods
 - Wraps the model in `DistributedDataParallel` (DDP) so gradients are averaged
@@ -458,7 +462,7 @@ minute on a laptop.
 | Prove the model can learn (before real training) | `PYTHONPATH=. python examples/workbench/06_local_learning_validation.py` |
 | Prepare data locally (no cluster) | Run `src/data/fit_tokenizer.py` + `scripts/upload_training_data.py` |
 | Submit a real single-node training job | Follow `docs/training-guide.md` → Cluster training — PRAGMA-S |
-| Submit a real two-node training job | Apply `openshift/training/pytorchjob-pragma-s-2node.yaml` (see TD-006 note above) |
+| Submit a real N-node training job (2-node default) | Apply `openshift/training/pytorchjob-pragma-s-2node.yaml` (see TD-006 note above) |
 | Use PRAGMA embeddings for downstream tasks | See `src/adaptation/probe.py` (linear probe) and `src/adaptation/lora.py` (LoRA) |
 | Understand the paper-to-code mapping | Read `docs/paper-to-code.md` |
 
@@ -477,5 +481,5 @@ minute on a laptop.
 | `mode="cluster"` — cluster dispatch | **Not yet implemented** |
 | `mode="local"` — local subprocess dispatch | **Not yet implemented** |
 | Single-node training via PyTorchJob | **Complete** — `pytorchjob-pragma-s.yaml` |
-| Two-node fresh training via PyTorchJob | **Complete** — `pytorchjob-pragma-s-2node.yaml` |
-| Two-node checkpoint resume | **Not yet correct** (TD-006) |
+| N-node training via PyTorchJob (2-node smoke proven) | **Complete** — `pytorchjob-pragma-s-2node.yaml` (architecture is N-node capable; 2-node is the validated default) |
+| N-node checkpoint resume | **Not yet correct** (TD-006) — ranks must all download checkpoint from S3 independently on restart |

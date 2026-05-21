@@ -1,20 +1,36 @@
-"""Level 4 — PyTorchJob two-node distributed training smoke (opt-in).
+"""Level 4 — N-node distributed training smoke (default: nnodes=2).
 
 Purpose:
-  Prove the Level 4 distributed training path end-to-end:
+  Prove the PRAGMA architecture is N-node capable with a 2-node smoke:
     - PyTorchJob CRD is available (KFTO operator installed)
-    - Master (rank 0) and Worker (rank 1) pods are created
-    - Both ranks initialise the DDP process group via torchrun
-    - WORLD_SIZE=2 / RANK=0 / RANK=1 visible via KFTO env injection
-    - Tiny PRAGMA-S training reaches --max-steps 1 on both ranks
-    - Rank 0 logs completion; rank 1 skips upload (no S3 in smoke)
+    - Master (rank 0) and Worker (rank 1..nnodes-1) pods are created
+    - All ranks initialise the DDP process group via torchrun
+    - WORLD_SIZE=nnodes / RANK=0..nnodes-1 visible via KFTO env injection
+    - Tiny PRAGMA-S training reaches --max-steps 1 on all ranks
+    - Rank 0 logs completion; other ranks skip upload (no S3 in smoke)
     - Test resources carry both test labels; cleanup is label-scoped
+
+Architecture — N-node capable, 2-node smoke:
+  The PRAGMA training architecture is N-node capable through:
+    - torchrun --nnodes=N --nproc_per_node=P
+    - KFTO PyTorchJob: 1 Master + (N-1) Workers
+    - gloo (CPU) or nccl (GPU) process group backend
+    - DistributedSampler for disjoint data sharding across ranks
+
+  The Level 4 smoke validates the minimal distributed case: nnodes=2.
+  Two nodes is the smallest configuration that exercises the full DDP path
+  (rendezvous, barrier, gradient averaging). Single-node is Level 3b.
+
+  Larger N (N>2) is a future scale-testing concern (Level 6). The
+  architecture supports it through KFTO Worker replicas = nnodes-1;
+  the default smoke uses nnodes=2 to keep CI fast and cluster-load low.
 
 Architecture boundary:
   Level 4 is independent of Level 3 (DSPA/KFP v2 pipeline smoke).
   Level 4 PASS proves distributed PyTorchJob execution.
   Level 4 does NOT prove KFP v2 pipeline orchestration (Level 3).
 
+Smoke manifest design:
   The runtime smoke (test 7) uses a purpose-built inline manifest —
   NOT the production pytorchjob-pragma-s-2node.yaml — because the
   production manifest requires S3 credentials, runtime git clone, and
@@ -22,13 +38,20 @@ Architecture boundary:
 
   The smoke manifest follows the same KFTO pattern as the production manifest:
     - apiVersion: kubeflow.org/v1 / kind: PyTorchJob
-    - Master (rank 0) + Worker (rank 1) replicas
-    - torchrun --nnodes=2 --nproc_per_node=1 --node_rank=$RANK
+    - Master (rank 0) + Worker (rank 1..nnodes-1) replicas
+    - torchrun --nnodes=<nnodes> --nproc_per_node=1 --node_rank=$RANK
     - KFTO injects: MASTER_ADDR, MASTER_PORT, RANK, WORLD_SIZE
     - Image: PRAGMA_TRAINING_IMAGE (source + deps baked in, no git clone)
     - Data: inline 30-row TabFormer CSV (no S3, no init container)
     - CPU only (--device cpu, no GPU resource request)
     - --max-steps 1 for fast exit
+
+DNS label length constraint (RFC 1035 §2.3.4):
+  KFTO's init-pytorch init container resolves the Master pod hostname
+  via nslookup before starting Worker main containers. Pod names are
+  used as DNS labels — the limit is 63 characters.
+  Job name prefix is 'pragma-smoke-' to keep pod names under the limit.
+  A static test verifies the generated name length remains <= 63 chars.
 
 Known limitation (TD-006):
   --resume does not work with per-pod emptyDir on restart.
@@ -36,14 +59,16 @@ Known limitation (TD-006):
   is created. TD-006 remains open; its resolution is Level 5.
 
 Guard variables:
-  RUN_OPENSHIFT_TESTS=1       — suite-wide (conftest)
-  RUN_PYTORCHJOB_TESTS=1      — enables all Level 4 tests (1-7)
-  RUN_PYTORCHJOB_SMOKE=1      — additionally enables runtime job creation (test 7)
-  PRAGMA_TEST_NAMESPACE=<ns>  — required (conftest)
-  PRAGMA_TRAINING_IMAGE=<img> — required for test 7 runtime smoke
+  RUN_OPENSHIFT_TESTS=1            — suite-wide (conftest)
+  RUN_PYTORCHJOB_TESTS=1           — enables all Level 4 tests (1-8)
+  RUN_PYTORCHJOB_SMOKE=1           — additionally enables runtime job creation (test 8)
+  PRAGMA_TEST_NAMESPACE=<ns>       — required (conftest)
+  PRAGMA_TRAINING_IMAGE=<img>      — required for test 8 runtime smoke
+  PRAGMA_PYTORCHJOB_NNODES=<n>    — optional, default 2, minimum 2
+  PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1 — required when nnodes > 2
 
-Tests 1-6 require only RUN_PYTORCHJOB_TESTS=1 (read-only, no cluster resources created).
-Test 7 additionally requires RUN_PYTORCHJOB_SMOKE=1 (creates a short-lived PyTorchJob).
+Tests 1-7 require only RUN_PYTORCHJOB_TESTS=1 (read-only, no cluster resources created).
+Test 8 additionally requires RUN_PYTORCHJOB_SMOKE=1 (creates a short-lived PyTorchJob).
 """
 
 from __future__ import annotations
@@ -86,11 +111,49 @@ _require_pytorchjob_smoke = pytest.mark.skipif(
     ),
 )
 
-# Path to the two-node manifest committed to the repo.
+# ---------------------------------------------------------------------------
+# N-node configuration
+# ---------------------------------------------------------------------------
+
+_SMOKE_NNODES_DEFAULT = 2
+_SMOKE_NNODES_MINIMUM = 2  # nnodes=1 is non-distributed — use Level 3b instead
+_LARGE_NNODE_SMOKE_ENABLED = os.environ.get("PRAGMA_ALLOW_LARGE_NNODE_SMOKE") == "1"
+
+# Path to the committed production 2-node manifest (the canonical example).
 _TWO_NODE_MANIFEST = pathlib.Path("openshift/training/pytorchjob-pragma-s-2node.yaml")
 
 # PyTorchJob CRD installed by KFTO.
 _PYTORCHJOB_CRD = "pytorchjobs.kubeflow.org"
+
+# Smoke job name prefix.  Must be short: KFTO's init-pytorch init container
+# resolves Master pod hostname via nslookup (RFC 1035 §2.3.4 — 63-char limit).
+# Pod name = pragma-smoke-{test_id}-master-0 = 13+35+9 = 57 chars ✓
+_SMOKE_JOB_PREFIX = "pragma-smoke"
+
+# DNS label hard limit (RFC 1035 §2.3.4).
+_DNS_LABEL_LIMIT = 63
+
+# Suffix added by KFTO for the master pod: "-master-0" (9 chars).
+_KFTO_MASTER_SUFFIX = "-master-0"
+
+
+def _resolve_nnodes() -> int:
+    """Resolve nnodes from PRAGMA_PYTORCHJOB_NNODES env var.
+
+    Rules:
+      - Default: 2 (the minimal distributed case — exercises full DDP path)
+      - Minimum: 2 (nnodes=1 is non-distributed; use Level 3b batch/v1 Job instead)
+      - nnodes > 2 requires PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1
+
+    Returns:
+        Integer nnodes >= 2.
+    """
+    raw = os.environ.get("PRAGMA_PYTORCHJOB_NNODES", str(_SMOKE_NNODES_DEFAULT)).strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        return _SMOKE_NNODES_DEFAULT
+    return max(_SMOKE_NNODES_MINIMUM, n)
 
 
 # ---------------------------------------------------------------------------
@@ -142,10 +205,10 @@ User,Card,Year,Month,Day,Time,Amount,Use Chip,Merchant Name,Merchant City,Mercha
 _SMOKE_CSV_B64: str = base64.b64encode(_SMOKE_CSV_ROWS.encode()).decode()
 
 
-def _render_smoke_manifest(test_id: str, namespace: str, image: str) -> str:
+def _render_smoke_manifest(test_id: str, namespace: str, image: str, nnodes: int = 2) -> str:
     """Render the smoke PyTorchJob YAML manifest with test-specific values.
 
-    Both Master and Worker replicas run an identical shell script that:
+    Both Master and each Worker replica run an identical shell script that:
       1. Locates the PRAGMA project root in the training image.
       2. Writes the inline 30-row TabFormer CSV to /tmp/pragma-smoke/.
       3. Runs fit_tokenizer.py (cwd=/tmp/pragma-smoke/) to build vocab.pkl.
@@ -158,19 +221,21 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str) -> str:
       - CPU only (no GPU resource request or node selector)
       - --max-steps 1 for fast exit
       - No --resume (TD-006 avoidance)
+      - Worker replicas = nnodes - 1 (N-node capable pattern)
 
     Args:
         test_id:   Unique test-run identifier (used in resource name and labels).
         namespace: Kubernetes namespace to deploy the PyTorchJob into.
         image:     Training image URI (must have PRAGMA source baked in).
+        nnodes:    Total node count. Default 2 (minimal distributed smoke).
+                   Worker replicas = nnodes - 1.
 
     Returns:
         YAML string ready for ``oc apply -f``.
     """
-    # Shell script run by both Master and Worker.
+    # Shell script run by all replicas (identical on Master and every Worker).
     # Line indentation: 18 spaces for YAML block scalar under "- |".
     # Shell variables use $VAR (not ${VAR}) to avoid Python f-string confusion.
-    # Single-quoted heredoc 'CSVEOF' prevents shell from expanding $12.50 etc.
     script_lines = [
         "set -e",
         "",
@@ -200,12 +265,12 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str) -> str:
         "fi",
         "echo '[Level 4 smoke] vocab.pkl created'",
         "",
-        "# Run PRAGMA-S distributed training via torchrun.",
+        f"# Run PRAGMA-S N-node distributed training via torchrun (nnodes={nnodes}).",
         "# KFTO injects: RANK, WORLD_SIZE, MASTER_ADDR, MASTER_PORT.",
         "echo \"[Level 4 smoke] torchrun RANK=$RANK WORLD_SIZE=$WORLD_SIZE MASTER_ADDR=$MASTER_ADDR\"",
         "mkdir -p /tmp/pragma-smoke-output",
         "PYTHONPATH=$PRAGMA_ROOT torchrun \\",
-        "  --nnodes=2 \\",
+        f"  --nnodes={nnodes} \\",
         "  --nproc_per_node=1 \\",
         "  --node_rank=$RANK \\",
         "  --master_addr=$MASTER_ADDR \\",
@@ -229,11 +294,49 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str) -> str:
         (_INDENT + line) if line else "" for line in script_lines
     )
 
+    # Resource spec shared by all replicas.
+    _resources = """\
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: "2Gi"
+                limits:
+                  cpu: "2"
+                  memory: "4Gi\""""
+
+    # Build the container spec block (identical for all replicas).
+    def _container_spec() -> str:
+        return f"""\
+            - name: pytorch
+              image: {image}
+              imagePullPolicy: Always
+              command:
+                - /bin/sh
+                - -c
+                - |
+{indented_script}
+{_resources}"""
+
+    # Build Worker spec if nnodes > 1 (always true since minimum is 2).
+    worker_replicas = nnodes - 1
+    _worker_block = f"""    Worker:
+      replicas: {worker_replicas}
+      restartPolicy: Never
+      template:
+        metadata:
+          labels:
+            pragma.redhat.com/test-run: "true"
+            pragma.redhat.com/test-id: "{test_id}"
+        spec:
+          containers:
+{_container_spec()}
+"""
+
     return f"""\
 apiVersion: kubeflow.org/v1
 kind: PyTorchJob
 metadata:
-  name: pragma-smoke-{test_id}
+  name: {_SMOKE_JOB_PREFIX}-{test_id}
   namespace: {namespace}
   labels:
     pragma.redhat.com/test-run: "true"
@@ -250,47 +353,8 @@ spec:
             pragma.redhat.com/test-id: "{test_id}"
         spec:
           containers:
-            - name: pytorch
-              image: {image}
-              imagePullPolicy: Always
-              command:
-                - /bin/sh
-                - -c
-                - |
-{indented_script}
-              resources:
-                requests:
-                  cpu: "500m"
-                  memory: "2Gi"
-                limits:
-                  cpu: "2"
-                  memory: "4Gi"
-    Worker:
-      replicas: 1
-      restartPolicy: Never
-      template:
-        metadata:
-          labels:
-            pragma.redhat.com/test-run: "true"
-            pragma.redhat.com/test-id: "{test_id}"
-        spec:
-          containers:
-            - name: pytorch
-              image: {image}
-              imagePullPolicy: Always
-              command:
-                - /bin/sh
-                - -c
-                - |
-{indented_script}
-              resources:
-                requests:
-                  cpu: "500m"
-                  memory: "2Gi"
-                limits:
-                  cpu: "2"
-                  memory: "4Gi"
-"""
+{_container_spec()}
+{_worker_block}"""
 
 
 def _pytorchjob_terminal_condition(status: dict) -> tuple[bool, str]:
@@ -340,7 +404,7 @@ class TestPyTorchJobCRD:
 
         KFTO (Kubeflow Training Operator) installs the PyTorchJob CRD
         (kubeflow.org/v1). Without this CRD, no PyTorchJob can be submitted
-        and Level 4 is impossible.
+        and Level 4 N-node smoke is impossible.
 
         This test runs before any resource creation so a missing CRD
         produces a clear, early failure with actionable steps rather
@@ -368,44 +432,48 @@ class TestPyTorchJobCRD:
 
 
 # ===========================================================================
-# 2-6. TestTwoNodeManifest
-#    Static manifest structure checks — read-only, no cluster access.
-#    5 tests. Run when RUN_PYTORCHJOB_TESTS=1.
+# 2-6. TestNNodeManifest
+#    Static structure checks on the committed production 2-node manifest.
+#    Read-only, no cluster access. 5 tests.
+#    Run when RUN_PYTORCHJOB_TESTS=1.
 # ===========================================================================
 
 
-class TestTwoNodeManifest:
-    """Level 4: PyTorchJob two-node manifest structural correctness (read-only).
+class TestNNodeManifest:
+    """Level 4: PyTorchJob manifest structural correctness (read-only).
 
     5 tests — no cluster access needed.
     Run when RUN_PYTORCHJOB_TESTS=1.
 
-    Purpose: verify the committed production manifest is structurally
-    correct before any cluster interaction. These tests catch manifest
-    regressions (removed replicas, added PVCs, lost TD-006 documentation)
-    without requiring a cluster connection.
+    These checks target the committed production manifest
+    (openshift/training/pytorchjob-pragma-s-2node.yaml), which is the
+    canonical N-node example using the 2-node configuration. The manifest
+    demonstrates the pattern; N-node training uses Worker replicas = nnodes-1.
+
+    Purpose: catch manifest regressions (removed replicas, added PVCs,
+    lost TD-006 documentation) without requiring a cluster connection.
     """
 
     @_require_pytorchjob
-    def test_two_node_manifest_exists(self) -> None:
+    def test_production_manifest_exists(self) -> None:
         """openshift/training/pytorchjob-pragma-s-2node.yaml must exist.
 
-        This manifest is the canonical two-node DDP training definition.
-        If it is missing, the distributed training path cannot be verified
-        and the static structure tests cannot run.
+        This manifest is the canonical N-node DDP training definition
+        (committed at 2-node scale as the minimal distributed example).
+        If it is missing, the distributed training pattern cannot be verified.
         """
         assert _TWO_NODE_MANIFEST.exists(), (
-            f"Two-node manifest {_TWO_NODE_MANIFEST} not found. "
+            f"Production manifest {_TWO_NODE_MANIFEST} not found. "
             "This file must exist in the repository for Level 4 tests."
         )
 
     @_require_pytorchjob
-    def test_two_node_manifest_has_master_and_worker(self) -> None:
-        """The manifest must define both a Master replica and a Worker replica.
+    def test_production_manifest_has_master_and_worker(self) -> None:
+        """The manifest must define both a Master replica and at least one Worker.
 
-        KFTO PyTorchJob two-node topology:
+        KFTO N-node topology:
           pytorchReplicaSpecs.Master (rank 0) — rendezvous initiator
-          pytorchReplicaSpecs.Worker (rank 1) — connects to Master
+          pytorchReplicaSpecs.Worker (rank 1..N-1) — connect to Master
 
         KFTO injects MASTER_ADDR and MASTER_PORT into every replica pod.
         If either replica type is missing, the DDP ring cannot form and
@@ -413,66 +481,60 @@ class TestTwoNodeManifest:
 
         Expected manifest structure:
           spec.pytorchReplicaSpecs.Master.replicas: 1
-          spec.pytorchReplicaSpecs.Worker.replicas: 1
+          spec.pytorchReplicaSpecs.Worker.replicas: nnodes-1
         """
         content = _TWO_NODE_MANIFEST.read_text()
 
         assert "Master" in content, (
-            "Two-node manifest does not define a Master replica. "
+            "Production manifest does not define a Master replica. "
             "Expected: spec.pytorchReplicaSpecs.Master with replicas: 1. "
             "Master (rank 0) is required for the DDP rendezvous."
         )
         assert "Worker" in content, (
-            "Two-node manifest does not define a Worker replica. "
-            "Expected: spec.pytorchReplicaSpecs.Worker with replicas: 1. "
-            "Worker (rank 1) connects to Master for DDP coordination."
+            "Production manifest does not define a Worker replica. "
+            "Expected: spec.pytorchReplicaSpecs.Worker with replicas >= 1. "
+            "Worker (rank 1..N-1) connects to Master for DDP coordination."
         )
 
     @_require_pytorchjob
-    def test_two_node_manifest_has_no_canonical_pvc(self) -> None:
+    def test_production_manifest_has_no_canonical_pvc(self) -> None:
         """The manifest must not use PVC as canonical persistent storage.
 
-        The two-node manifest uses per-pod emptyDir for local scratch space
+        The N-node manifest uses per-pod emptyDir for local scratch space
         and S3 as the durable artifact store. PVCs are avoided because:
           - ReadWriteOnce PVCs cannot be mounted by two pods simultaneously.
           - RWX PVCs require shared storage infrastructure not assumed here.
           - S3 is the correct canonical checkpoint location for multi-node DDP.
 
-        A PVC definition in the manifest would indicate a regression to the
-        single-node storage model and would cause scheduling conflicts when
-        two pods attempt to bind the same RWO volume on different nodes.
-
-        emptyDir is expected and allowed for /workspace (local scratch) and
-        /dev/shm (shared memory for DDP communication).
+        emptyDir is expected and allowed for /workspace and /dev/shm.
 
         Reference: docs/tech-debt.md TD-006.
         """
         content = _TWO_NODE_MANIFEST.read_text()
 
         assert "kind: PersistentVolumeClaim" not in content, (
-            "Two-node manifest defines a PersistentVolumeClaim resource. "
+            "Production manifest defines a PersistentVolumeClaim resource. "
             "Multi-node PyTorchJobs must use per-pod emptyDir + S3 storage. "
             "PVCs with ReadWriteOnce cause scheduling conflicts on multi-node runs. "
             "See docs/tech-debt.md TD-006."
         )
         assert "volumeClaimTemplates" not in content, (
-            "Two-node manifest uses volumeClaimTemplates (StatefulSet pattern). "
+            "Production manifest uses volumeClaimTemplates (StatefulSet pattern). "
             "Multi-node PyTorchJobs must use per-pod emptyDir + S3 storage. "
             "See docs/tech-debt.md TD-006."
         )
 
     @_require_pytorchjob
-    def test_two_node_manifest_mentions_torchrun_or_distributed(self) -> None:
+    def test_production_manifest_mentions_torchrun_or_distributed(self) -> None:
         """The manifest must reference distributed training configuration.
 
-        A valid two-node DDP manifest must mention at least one of:
+        A valid N-node DDP manifest must mention at least one of:
           - torchrun (the PyTorch distributed process launcher)
           - WORLD_SIZE (environment variable set by the distributed framework)
           - MASTER_ADDR (rendezvous address injected by KFTO into every pod)
 
         If none are present, the manifest does not configure DDP correctly
-        and both pods would train independently (no parameter synchronisation),
-        silently producing incorrect results rather than true distributed training.
+        and all pods would train independently (no parameter synchronisation).
 
         torchrun is the recommended launcher for KFTO PyTorchJobs.
         KFTO injects MASTER_ADDR and MASTER_PORT into every replica pod.
@@ -484,7 +546,7 @@ class TestTwoNodeManifest:
         has_master_addr = "MASTER_ADDR" in content
 
         assert has_torchrun or has_world_size or has_master_addr, (
-            "Two-node manifest does not reference torchrun, WORLD_SIZE, or MASTER_ADDR. "
+            "Production manifest does not reference torchrun, WORLD_SIZE, or MASTER_ADDR. "
             "A valid DDP manifest must configure the distributed launcher. "
             "Expected at least one of: "
             "torchrun (launcher), WORLD_SIZE (env), MASTER_ADDR (rendezvous). "
@@ -492,23 +554,14 @@ class TestTwoNodeManifest:
         )
 
     @_require_pytorchjob
-    def test_two_node_manifest_warns_about_td006(self) -> None:
+    def test_production_manifest_warns_about_td006(self) -> None:
         """The manifest must document the TD-006 --resume limitation.
 
         TD-006 (docs/tech-debt.md): --resume does not work correctly with
-        per-pod emptyDir on restart. When a pod restarts after failure:
-          - emptyDir is destroyed (all local workspace lost)
-          - Rank 0 resumes from the S3 checkpoint
-          - Other ranks have no local checkpoint and start from scratch
-          - The ranks diverge, producing incorrect results
-
-        The manifest must acknowledge this limitation so that operators
-        are not surprised by unexpected restart behaviour. A comment or
-        reference to docs/tech-debt.md is sufficient — the limitation
-        does not need to be fixed here (that is Level 5 work).
+        per-pod emptyDir on restart in multi-node training.
 
         This test does NOT require the limitation to be resolved.
-        It only requires honest documentation.
+        It only requires honest documentation in the manifest.
 
         If this test fails: add a comment to the manifest explaining the
         --resume + emptyDir restart limitation. Reference TD-006.
@@ -526,7 +579,7 @@ class TestTwoNodeManifest:
         )
 
         assert has_td006_ref or has_resume_limitation_comment, (
-            "Two-node manifest does not document the TD-006 --resume limitation. "
+            "Production manifest does not document the TD-006 --resume limitation. "
             "The manifest must mention TD-006 or explain that --resume does not "
             "work correctly with per-pod emptyDir on pod restart. "
             "Add a comment referencing docs/tech-debt.md TD-006."
@@ -534,21 +587,114 @@ class TestTwoNodeManifest:
 
 
 # ===========================================================================
-# 7. TestPyTorchJobSmoke
-#    Runtime distributed training smoke.
+# 7. TestSmokeManifestNaming
+#    Static checks on generated smoke manifest name length.
+#    Read-only, no cluster access. Run when RUN_PYTORCHJOB_TESTS=1.
+# ===========================================================================
+
+
+class TestSmokeManifestNaming:
+    """Level 4: Verify smoke manifest job names respect DNS label length limit.
+
+    3 tests — no cluster access needed.
+    Run when RUN_PYTORCHJOB_TESTS=1.
+
+    Background:
+      KFTO's init-pytorch init container resolves the Master pod hostname
+      via nslookup before starting Worker main containers. DNS labels are
+      limited to 63 characters (RFC 1035 §2.3.4). A name > 63 chars causes
+      the init container to loop and error, with the job never starting.
+
+      Previous failure: pragma-pytorchjob-smoke-{test_id}-master-0 = 67 chars.
+      Fixed by using prefix 'pragma-smoke-': pragma-smoke-{test_id}-master-0 = 56 chars.
+
+    These tests are purely static — they verify the naming constants and
+    a representative test_id produce pod names under the DNS limit.
+    """
+
+    @_require_pytorchjob
+    def test_smoke_job_prefix_length_is_safe(self) -> None:
+        """_SMOKE_JOB_PREFIX must leave room for test_id + KFTO master suffix.
+
+        Constraint:
+          len(prefix) + 1 + len(test_id) + len('-master-0') <= 63
+
+        conftest test_id format: 'pragma-it-YYYYMMDD-HHMMSS-xxxxxxxx'
+        = 35 characters (fixed).
+
+        Maximum safe prefix length: 63 - 35 - 1 - 9 = 18 chars.
+        Current prefix 'pragma-smoke': 12 chars.
+        """
+        _TYPICAL_TEST_ID_LEN = 35  # 'pragma-it-YYYYMMDD-HHMMSS-xxxxxxxx'
+        max_prefix = _DNS_LABEL_LIMIT - _TYPICAL_TEST_ID_LEN - 1 - len(_KFTO_MASTER_SUFFIX)
+        assert len(_SMOKE_JOB_PREFIX) <= max_prefix, (
+            f"_SMOKE_JOB_PREFIX {_SMOKE_JOB_PREFIX!r} is {len(_SMOKE_JOB_PREFIX)} chars. "
+            f"Maximum safe prefix length is {max_prefix} chars "
+            f"(DNS limit {_DNS_LABEL_LIMIT} - test_id {_TYPICAL_TEST_ID_LEN} - "
+            f"separator 1 - KFTO suffix {len(_KFTO_MASTER_SUFFIX)})."
+        )
+
+    @_require_pytorchjob
+    def test_generated_master_pod_name_under_dns_limit(self) -> None:
+        """A representative generated master pod name must be <= 63 chars.
+
+        Uses a fixed typical test_id to verify the full pod name length.
+        """
+        typical_test_id = "pragma-it-20260520-233933-cdf02e3e"  # 35 chars
+        job_name = f"{_SMOKE_JOB_PREFIX}-{typical_test_id}"
+        master_pod_name = f"{job_name}{_KFTO_MASTER_SUFFIX}"
+        assert len(master_pod_name) <= _DNS_LABEL_LIMIT, (
+            f"Generated master pod name {master_pod_name!r} is {len(master_pod_name)} chars, "
+            f"exceeding the {_DNS_LABEL_LIMIT}-char DNS label limit (RFC 1035 §2.3.4). "
+            "Shorten _SMOKE_JOB_PREFIX to fix."
+        )
+        print(
+            f"\n[Level 4] master pod name: {master_pod_name!r} "
+            f"({len(master_pod_name)} chars \u2264 {_DNS_LABEL_LIMIT}) \u2713"
+        )
+
+    @_require_pytorchjob
+    def test_generated_worker_pod_name_under_dns_limit(self) -> None:
+        """A representative generated worker pod name must be <= 63 chars.
+
+        Worker pod name = {job_name}-worker-{n}.  Suffix '-worker-0' = 9 chars,
+        same length as '-master-0'.  Larger N still fits since only the digit
+        changes (single char for N < 10).
+        """
+        typical_test_id = "pragma-it-20260520-233933-cdf02e3e"  # 35 chars
+        job_name = f"{_SMOKE_JOB_PREFIX}-{typical_test_id}"
+        worker_pod_name = f"{job_name}-worker-0"
+        assert len(worker_pod_name) <= _DNS_LABEL_LIMIT, (
+            f"Generated worker pod name {worker_pod_name!r} is {len(worker_pod_name)} chars, "
+            f"exceeding the {_DNS_LABEL_LIMIT}-char DNS label limit (RFC 1035 §2.3.4). "
+            "Shorten _SMOKE_JOB_PREFIX to fix."
+        )
+        print(
+            f"\n[Level 4] worker pod name: {worker_pod_name!r} "
+            f"({len(worker_pod_name)} chars \u2264 {_DNS_LABEL_LIMIT}) \u2713"
+        )
+
+
+# ===========================================================================
+# 8. TestPyTorchJobSmoke
+#    Runtime N-node distributed training smoke.
 #    Requires RUN_PYTORCHJOB_TESTS=1 AND RUN_PYTORCHJOB_SMOKE=1.
 #    Creates a short-lived PyTorchJob in runtime_namespace.
 # ===========================================================================
 
 
 class TestPyTorchJobSmoke:
-    """Level 4: PyTorchJob two-node runtime distributed training smoke.
+    """Level 4: PyTorchJob N-node distributed training runtime smoke.
 
     1 test — requires RUN_PYTORCHJOB_TESTS=1 and RUN_PYTORCHJOB_SMOKE=1.
 
+    Default: nnodes=2 (minimal distributed case — exercises full DDP path).
+    Override: PRAGMA_PYTORCHJOB_NNODES=<n> (n >= 2).
+    Large N:  requires PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1 (n > 2).
+
     Applies a purpose-built smoke PyTorchJob (NOT the production manifest),
-    waits for both Master and Worker pods to complete, verifies DDP log
-    markers from both ranks, and cleans up via the cleanup fixture.
+    waits for Master + all Worker pods to start, waits for terminal condition,
+    verifies DDP log markers from all ranks, and cleans up via cleanup fixture.
 
     The smoke manifest is rendered by _render_smoke_manifest().
     It follows the same KFTO topology as the production manifest but uses:
@@ -556,10 +702,11 @@ class TestPyTorchJobSmoke:
       - Inline 30-row CSV (no S3 credentials)
       - CPU only (no GPU resource request)
       - --max-steps 1 (fast exit, no checkpoint)
+      - Worker replicas = nnodes - 1 (N-node pattern)
     """
 
     @_require_pytorchjob_smoke
-    def test_pytorchjob_two_node_smoke(
+    def test_pytorchjob_nnode_smoke(
         self,
         test_namespace: str,
         runtime_namespace: str,
@@ -569,19 +716,25 @@ class TestPyTorchJobSmoke:
         tmp_path: pathlib.Path,
         cleanup_labelled_resources: None,
     ) -> None:
-        """Apply a two-node PyTorchJob and verify DDP training completes.
+        """Apply an N-node PyTorchJob and verify DDP training completes.
+
+        Default nnodes=2 (PRAGMA_PYTORCHJOB_NNODES env var, min 2).
+        nnodes > 2 requires PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1.
 
         Steps:
           1. Resolve PRAGMA_TRAINING_IMAGE — skip if not set.
-          2. Render smoke PyTorchJob YAML with test_id, namespace, image.
-          3. Apply via oc apply -f (idempotent, label-safe).
-          4. Wait for both Master and Worker pods to appear (poll every 10s).
-          5. Wait for PyTorchJob terminal condition (Succeeded or Failed).
-          6. Collect pod logs via oc logs -l <test-id-selector> (best-effort).
-          7. Assert log markers: PRAGMA-S, Reached --max-steps, DDP evidence,
-             both rank=0 and rank=1 present.
-          8. Assert PyTorchJob Succeeded.
-          9. Cleanup via cleanup_labelled_resources fixture (automatic).
+          2. Resolve nnodes from PRAGMA_PYTORCHJOB_NNODES (default 2).
+             Reject nnodes=1 (non-distributed). Guard nnodes > 2.
+          3. Verify job name is under DNS label limit (63 chars).
+          4. Render smoke PyTorchJob YAML with test_id, namespace, image, nnodes.
+          5. Apply via oc apply -f (idempotent, label-safe).
+          6. Wait for all nnodes pods to appear (poll every 10s).
+          7. Wait for PyTorchJob terminal condition (Succeeded or Failed).
+          8. Collect pod logs via oc logs -l <test-id-selector> (best-effort).
+          9. Assert log markers: PRAGMA-S, Reached --max-steps, DDP evidence,
+             rank=0 present (rank=1 present for nnodes >= 2).
+         10. Assert PyTorchJob Succeeded.
+         11. Cleanup via cleanup_labelled_resources fixture (automatic).
 
         Known limitation:
           TD-006 remains open. --max-steps 1 ensures no checkpoint is
@@ -599,37 +752,78 @@ class TestPyTorchJobSmoke:
                 ".svc:5000/pragma-encoder/pragma-encoder-training:latest"
             )
 
-        job_name = f"pragma-smoke-{test_id}"
+        # ------------------------------------------------------------------
+        # Step 2 — Resolve nnodes with validation.
+        # ------------------------------------------------------------------
+        nnodes = _resolve_nnodes()
+
+        if nnodes < _SMOKE_NNODES_MINIMUM:
+            # Should not reach here because _resolve_nnodes() clamps to minimum,
+            # but guard explicitly for clarity.
+            pytest.fail(
+                f"PRAGMA_PYTORCHJOB_NNODES={nnodes} is below the minimum of "
+                f"{_SMOKE_NNODES_MINIMUM}. This is the distributed smoke — "
+                "nnodes=1 is non-distributed (use Level 3b batch/v1 Job instead). "
+                f"Set PRAGMA_PYTORCHJOB_NNODES >= {_SMOKE_NNODES_MINIMUM}."
+            )
+
+        if nnodes > _SMOKE_NNODES_DEFAULT and not _LARGE_NNODE_SMOKE_ENABLED:
+            pytest.skip(
+                f"PRAGMA_PYTORCHJOB_NNODES={nnodes} > {_SMOKE_NNODES_DEFAULT} but "
+                "PRAGMA_ALLOW_LARGE_NNODE_SMOKE is not set. "
+                "Large N-node smoke is opt-in to avoid cluster overload. "
+                "Set PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1 to enable."
+            )
+
+        worker_replicas = nnodes - 1
+
+        # ------------------------------------------------------------------
+        # Step 3 — Verify job name is under DNS label limit.
+        # ------------------------------------------------------------------
+        job_name = f"{_SMOKE_JOB_PREFIX}-{test_id}"
+        master_pod_name = f"{job_name}{_KFTO_MASTER_SUFFIX}"
+        assert len(master_pod_name) <= _DNS_LABEL_LIMIT, (
+            f"Generated master pod name {master_pod_name!r} is {len(master_pod_name)} chars, "
+            f"which exceeds the {_DNS_LABEL_LIMIT}-char DNS label limit. "
+            "KFTO's init-pytorch would fail to resolve it via nslookup. "
+            "Shorten _SMOKE_JOB_PREFIX or reduce test_id length."
+        )
+
         selector = label_selector(test_id)
 
         print(f"\n[Level 4] job_name={job_name!r}")
+        print(f"[Level 4] nnodes={nnodes}  (master=1 + workers={worker_replicas})")
         print(f"[Level 4] image={image!r}")
         print(f"[Level 4] namespace={runtime_namespace!r}")
 
         # ------------------------------------------------------------------
-        # Step 2 — Render smoke PyTorchJob YAML.
+        # Step 4 — Render smoke PyTorchJob YAML.
         # ------------------------------------------------------------------
         yaml_path = tmp_path / "pytorchjob-smoke.yaml"
         rendered = _render_smoke_manifest(
             test_id=test_id,
             namespace=runtime_namespace,
             image=image,
+            nnodes=nnodes,
         )
         yaml_path.write_text(rendered)
         print(f"[Level 4] Rendered manifest: {yaml_path} ({len(rendered)} bytes)")
 
         # ------------------------------------------------------------------
-        # Step 3 — Apply via oc apply.
+        # Step 5 — Apply via oc apply.
         # oc apply is idempotent and does not touch Argo-managed resources.
         # ------------------------------------------------------------------
         oc(["apply", "-f", str(yaml_path)], namespace=runtime_namespace)
         print(f"[Level 4] oc apply complete: {job_name}")
 
         # ------------------------------------------------------------------
-        # Step 4 — Wait for both pods to appear.
+        # Step 6 — Wait for all nnodes pods to appear.
         # Poll every 10 seconds up to timeout_seconds.
         # ------------------------------------------------------------------
-        print(f"[Level 4] Waiting for Master + Worker pods (selector={selector!r}) ...")
+        print(
+            f"[Level 4] Waiting for {nnodes} pods "
+            f"(selector={selector!r}) ..."
+        )
         _deadline = time.time() + timeout_seconds
         _pods_found = False
         while time.time() < _deadline:
@@ -640,17 +834,16 @@ class TestPyTorchJobSmoke:
                     timeout=15,
                 )
                 pod_count = len(pod_list.get("items", []))
-                if pod_count >= 2:
+                if pod_count >= nnodes:
                     _pods_found = True
-                    print(f"[Level 4] {pod_count} pods found \u2713")
+                    print(f"[Level 4] {pod_count}/{nnodes} pods found \u2713")
                     break
-                print(f"[Level 4] {pod_count}/2 pods found — waiting 10s ...")
+                print(f"[Level 4] {pod_count}/{nnodes} pods found — waiting 10s ...")
             except Exception as exc:  # noqa: BLE001
                 print(f"[Level 4] pod list error (retrying): {redact(str(exc))}")
             time.sleep(10)
 
         if not _pods_found:
-            # Collect job status for diagnostics before failing.
             try:
                 job_json = oc_json(
                     ["get", "pytorchjob", job_name],
@@ -661,7 +854,7 @@ class TestPyTorchJobSmoke:
             except Exception:  # noqa: BLE001
                 _status_conditions = []
             pytest.fail(
-                f"Master and Worker pods did not appear within {timeout_seconds}s. "
+                f"Expected {nnodes} pods but they did not appear within {timeout_seconds}s. "
                 f"Selector: {selector!r}. "
                 f"PyTorchJob conditions: {_status_conditions}. "
                 "Check KFTO operator logs and pod events: "
@@ -669,7 +862,7 @@ class TestPyTorchJobSmoke:
             )
 
         # ------------------------------------------------------------------
-        # Step 5 — Wait for PyTorchJob terminal condition (Succeeded/Failed).
+        # Step 7 — Wait for PyTorchJob terminal condition (Succeeded/Failed).
         # Poll every 10 seconds.
         # ------------------------------------------------------------------
         print(f"[Level 4] Waiting for PyTorchJob terminal condition (timeout={timeout_seconds}s) ...")
@@ -689,7 +882,6 @@ class TestPyTorchJobSmoke:
                 if _terminal:
                     print(f"[Level 4] PyTorchJob reached terminal condition: {_final_condition}")
                     break
-                # Print current replica status for progress visibility.
                 _replica_statuses = job_json.get("status", {}).get("replicaStatuses", {})
                 print(f"[Level 4] replicaStatuses={_replica_statuses} — waiting 10s ...")
             except Exception as exc:  # noqa: BLE001
@@ -705,8 +897,7 @@ class TestPyTorchJobSmoke:
             )
 
         # ------------------------------------------------------------------
-        # Step 6 — Collect pod logs (best-effort).
-        # Redact before any assertion or printing.
+        # Step 8 — Collect pod logs (best-effort).
         # ------------------------------------------------------------------
         print("[Level 4] Collecting pod logs ...")
         _log_result = oc(
@@ -729,7 +920,7 @@ class TestPyTorchJobSmoke:
             )
 
         # ------------------------------------------------------------------
-        # Step 7 — Assert log markers (only when logs are available).
+        # Step 9 — Assert log markers (only when logs are available).
         # ------------------------------------------------------------------
         if all_logs:
             # Model variant confirmation — printed by train_pragma.py.
@@ -759,40 +950,41 @@ class TestPyTorchJobSmoke:
                 f"Full logs (redacted):\n{all_logs}"
             )
 
-            # Both ranks must appear in the combined logs.
+            # Rank 0 (Master) must always appear in logs.
             _rank0_patterns = ["rank=0", "RANK=0", "rank 0", "[rank0]"]
-            _rank1_patterns = ["rank=1", "RANK=1", "rank 1", "[rank1]"]
             _has_rank0 = any(p in all_logs for p in _rank0_patterns)
-            _has_rank1 = any(p in all_logs for p in _rank1_patterns)
-
             assert _has_rank0, (
                 "Pod logs must show output from rank 0 (Master). "
                 f"Expected one of: {_rank0_patterns}. "
                 f"Job: {job_name!r}. "
                 f"Full logs (redacted):\n{all_logs}"
             )
-            assert _has_rank1, (
-                "Pod logs must show output from rank 1 (Worker). "
-                f"Expected one of: {_rank1_patterns}. "
-                f"Job: {job_name!r}. "
-                f"Full logs (redacted):\n{all_logs}"
-            )
+
+            # Rank 1 (first Worker) must appear for nnodes >= 2.
+            if nnodes >= 2:
+                _rank1_patterns = ["rank=1", "RANK=1", "rank 1", "[rank1]"]
+                _has_rank1 = any(p in all_logs for p in _rank1_patterns)
+                assert _has_rank1, (
+                    "Pod logs must show output from rank 1 (first Worker). "
+                    f"Expected one of: {_rank1_patterns}. "
+                    f"Job: {job_name!r}. "
+                    f"Full logs (redacted):\n{all_logs}"
+                )
 
             print(
                 "[Level 4] Log markers confirmed: "
                 "'PRAGMA-S' \u2713  'Reached --max-steps' \u2713  "
-                "DDP evidence \u2713  rank=0 \u2713  rank=1 \u2713"
+                "DDP evidence \u2713  rank=0 \u2713"
+                + ("  rank=1 \u2713" if nnodes >= 2 else "")
             )
         else:
-            # Succeeded state is the definitive pass criterion when logs
-            # are unavailable (e.g. running the test from outside the cluster).
             print(
                 "[Level 4] Log markers not verified (logs unavailable). "
                 f"Condition={_final_condition!r} is the pass criterion."
             )
 
         # ------------------------------------------------------------------
-        # Step 8 — Assert PyTorchJob Succeeded.
+        # Step 10 — Assert PyTorchJob Succeeded.
         # ------------------------------------------------------------------
         assert _final_condition == "Succeeded", (
             f"PyTorchJob {job_name!r} did not Succeed. "
@@ -802,12 +994,11 @@ class TestPyTorchJobSmoke:
         )
 
         # ------------------------------------------------------------------
-        # Step 9 — Cleanup (automatic via cleanup_labelled_resources fixture).
-        # The fixture yields before the test body and runs teardown after.
-        # Resources with both test labels are deleted after this return.
+        # Step 11 — Cleanup (automatic via cleanup_labelled_resources fixture).
         # ------------------------------------------------------------------
-        print("\n[Level 4] === PASSED: PRAGMA PyTorchJob two-node distributed training smoke ===")
+        print(f"\n[Level 4] === PASSED: PRAGMA PyTorchJob {nnodes}-node distributed training smoke ===")
         print(f"  Job:         {job_name}")
+        print(f"  nnodes:      {nnodes}  (master=1 + workers={worker_replicas})")
         print(f"  Condition:   {_final_condition}")
         print(f"  Namespace:   {runtime_namespace}")
         print(f"  Image:       {image}")
