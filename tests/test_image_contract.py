@@ -11,7 +11,8 @@ Four categories:
       must declare kfp and kfp-kubernetes in the workbench extras/image only.
 
   TestTrainingImageContract — openshift/training/Dockerfile.training must
-      bake src/ at build time and must not use runtime git clone.
+      install the built wheel (not an editable src/ install) and must not
+      use runtime git clone.
 
   TestKfpKubernetesGuard — src/workbench/_submit._require_kfp_kubernetes()
       must raise a friendly ImportError (with install hint) when
@@ -148,21 +149,66 @@ class TestTrainingImageContract:
     """Training/component image Dockerfile must satisfy the image contract.
 
     Category: image-contract / build-instructions
+
+    The image install model is wheel-based (not editable src/ install):
+      1. Build the wheel: python -m build --wheel
+      2. COPY dist/ into the image context
+      3. RUN pip install --no-deps dist/pragma_encoder-*.whl
+
+    This replaces the old COPY src/ + pip install -e . pattern.
+    The pragma_encoder package is in site-packages, not a src/ tree.
     """
 
-    def test_dockerfile_training_copies_src(self) -> None:
-        """Dockerfile.training must COPY src/ into the image (bake in source)."""
+    def test_dockerfile_training_installs_wheel(self) -> None:
+        """Dockerfile.training must install pragma_encoder from a built wheel.
+
+        The image must COPY dist/ (or a .whl file) and pip install it.
+        This replaces the old 'COPY src/ + pip install -e .' pattern.
+
+        The wheel provides a clean, reproducible install: the same artifact
+        tested by TestWheelMetadata and TestWheelInstall is what runs in the
+        training pod. No source tree, no editable-install symlinks.
+
+        Build flow before oc start-build:
+          python -m build --wheel   # creates dist/pragma_encoder-*.whl
+          oc start-build pragma-encoder-training --from-dir=. --follow -n pragma-encoder
+        """
         text = _DOCKERFILE_TRAINING.read_text()
-        assert "COPY" in text and "src/" in text, (
-            "Dockerfile.training must COPY src/ into the image. "
-            "KFP component pods import from pragma_encoder.* — source must be baked in. "
+        # Must have a pip install line that references a .whl file
+        pip_lines = [
+            ln for ln in text.splitlines()
+            if "pip install" in ln and ".whl" in ln and not ln.strip().startswith("#")
+        ]
+        assert pip_lines, (
+            "Dockerfile.training must install pragma_encoder from a built wheel. "
+            "Expected a 'pip install ... .whl' line. "
+            "Build the wheel first (python -m build --wheel), then COPY dist/ and "
+            "RUN pip install --no-deps dist/pragma_encoder-*.whl. "
             "See docs/openshift-image-contract.md."
         )
-        copy_lines = [ln for ln in text.splitlines() if "COPY" in ln and "src/" in ln]
-        assert copy_lines, (
-            "No COPY src/ line found in Dockerfile.training. "
-            "Without src/ baked in, component pods cannot import PRAGMA code."
-        )
+
+    def test_dockerfile_training_does_not_use_editable_install(self) -> None:
+        """Dockerfile.training must NOT use pip install -e (editable install).
+
+        The old model was: COPY src/ + pip install --no-deps -e .
+        The new model is:  COPY dist/*.whl + pip install --no-deps *.whl
+
+        Editable installs create a .pth file pointing into the source tree.
+        With the wheel model, the source tree is not in the image — the
+        package is installed cleanly into site-packages.
+        """
+        text = _DOCKERFILE_TRAINING.read_text()
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "pip install" in stripped and " -e " in stripped:
+                pytest.fail(
+                    f"Dockerfile.training must not use 'pip install -e' (editable install). "
+                    f"Found: {line!r}. "
+                    "Replace with: pip install --no-deps dist/pragma_encoder-*.whl. "
+                    "The wheel must be built before the image: python -m build --wheel."
+                )
 
     def test_dockerfile_training_has_no_runtime_git_clone(self) -> None:
         """Dockerfile.training must NOT use runtime git clone.

@@ -193,8 +193,10 @@ class TestTrainingImageRuntimeContract:
             image=image,
             test_id=test_id,
             import_check=(
-                "import sys; sys.path.insert(0, '/opt/app-root/src/pragma-encoder'); "
-                "import pragma_encoder.model; import pragma_encoder.data; import pragma_encoder.workbench; "
+                "import pragma_encoder.model; "
+                "import pragma_encoder.data; "
+                "import pragma_encoder.workbench; "
+                "import pragma_encoder.training.checkpoints; "
                 "print('PRAGMA core imports OK')"
             ),
             expected_marker="PRAGMA core imports OK",
@@ -229,7 +231,7 @@ class TestTrainingImageRuntimeContract:
             image=image,
             test_id=test_id,
             import_check=(
-                "import sys; sys.path.insert(0, '/opt/app-root/src/pragma-encoder'); "
+                "import sys; "
                 "sys.modules['kfp_kubernetes'] = None; "  # Simulate absence
                 "import pragma_encoder.training.checkpoints; "
                 "print('checkpoints importable without kfp_kubernetes OK')"

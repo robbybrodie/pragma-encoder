@@ -129,6 +129,21 @@ oc get events -n pragma-encoder --sort-by=.lastTimestamp | tail -20
 
 ---
 
+## ArgoCD and Pipeline Authoring Lifecycle
+
+ArgoCD owns the DSPA (wave 3 — the KFP pipeline server). It does **not** own
+pipeline Python source, compiled IR YAML, pipeline definitions/versions, or
+pipeline runs. Those belong to the Workbench authoring lifecycle.
+
+Pipelines are authored as Python using KFP SDK v2 decorators — not hand-written
+YAML. The Workbench is the primary authoring surface. The RHOAI GUI is the
+runtime surface for definitions, versions, and runs.
+
+**[docs/openshift-gitops-argocd.md](openshift-gitops-argocd.md)** — full
+ownership table, pipeline authoring lifecycle, and GitOps promotion path.
+
+---
+
 ## Storage model
 
 Training data, checkpoints, and outputs are stored in S3. Training pods use

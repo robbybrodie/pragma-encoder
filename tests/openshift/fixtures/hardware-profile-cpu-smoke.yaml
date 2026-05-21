@@ -1,0 +1,50 @@
+# RHOAI Hardware Profile — CPU-only, lightweight (smoke tests)
+#
+# OpenShift AI 3.3 primitive: Hardware Profile
+# API: apiVersion: infrastructure.opendatahub.io/v1, kind: HardwareProfile
+# Status: GA in RHOAI 3.3 (replaces deprecated Accelerator Profiles and
+#         Container Size selector)
+#
+# This profile defines a lightweight CPU-only shape for smoke/test workloads.
+# It does NOT represent a production training configuration.
+#
+# Use this shape when:
+#   - Running smoke tests (Level 3b, Level 4, Level 5)
+#   - Verifying image / checkpoint / resume behaviour without GPU
+#   - Running CPU-mode training (--device cpu flag in train_pragma.py)
+#
+# This shape corresponds to the resource requests in the current smoke test
+# manifests: cpu=500m, memory=2Gi.
+#
+# To apply to cluster (requires RHOAI admin):
+#   oc apply -f tests/openshift/fixtures/hardware-profile-cpu-smoke.yaml -n redhat-ods-applications
+#
+# Reference: docs/openshift-ai-3.3-alignment.md §Hardware Profile
+
+apiVersion: infrastructure.opendatahub.io/v1
+kind: HardwareProfile
+metadata:
+  name: pragma-cpu-smoke
+  namespace: redhat-ods-applications
+  labels:
+    app: pragma-encoder
+    pragma.redhat.com/purpose: smoke-test
+spec:
+  displayName: "PRAGMA CPU Smoke (test only)"
+  description: >
+    Lightweight CPU-only shape for PRAGMA smoke and integration tests.
+    Not for production training. No GPU.
+  identifiers:
+    - displayName: "CPU"
+      identifier: cpu
+      minCount: "500m"
+      maxCount: "2"
+      defaultCount: "500m"
+    - displayName: "Memory"
+      identifier: memory
+      minCount: "1Gi"
+      maxCount: "4Gi"
+      defaultCount: "2Gi"
+  nodeSelector:
+    {}
+  tolerations: []

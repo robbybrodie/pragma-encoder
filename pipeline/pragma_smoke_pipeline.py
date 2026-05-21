@@ -1,8 +1,8 @@
 """Minimal KFP v2 smoke pipeline for Level 3 DSPA integration tests.
 
 Implements a single self-contained KFP v2 component that runs:
-  1. src/data/fit_tokenizer.py  — fits tokenizer on inline synthetic CSV
-  2. scripts/train_pragma.py    — PRAGMA-S training with --max-steps 1
+  1. python -m pragma_encoder.data.fit_tokenizer — fits tokenizer on inline synthetic CSV
+  2. scripts/train_pragma.py — PRAGMA-S training with --max-steps 1
 
 Purpose:
   Level 3 (DSPA/KFP v2 pipeline smoke) requires a component that can run
@@ -22,8 +22,17 @@ Architecture boundary:
     Level 3  (KFP v2 Run)   → DSPA pipeline orchestration works end-to-end
 
 Image requirement:
-  The component base_image must contain PRAGMA source code (src/) and all
-  Python dependencies. The PRAGMA training image is the correct choice.
+  The component base_image must contain the pragma_encoder wheel and all
+  Python dependencies. The PRAGMA training image is the correct choice
+  (see openshift/training/Dockerfile.training).
+
+  The image guarantees:
+    - python -m pragma_encoder.data.fit_tokenizer  works (wheel installed)
+    - scripts/train_pragma.py  present at WORKDIR (/opt/app-root/src/scripts/)
+
+  The workbench image must NOT be used here — it does not install the
+  pragma_encoder wheel. Component pods would fail with:
+    ModuleNotFoundError: No module named 'pragma_encoder'
 
   Override at compile time via env var (read once at module import):
     PRAGMA_TRAINING_IMAGE      — training image URI (highest priority)
@@ -105,18 +114,17 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     """Run PRAGMA-S smoke training inside a single KFP component pod.
 
     Steps:
-      1. Locate PRAGMA source in the training image.
-      2. Write a 30-row synthetic TabFormer CSV to /tmp/pragma-smoke/.
-      3. Run src/data/fit_tokenizer.py to build vocab.pkl.
-      4. Run scripts/train_pragma.py --max-steps N --model-variant pragma-s.
-      5. Print completion marker: 'PRAGMA smoke training completed'.
+      1. Write a 30-row synthetic TabFormer CSV to /tmp/pragma-smoke/.
+      2. Run python -m pragma_encoder.data.fit_tokenizer to build vocab.pkl.
+      3. Run scripts/train_pragma.py --max-steps N --model-variant pragma-s.
+      4. Print completion marker: 'PRAGMA smoke training completed'.
 
     No S3, no distributed training, no persistent volumes — all data is ephemeral (/tmp).
     The component pod exits 0 on success.
 
     Log markers asserted by test_03_pipeline_smoke_run.py:
-      'PRAGMA-S'                     — printed by train_pragma.py
-      'Reached --max-steps'         — printed by train_pragma.py early-stop
+      'PRAGMA-S'                        — printed by train_pragma.py
+      'Reached --max-steps'             — printed by train_pragma.py early-stop
       'PRAGMA smoke training completed' — printed by this component
     """
     # All imports inside the function body — KFP serialises this function
@@ -127,31 +135,37 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     import textwrap
 
     # ------------------------------------------------------------------
-    # Step 1 — Locate PRAGMA project root in the training image.
+    # Step 1 — Locate scripts/train_pragma.py in the training image.
     #
-    # The training image bakes PRAGMA source at a known path.
-    # Search common locations so the component is not brittle to
-    # minor image path changes.
+    # The Dockerfile.training copies scripts/ to WORKDIR (/opt/app-root/src),
+    # so train_pragma.py is at /opt/app-root/src/scripts/train_pragma.py.
+    # Search common locations for resilience to minor image layout changes.
+    #
+    # fit_tokenizer is invoked as a module (python -m pragma_encoder.data.fit_tokenizer)
+    # because the pragma_encoder wheel is installed in site-packages — no src/ tree.
     # ------------------------------------------------------------------
-    _search_roots = [
+    _script_search_dirs = [
+        pathlib.Path("/opt/app-root/src"),
         pathlib.Path("/opt/app-root/src/pragma-encoder"),
         pathlib.Path("/pragma-encoder"),
         pathlib.Path.cwd(),
     ]
-    project_root: pathlib.Path | None = None
-    for _candidate in _search_roots:
-        if (_candidate / "src" / "pragma_encoder" / "data" / "fit_tokenizer.py").exists():
-            project_root = _candidate
+    train_script: pathlib.Path | None = None
+    for _candidate in _script_search_dirs:
+        _candidate_script = _candidate / "scripts" / "train_pragma.py"
+        if _candidate_script.exists():
+            train_script = _candidate_script
             break
 
-    if project_root is None:
+    if train_script is None:
         raise RuntimeError(
-            "Cannot find PRAGMA project root in training image. "
-            f"Searched: {[str(p) for p in _search_roots]}. "
-            "The training image must contain src/data/fit_tokenizer.py."
+            "Cannot find scripts/train_pragma.py in training image. "
+            f"Searched: {[str(p) for p in _script_search_dirs]}. "
+            "The training image must contain scripts/train_pragma.py "
+            "(see openshift/training/Dockerfile.training)."
         )
 
-    print(f"[smoke] PRAGMA project root: {project_root}")
+    print(f"[smoke] train_pragma.py: {train_script}")
 
     # ------------------------------------------------------------------
     # Step 2 — Write inline TabFormer CSV.
@@ -210,13 +224,15 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     vocab_path = work_dir / "data" / "tabformer" / "vocab.pkl"
 
     # ------------------------------------------------------------------
-    # Step 3 — Fit tokenizer.
-    # fit_tokenizer.py uses hardcoded relative paths for read/write,
-    # so we pass cwd=work_dir to make them resolve correctly.
+    # Step 3 — Fit tokenizer via module invocation.
+    #
+    # pragma_encoder.data.fit_tokenizer is installed in site-packages by the
+    # wheel. It uses hardcoded relative paths for read/write (CSV_PATH and
+    # VOCAB_PATH relative to CWD), so we pass cwd=work_dir.
     # ------------------------------------------------------------------
-    print("[smoke] Running fit_tokenizer.py ...")
+    print("[smoke] Running python -m pragma_encoder.data.fit_tokenizer ...")
     subprocess.run(
-        [sys.executable, str(project_root / "src" / "pragma_encoder" / "data" / "fit_tokenizer.py")],
+        [sys.executable, "-m", "pragma_encoder.data.fit_tokenizer"],
         cwd=str(work_dir),
         check=True,
     )
@@ -243,7 +259,7 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     subprocess.run(
         [
             sys.executable,
-            str(project_root / "scripts" / "train_pragma.py"),
+            str(train_script),
             "--csv-path", str(csv_path),
             "--vocab-path", str(vocab_path),
             "--output-dir", str(output_dir),

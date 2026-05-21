@@ -1,0 +1,77 @@
+# Kubeflow Trainer v2 / TrainJob — example only, NOT for production use
+#
+# OpenShift AI 3.3 primitive: TrainJob
+# API: apiVersion: trainer.kubeflow.org/v1alpha1, kind: TrainJob
+# Status: TECHNOLOGY PREVIEW in RHOAI 3.3
+#
+# WARNING: Technology Preview features are not supported with Red Hat production
+# SLAs and might not be functionally complete. Do NOT use in production.
+# Do NOT reference this file in CI or production manifests.
+#
+# This file documents the RHOAI 3.3 forward-looking direction for distributed
+# training. Kubeflow Trainer v2 replaces separate per-framework CRDs (PyTorchJob,
+# TFJob, etc.) with a unified TrainJob resource.
+#
+# Current approach (GA): PyTorchJob (kubeflow.org/v1)
+#   See: openshift/training/pytorchjob-pragma-s.yaml
+#
+# Future approach (when TrainJob reaches GA):
+#   Replace PyTorchJob with TrainJob + ClusterTrainingRuntime.
+#   Requires a new ADR superseding docs/decisions/005-training-orchestration.md.
+#
+# Reference:
+#   docs/openshift-ai-3.3-alignment.md §Kubeflow Trainer v2 / TrainJob (Tech Preview)
+#   ADR 005: docs/decisions/005-training-orchestration.md
+
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: TrainJob
+metadata:
+  name: pragma-s-pretrain-example
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+    variant: pragma-s
+    # NOTE: this is a reference example only — do not apply this manifest
+spec:
+  # TrainingRuntime specifies the distributed training configuration.
+  # The ClusterTrainingRuntime is a cluster-wide blueprint; TrainingRuntime
+  # is namespace-scoped.
+  trainingRuntimeRef:
+    # A ClusterTrainingRuntime for PyTorch would be defined by the cluster admin.
+    # Example only — actual name depends on cluster configuration.
+    name: torch-distributed
+    # apiGroup: trainer.kubeflow.org
+    # kind: ClusterTrainingRuntime
+
+  trainer:
+    image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
+    command:
+      - torchrun
+      - scripts/train_pragma.py
+    args:
+      - --csv-path
+      - /data/tabformer/card_transaction.v1.csv
+      - --vocab-path
+      - /data/tabformer/vocab.pkl
+      - --output-dir
+      - /tmp/pragma-output
+      - --model-variant
+      - pragma-s
+      - --epochs
+      - "10"
+      - --s3-checkpoint-prefix
+      - pragma-encoder/checkpoints/pragma-s
+    numNodes: 2
+    resourcesPerNode:
+      requests:
+        cpu: "8"
+        memory: 64Gi
+        nvidia.com/gpu: "1"
+      limits:
+        cpu: "16"
+        memory: 128Gi
+        nvidia.com/gpu: "1"
+    envFrom:
+      - secretRef:
+          name: pragma-workbench-env
+          optional: true

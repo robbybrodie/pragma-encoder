@@ -259,3 +259,63 @@ invariant, `barrier_if_distributed` helper, and KFP import boundary.
 - Manifest: `openshift/training/pytorchjob-pragma-s-2node.yaml`
 - ADR 003: docs/decisions/003-workbench-training-api.md (no PVC canonical storage)
 - Paper: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
+
+
+---
+
+## TD-007: pragma_smoke_pipeline component body uses source-tree paths
+
+**Date:** 2026-05-21
+**Severity:** Low (Level 3 cluster smoke only; no regression in current tests)
+**Status:** Resolved — 2026-05-21
+
+### Description
+
+`pipeline/pragma_smoke_pipeline.py` contained a KFP component function body
+(`pragma_smoke_training`) that located `fit_tokenizer.py` by searching for:
+
+```python
+_candidate / "src" / "pragma_encoder" / "data" / "fit_tokenizer.py"
+```
+
+And invoked it as:
+
+```python
+subprocess.run([sys.executable, str(project_root / "src" / "pragma_encoder" / "data" / "fit_tokenizer.py")])
+```
+
+Since the training image installs the `pragma_encoder` wheel (commit d15a249)
+rather than copying the source tree, there is no `src/` directory in the image.
+This path search failed at pod startup with a RuntimeError when the component
+pod used the wheel-based training image.
+
+### Resolution applied (2026-05-21)
+
+**`pipeline/pragma_smoke_pipeline.py`** — component body updated:
+
+1. `_search_roots` loop (looking for `src/pragma_encoder/data/fit_tokenizer.py`) removed.
+2. fit_tokenizer invocation changed from direct file execution to module invocation:
+   ```python
+   subprocess.run([sys.executable, "-m", "pragma_encoder.data.fit_tokenizer"], cwd=str(work_dir), check=True)
+   ```
+3. `scripts/train_pragma.py` path now found via `_script_search_dirs` loop
+   (searching for `scripts/train_pragma.py` at `/opt/app-root/src`, `/opt/app-root/src/pragma-encoder`,
+   `/pragma-encoder`, and CWD), consistent with the fix applied to
+   `test_05_s3_checkpoint_resume.py` (commit 787e55d).
+
+**`tests/test_smoke_pipeline.py`** — new static tests added:
+
+- `TestSmokePipelineSource::test_component_uses_module_invocation_for_fit_tokenizer`
+  — asserts `-m` flag and `pragma_encoder.data.fit_tokenizer` in source
+- `TestSmokePipelineSafety::test_component_has_no_src_tree_assumption`
+  — asserts old source-tree path patterns are absent
+- `TestSmokePipelineCompile::test_compiled_yaml_has_no_src_tree_paths`
+  — asserts compiled KFP YAML does not embed source-tree paths (skips without kfp)
+
+### References
+
+- Code: `pipeline/pragma_smoke_pipeline.py` — `pragma_smoke_training` component body
+- Tests: `tests/test_smoke_pipeline.py`
+- Prior fix (same pattern): `tests/openshift/test_05_s3_checkpoint_resume.py` (commit 787e55d)
+- Image wheel refactor: `openshift/training/Dockerfile.training` (commit d15a249)
+- Test: `tests/openshift/test_03_pipeline_smoke_run.py` (xfail — Level 3 cluster smoke)

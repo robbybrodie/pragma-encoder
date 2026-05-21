@@ -1,32 +1,37 @@
-# PRAGMA training image — extends workbench image with source code baked in.
+# PRAGMA training image — extends workbench image with the built wheel.
 #
 # The Level 3b smoke test (tests/openshift/test_03b_training_job_smoke.py)
 # requires PRAGMA_TRAINING_IMAGE to be built from this Dockerfile.
 #
 # The smoke test validates at runtime that:
 #   scripts/train_pragma.py  — present at WORKDIR
-#   src/pragma_encoder/data/fit_tokenizer.py — present at WORKDIR
-#   python -c "import pragma_encoder" — succeeds (pip install -e . baked in)
+#   python -c "import pragma_encoder" — succeeds (wheel installed)
+#   python -m pragma_encoder.data.fit_tokenizer — succeeds via wheel
 #
 # A dependency-only image (e.g. the workbench notebook image alone) will
 # fail the smoke with a clear error message and a reference to this file.
 #
 # -----------------------------------------------------------------------
-# Build via oc new-build (recommended — uses cluster internal registry):
+# IMPORTANT: Build the wheel BEFORE running oc start-build.
 #
-#   # One-time setup (creates ImageStream and kick off build):
-#   oc new-build --strategy=docker \
-#     --binary \
-#     --name=pragma-encoder-training \
-#     -n pragma-encoder
+#   # Step 1: build the wheel (repo root):
+#   python -m build --wheel
 #
-#   # Build and push (run from repo root):
+#   # Step 2: upload repo (including dist/) as the build context:
 #   oc start-build pragma-encoder-training \
 #     --from-dir=. \
 #     --follow \
 #     -n pragma-encoder
 #
-#   # Verify:
+# -----------------------------------------------------------------------
+# One-time setup (creates ImageStream):
+#
+#   oc new-build --strategy=docker \
+#     --binary \
+#     --name=pragma-encoder-training \
+#     -n pragma-encoder
+#
+#   # Verify after build:
 #   oc get istag pragma-encoder-training:latest -n pragma-encoder
 #
 #   # Set for smoke test:
@@ -36,6 +41,7 @@
 # -----------------------------------------------------------------------
 # Build locally with Podman (requires pull access to internal registry):
 #
+#   python -m build --wheel  # build wheel first
 #   podman build -f openshift/training/Dockerfile.training \
 #     -t image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest \
 #     .
@@ -50,39 +56,38 @@
 #
 # WORKDIR:
 #   Inherited from the base image (/opt/app-root/src).
-#   src/ and scripts/ are placed at WORKDIR so the smoke test can reference
-#   them as relative paths without cd or PYTHONPATH manipulation.
+#   scripts/ is placed at WORKDIR so train_pragma.py is accessible as a
+#   relative path. The pragma_encoder package is installed from the wheel
+#   into site-packages — no src/ tree or PYTHONPATH manipulation needed.
 #
 # Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 FROM image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
 
-# Copy PRAGMA source code into the image at WORKDIR.
+# Copy the built wheel and training scripts into the image.
 # WORKDIR is /opt/app-root/src (inherited from S2I base).
-# --chown=1001:0 matches the S2I base image's uid:gid convention so the
-# build's RUN steps (which execute as UID 1001) can read the copied files.
+# --chown=1001:0 matches the S2I uid:gid so RUN steps (UID 1001) can read files.
 # After this COPY:
-#   scripts/train_pragma.py                         -> accessible as 'scripts/train_pragma.py'
-#   src/pragma_encoder/data/fit_tokenizer.py        -> accessible as relative path
-#   python -c "import pragma_encoder" succeeds after pip install -e .
-COPY --chown=1001:0 src/ src/
+#   scripts/train_pragma.py        -> accessible as 'scripts/train_pragma.py'
+#   dist/pragma_encoder-*.whl      -> installed into site-packages below
+COPY --chown=1001:0 dist/ dist/
 COPY --chown=1001:0 scripts/ scripts/
-COPY --chown=1001:0 pyproject.toml pyproject.toml
 
-# Ensure all copied source files are world-readable.
+# Ensure copied files are world-readable.
 # OpenShift's restricted-v2 SCC assigns a random UID from the namespace's
-# UID range (not 1001). Source files in the repo may have mode 600 (owner-only
-# read) if created by certain editors. COPY preserves the source mode, so a
-# 600 file remains 600 even after --chown. Since the pod UID differs from
-# the file owner (1001), Python's import mechanism gets PermissionError.
+# UID range (not 1001). Files may have mode 600 (owner-only read) from
+# certain editors. COPY preserves the source mode, so a 600 file remains
+# 600 even after --chown — the pod UID can't read it.
 # a+rX: add read to all (a+r) and execute only to directories (X, not x).
-RUN chmod -R a+rX src/ scripts/
+RUN chmod -R a+rX dist/ scripts/
 
-# Install the pragma_encoder package in editable mode so 'import pragma_encoder'
-# works without PYTHONPATH manipulation. No internet access needed — pyproject.toml
-# has no [project.dependencies], so pip only registers the package.
-RUN pip install --no-deps -e .
+# Install the pragma_encoder wheel into site-packages.
+# --no-deps: all runtime deps (torch, transformers, numpy, pandas, peft,
+# scikit-learn) are already present in the workbench base image.
+# The wheel registers pragma_encoder so 'import pragma_encoder' works
+# without source tree or PYTHONPATH manipulation.
+RUN pip install --no-deps dist/pragma_encoder-*.whl
 
-# Verify source code is importable at build time.
-# This catches missing __init__.py files, broken imports, or incomplete
-# COPY instructions at image build time rather than at job runtime.
-RUN python -c "import pragma_encoder; print('PRAGMA imports OK')"
+# Verify the installed wheel is importable at build time.
+# This catches a missing __init__.py, broken imports, or an incomplete
+# wheel manifest at image build, not at job runtime.
+RUN python -c "import pragma_encoder; print('PRAGMA wheel install OK')"
