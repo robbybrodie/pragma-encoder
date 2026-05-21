@@ -183,20 +183,23 @@ class TestSmokePipelineSource:
         )
 
     def test_component_source_references_train_pragma_max_steps(self) -> None:
-        """pragma_smoke_training component must call train_pragma.py with --max-steps.
+        """pragma_smoke_training component must invoke pragma_encoder.training.train
+        with --max-steps.
 
-        train_pragma.py is the training entrypoint. --max-steps 1 (or the
-        max_steps parameter) ensures the smoke test terminates quickly.
+        pragma_encoder.training.train is the canonical wheel-based training entrypoint.
+        --max-steps 1 (or the max_steps parameter) ensures the smoke test terminates quickly.
         Verified by source inspection — no cluster needed.
         """
         src = _smoke_pipeline_source()
-        assert "train_pragma" in src, (
-            "pipeline/pragma_smoke_pipeline.py source must reference train_pragma. "
-            "The component must call scripts/train_pragma.py."
+        assert "pragma_encoder.training.train" in src, (
+            "pipeline/pragma_smoke_pipeline.py source must reference "
+            "pragma_encoder.training.train. "
+            "The component must invoke python -m pragma_encoder.training.train "
+            "(wheel-based module invocation, not scripts/train_pragma.py)."
         )
         assert "max-steps" in src or "max_steps" in src, (
             "pipeline/pragma_smoke_pipeline.py source must reference max-steps or max_steps. "
-            "The component must pass --max-steps to train_pragma.py to stop early."
+            "The component must pass --max-steps to pragma_encoder.training.train to stop early."
         )
 
     def test_component_uses_module_invocation_for_fit_tokenizer(self) -> None:
@@ -423,9 +426,10 @@ class TestSmokePipelineCompile:
             "from the module invocation in the component body. "
             "The component should call: [sys.executable, '-m', 'pragma_encoder.data.fit_tokenizer']"
         )
-        # scripts/train_pragma.py search must be present (not project_root source search)
-        assert "scripts/train_pragma.py" in content, (
-            "Compiled pipeline YAML must embed 'scripts/train_pragma.py' path search. "
-            "The component should search for train_pragma.py in the scripts/ directory "
-            "as copied by Dockerfile.training, not via a source-tree project_root search."
+        # Module invocation for training must be present (not file-path script search)
+        assert "pragma_encoder.training.train" in content, (
+            "Compiled pipeline YAML must embed 'pragma_encoder.training.train' "
+            "from the module invocation in the component body. "
+            "The component should call: [sys.executable, '-m', 'pragma_encoder.training.train']. "
+            "The wheel image has no scripts/ source dependency — module invocation is required."
         )

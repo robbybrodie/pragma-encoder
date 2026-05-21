@@ -39,7 +39,8 @@ _NOTEBOOK_REQUIREMENTS = _REPO_ROOT / "openshift" / "notebook-image" / "requirem
 _DOCKERFILE_TRAINING = _REPO_ROOT / "openshift" / "training" / "Dockerfile.training"
 _SUBMIT_PY = _REPO_ROOT / "src" / "pragma_encoder" / "workbench" / "_submit.py"
 _CHECKPOINTS_PY = _REPO_ROOT / "src" / "pragma_encoder" / "training" / "checkpoints.py"
-_TRAIN_SCRIPT = _REPO_ROOT / "scripts" / "train_pragma.py"
+_TRAIN_MODULE = _REPO_ROOT / "src" / "pragma_encoder" / "training" / "train.py"
+_TRAIN_SCRIPT = _REPO_ROOT / "scripts" / "train_pragma.py"  # compatibility wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +389,8 @@ class TestKfpKubernetesBoundary:
 
     The training image runtime must NOT import kfp or kfp-kubernetes:
       - src/pragma_encoder/training/checkpoints.py runs inside training pods (emptyDir, CPU/GPU)
-      - scripts/train_pragma.py runs inside training pods
+      - src/pragma_encoder/training/train.py — the canonical training entrypoint (wheel module)
+      - scripts/train_pragma.py — compatibility wrapper (delegates to train.py)
 
     kfp and kfp-kubernetes are compile-time workbench dependencies only.
     They are installed in the workbench/notebook image and used to author and
@@ -483,10 +485,45 @@ class TestKfpKubernetesBoundary:
             # Other ImportErrors (e.g. boto3 not installed) are acceptable —
             # the training image has boto3 but a local dev env may not.
 
+    def test_train_module_exists(self) -> None:
+        """src/pragma_encoder/training/train.py must exist (canonical training entrypoint).
+
+        This is the wheel-installed module that backs pragma-encoder-train (console script)
+        and python -m pragma_encoder.training.train. It replaces the runtime dependency
+        on scripts/train_pragma.py in the training image.
+        """
+        assert _TRAIN_MODULE.exists(), (
+            f"src/pragma_encoder/training/train.py not found at {_TRAIN_MODULE}. "
+            "The canonical training entrypoint must be the installed wheel module. "
+            "See: pragma_encoder.training.train (console script: pragma-encoder-train)."
+        )
+
+    def test_train_module_does_not_import_kfp_at_module_level(self) -> None:
+        """src/pragma_encoder/training/train.py must not have top-level kfp imports.
+
+        This module runs inside training pods (as pragma-encoder-train or via torchrun
+        -m pragma_encoder.training.train). kfp must not be required at training time.
+        """
+        if not _TRAIN_MODULE.exists():
+            pytest.skip("src/pragma_encoder/training/train.py does not exist yet.")
+        text = _TRAIN_MODULE.read_text()
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or not stripped:
+                continue
+            if not line.startswith(" ") and not line.startswith("\t"):
+                if stripped.startswith("import kfp") or stripped.startswith("from kfp"):
+                    pytest.fail(
+                        f"src/pragma_encoder/training/train.py must not import kfp at module level. "
+                        f"Found: {line!r}. "
+                        "kfp belongs only in the workbench compile environment."
+                    )
+
     def test_train_script_does_not_import_kfp_at_module_level(self) -> None:
         """scripts/train_pragma.py must not have top-level kfp imports.
 
-        The training script runs inside training pods. kfp must not be required.
+        The compatibility wrapper delegates to pragma_encoder.training.train.
+        It must not introduce any kfp imports.
         """
         text = _TRAIN_SCRIPT.read_text()
         for line in text.splitlines():
@@ -502,18 +539,33 @@ class TestKfpKubernetesBoundary:
                         "kfp belongs only in the workbench compile environment."
                     )
 
-    def test_train_script_references_resolve_resume_checkpoint(self) -> None:
-        """scripts/train_pragma.py must call resolve_resume_checkpoint.
+    def test_train_module_references_resolve_resume_checkpoint(self) -> None:
+        """src/pragma_encoder/training/train.py must call resolve_resume_checkpoint.
 
-        This confirms the TD-006 fix is integrated: all ranks download the
-        checkpoint from S3 independently (not just rank 0).
+        This confirms the TD-006 fix is integrated in the canonical training module:
+        all ranks download the checkpoint from S3 independently (not just rank 0).
         Without this, workers start from global_step=0 and model states diverge.
         """
-        text = _TRAIN_SCRIPT.read_text()
+        if not _TRAIN_MODULE.exists():
+            pytest.skip("src/pragma_encoder/training/train.py does not exist yet.")
+        text = _TRAIN_MODULE.read_text()
         assert "resolve_resume_checkpoint" in text, (
-            "scripts/train_pragma.py must call resolve_resume_checkpoint() "
+            "src/pragma_encoder/training/train.py must call resolve_resume_checkpoint() "
             "from src/pragma_encoder/training/checkpoints.py. "
             "The TD-006 fix requires ALL ranks to independently download the checkpoint. "
             "Until this is integrated, Level 5 (S3 resume smoke) cannot pass. "
             "See tests/openshift/test_05_s3_checkpoint_resume.py."
+        )
+
+    def test_train_script_references_resolve_resume_checkpoint(self) -> None:
+        """scripts/train_pragma.py (compatibility wrapper) must delegate to train.py.
+
+        The wrapper must import from pragma_encoder.training.train so that the
+        resolve_resume_checkpoint behaviour is preserved via the module.
+        """
+        text = _TRAIN_SCRIPT.read_text()
+        assert "pragma_encoder.training.train" in text, (
+            "scripts/train_pragma.py must import from pragma_encoder.training.train. "
+            "The file is now a compatibility wrapper — actual logic lives in train.py. "
+            "See: src/pragma_encoder/training/train.py."
         )

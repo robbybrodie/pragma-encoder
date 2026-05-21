@@ -319,3 +319,75 @@ pod used the wheel-based training image.
 - Prior fix (same pattern): `tests/openshift/test_05_s3_checkpoint_resume.py` (commit 787e55d)
 - Image wheel refactor: `openshift/training/Dockerfile.training` (commit d15a249)
 - Test: `tests/openshift/test_03_pipeline_smoke_run.py` (xfail — Level 3 cluster smoke)
+
+---
+
+## TD-008: Training entrypoint depends on repo-copied scripts/train_pragma.py
+
+**Date:** 2026-05-21
+**Severity:** Low (operational; runtime correctness not affected)
+**Status:** Resolved — 2026-05-21
+
+### Description
+
+`scripts/train_pragma.py` was the sole training entrypoint: the KFP smoke pipeline,
+the PyTorchJob manifest, and the Level 5 S3 resume manifest all located and executed
+it by searching filesystem paths at runtime. The file contained a `sys.path.insert`
+to add the repo root to `sys.path`, making it incompatible with wheel-only images.
+
+### Resolution applied (2026-05-21)
+
+**`src/pragma_encoder/training/train.py`** — new canonical training module:
+- Contains all training logic from the former `scripts/train_pragma.py`
+- `sys.path.insert` removed (wheel-installed — no source tree needed)
+- `parse_args(argv=None)` — accepts argv list for programmatic invocation
+- `main(argv: list[str] | None = None) -> int` — returns 0 on success
+- `if __name__ == "__main__": raise SystemExit(main())`
+
+**`pyproject.toml`** — new `[project.scripts]` section:
+```
+pragma-encoder-train = "pragma_encoder.training.train:main"
+```
+The wheel now installs `pragma-encoder-train` into PATH.
+
+**`scripts/train_pragma.py`** — reduced to a thin compatibility wrapper:
+```python
+from pragma_encoder.training.train import main
+raise SystemExit(main())
+```
+
+**`openshift/training/Dockerfile.training`** — updated:
+- Comment updated: scripts/ is now compatibility-only
+- New RUN step verifies `pragma-encoder-train --help` at build time
+
+**`pipeline/pragma_smoke_pipeline.py`** — updated:
+- Removed `_script_search_dirs` loop and `train_script` path search
+- Training now invoked as: `[sys.executable, "-m", "pragma_encoder.training.train", ...]`
+
+**`openshift/training/pytorchjob-pragma-s.yaml`** — updated:
+- Main container image changed from `pragma-encoder-workbench` to `pragma-encoder-training`
+- Training command changed from `python scripts/train_pragma.py` to `python -m pragma_encoder.training.train`
+- Init container: git clone step removed (code is now baked into training image)
+
+**`tests/openshift/test_05_s3_checkpoint_resume.py`** — updated:
+- `_render_s3_resume_manifest`: shell loop searching for `scripts/train_pragma.py` removed
+- torchrun now invokes `-m pragma_encoder.training.train`
+
+**Tests updated:**
+- `tests/test_image_contract.py` — `TestKfpKubernetesBoundary`: added `_TRAIN_MODULE` path,
+  new tests for `train.py` kfp boundary and `resolve_resume_checkpoint` presence;
+  `test_train_script_references_resolve_resume_checkpoint` now checks wrapper imports `train.py`
+- `tests/test_s3_manifest_render.py` — `test_train_pragma_has_resolve_resume_checkpoint`
+  now checks `train.py` not `scripts/train_pragma.py`
+- `tests/test_smoke_pipeline.py` — `test_component_source_references_train_pragma_max_steps`
+  now checks for `pragma_encoder.training.train`; compiled YAML test updated
+- `tests/test_packaging.py` — new `TestConsoleScript` class; new static/artifact checks
+  for the console script entry point
+
+### References
+- Code: `src/pragma_encoder/training/train.py` (new — TD-008 fix implementation)
+- Code: `scripts/train_pragma.py` (compatibility wrapper)
+- Code: `pyproject.toml` — `[project.scripts]`
+- Code: `openshift/training/Dockerfile.training`
+- Code: `openshift/training/pytorchjob-pragma-s.yaml`
+- Tests: `tests/test_packaging.py` — `TestConsoleScript`

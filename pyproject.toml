@@ -31,6 +31,9 @@ dependencies = [
     "scikit-learn>=1.3.0",
 ]
 
+[project.scripts]
+pragma-encoder-train = "pragma_encoder.training.train:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 exclude = ["tests*"]

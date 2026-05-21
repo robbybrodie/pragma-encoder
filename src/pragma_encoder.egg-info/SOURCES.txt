@@ -6,6 +6,7 @@ src/pragma_encoder/__init__.py
 src/pragma_encoder.egg-info/PKG-INFO
 src/pragma_encoder.egg-info/SOURCES.txt
 src/pragma_encoder.egg-info/dependency_links.txt
+src/pragma_encoder.egg-info/entry_points.txt
 src/pragma_encoder.egg-info/requires.txt
 src/pragma_encoder.egg-info/top_level.txt
 src/pragma_encoder/adaptation/__init__.py
@@ -51,6 +52,7 @@ src/pragma_encoder/training/checkpoints.py
 src/pragma_encoder/training/objective.py
 src/pragma_encoder/training/packing.py
 src/pragma_encoder/training/readiness.py
+src/pragma_encoder/training/train.py
 src/pragma_encoder/workbench/__init__.py
 src/pragma_encoder/workbench/_api.py
 src/pragma_encoder/workbench/_decorators.py
@@ -74,6 +76,7 @@ tests/test_lora.py
 tests/test_masking.py
 tests/test_mlm_head.py
 tests/test_model.py
+tests/test_openshift_ai_fixtures.py
 tests/test_packaging.py
 tests/test_pipeline_components.py
 tests/test_pragma_run.py
