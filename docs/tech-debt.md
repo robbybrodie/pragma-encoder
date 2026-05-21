@@ -391,3 +391,69 @@ raise SystemExit(main())
 - Code: `openshift/training/Dockerfile.training`
 - Code: `openshift/training/pytorchjob-pragma-s.yaml`
 - Tests: `tests/test_packaging.py` — `TestConsoleScript`
+
+---
+
+## TD-009: pragma_encoder.workbench lives in the core wheel
+
+**Date:** 2026-05-21
+**Severity:** Low (already isolated; training image unaffected; workbench is optional extras only)
+**Status:** Accepted for current release — boundary enforced by tests and docstring labelling
+
+### Description
+
+`pragma_encoder.workbench` is a **platform-aware** subpackage. It:
+
+- Reads Kubernetes service account tokens from `/var/run/secrets/kubernetes.io/serviceaccount/token`
+- Constructs DSPA/KFP endpoint URLs from Kubernetes namespace information
+- Wraps `kfp.Client` for pipeline upload and run submission to OpenShift AI DSPA
+- Guards `kfp-kubernetes` as an optional lazy import for Kubernetes-native pipeline features
+
+It lives inside `src/pragma_encoder/workbench/` — within the core wheel distribution.
+This is architecturally impure: a platform-aware subpackage in an otherwise platform-neutral wheel.
+
+### Why it is currently acceptable
+
+The isolation is already strong:
+
+1. `import pragma_encoder` does NOT import workbench. The top-level `__init__.py` contains no
+   import from `pragma_encoder.workbench`. No training-image code path triggers workbench.
+
+2. `kfp` and `kfp-kubernetes` are `[workbench]` optional extras in `pyproject.toml`.
+   They are not installed in the training image or in CI without `[dev,workbench]` extras.
+
+3. `pragma_encoder.workbench.__init__` is explicitly annotated as a platform-aware optional
+   subpackage, with a reference to TD-009.
+
+4. `tests/test_platform_neutral_wheel.py` enforces the boundary mechanically:
+   - No kfp import statements in non-workbench core modules
+   - No Kubernetes pod paths in non-workbench modules
+   - No OpenShift CRD resource names in core source
+   - Top-level init has no workbench import statements
+
+### Resolution
+
+Move `pragma_encoder.workbench` to a separate distribution package:
+
+Option A (preferred):
+  Package: `pragma-encoder-openshift-ai` or `pragma-encoder-platform`
+  Module:  `pragma_encoder_platform.workbench` or `pragma_encoder_openshift_ai`
+  Install: `pip install 'pragma-encoder-openshift-ai'` (depends on `pragma-encoder[workbench]`)
+
+Option B:
+  Keep workbench in the wheel under a clearly named namespace:
+  `pragma_encoder.platform.openshift_ai`
+  (rename from `pragma_encoder.workbench`)
+
+Prerequisites for resolution:
+- ADR superseding ADR 003 / ADR 004 documenting the new package boundary
+- Update workbench image requirements.txt import paths
+- Update any external callers of `from pragma_encoder.workbench import ...`
+- Ensure `pragma-encoder-train` console script still works (it does — training is not workbench)
+
+### References
+- Code: `src/pragma_encoder/workbench/` — the platform-aware subpackage
+- Tests: `tests/test_platform_neutral_wheel.py` — boundary enforcement
+- Docs: `docs/openshift-ai-3.3-alignment.md` — Platform Neutrality section
+- ADR 003: `docs/decisions/003-workbench-training-api.md`
+- ADR 004: `docs/decisions/004-workbench-decorated-pipelines.md`

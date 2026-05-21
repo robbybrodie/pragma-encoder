@@ -611,6 +611,74 @@ When TrainJob reaches GA in a future RHOAI release:
 
 ---
 
+## Platform Neutrality
+
+### Core wheel is platform-neutral
+
+The `pragma_encoder` wheel is platform-neutral. All subpackages except
+`pragma_encoder.workbench` contain no platform-specific code:
+
+| Subpackage | Platform-neutral? | Notes |
+|---|---|---|
+| `pragma_encoder.tokenizer` | Yes | Pure Python + numpy |
+| `pragma_encoder.encoders` | Yes | Pure PyTorch |
+| `pragma_encoder.masking` | Yes | Pure PyTorch |
+| `pragma_encoder.model` | Yes | Pure PyTorch |
+| `pragma_encoder.adaptation` | Yes | PyTorch + PEFT |
+| `pragma_encoder.training` | Yes | PyTorch + boto3 (S3 is platform-neutral storage) |
+| `pragma_encoder.evaluation` | Yes | Pure Python |
+| `pragma_encoder.data` | Yes | Python + pandas |
+| `pragma_encoder.workbench` | **No** | Platform-aware optional layer — see below |
+
+Platform terms in core module docstrings (e.g. "KFTO PyTorchJob" in `train.py`,
+"Kubernetes Secret" in `checkpoints.py`) are **explanatory context only**. They
+describe the deployment environment; they do not create platform dependencies.
+
+### `pragma_encoder.workbench` is the approved platform-aware exception
+
+`pragma_encoder.workbench` reads Kubernetes SA tokens, constructs DSPA endpoint
+URLs from namespace information, and wraps `kfp.Client` for pipeline submission.
+It is platform-aware by design — this is expected and documented.
+
+The isolation is enforced mechanically:
+
+1. **`import pragma_encoder` does not import workbench.** The top-level
+   `__init__.py` contains no import from `pragma_encoder.workbench`.
+
+2. **`kfp` and `kfp-kubernetes` are `[workbench]` optional extras** in
+   `pyproject.toml`. They are not installed in the training image or in
+   CI without workbench extras.
+
+3. **`pragma_encoder.workbench.__init__` is annotated** as a
+   "platform-aware optional subpackage" with a TD-009 reference.
+
+4. **`tests/test_platform_neutral_wheel.py` enforces the boundary** mechanically:
+   - No kfp import statements in non-workbench core modules
+   - No Kubernetes pod paths (`/var/run/secrets/kubernetes.io/`) outside workbench
+   - No OpenShift CRD resource names in core source (ArgoCD, InferenceService, etc.)
+   - Top-level `__init__.py` has no workbench import statements
+
+### Module classification
+
+| Module | Purpose | Platform-neutral? |
+|---|---|---|
+| `pragma_encoder.training.train` | Training entrypoint + DDP loop | Yes |
+| `pragma_encoder.training.checkpoints` | Checkpoint semantics + storage adapters | Yes |
+| `pragma_encoder.model` | PRAGMA architecture | Yes |
+| `pragma_encoder.tokenizer` | Key-value-time tokenisation | Yes |
+| `pragma_encoder.encoders` | Three-encoder architecture | Yes |
+| `pragma_encoder.masking` | Three-strategy MEM masking | Yes |
+| `pragma_encoder.workbench._submit` | DSPA/KFP endpoint + auth | No — K8s paths, kfp.Client |
+| `pragma_encoder.workbench._api` | Cluster/local mode dispatch | Partial — checks KUBERNETES_SERVICE_HOST |
+| `pragma_encoder.workbench._run` | PragmaRun result object | Yes — pure Python |
+| `pragma_encoder.workbench._decorators` | Pipeline authoring DSL | Mostly — platform refs in docstrings only |
+| `pragma_encoder.workbench._intent` | Intent value objects | Yes — pure Python |
+
+TD-009 in `docs/tech-debt.md` documents the eventual goal of moving
+`pragma_encoder.workbench` to a separate distribution package.
+
+---
+
 ## References
 
 - [RHOAI 3.3 documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.3/)
@@ -622,3 +690,6 @@ When TrainJob reaches GA in a future RHOAI release:
 - Image contract: `docs/openshift-image-contract.md`
 - Tests overview: `tests/openshift/README.md`
 - Fixture examples: `tests/openshift/fixtures/README.md`
+- Platform boundary tests: `tests/test_platform_neutral_wheel.py`
+- Storage adapter boundary tests: `tests/test_checkpoint_resume.py` — `TestPlatformNameBoundary`
+- Tech debt register: `docs/tech-debt.md` — TD-009

@@ -124,3 +124,6 @@ ignore = ["N806", "N812"]
 # The image contract tests have assertion messages that include the full
 # src/pragma_encoder/training/checkpoints.py path — these cannot be shortened.
 "tests/test_image_contract.py" = ["E501"]
+# The platform-neutral wheel tests have assertion messages and comments that
+# describe long module paths and platform boundary rules at necessary length.
+"tests/test_platform_neutral_wheel.py" = ["E501"]

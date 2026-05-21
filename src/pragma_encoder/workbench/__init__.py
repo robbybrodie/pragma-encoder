@@ -1,4 +1,27 @@
-"""PRAGMA workbench API — launch and inspect PRAGMA pretraining from a notebook.
+"""Platform-aware optional subpackage: PRAGMA workbench API.
+
+This subpackage provides KFP pipeline authoring and DSPA submission helpers
+for use inside OpenShift AI Workbench pods. It is **platform-aware by design**:
+
+  - Reads Kubernetes service account tokens from pod-mounted paths
+  - Constructs DSPA/KFP endpoint URLs from namespace information
+  - Wraps kfp.Client for pipeline upload and run submission
+  - Guards kfp-kubernetes as a lazy import for Kubernetes-native pipeline features
+
+This subpackage is NOT part of the platform-neutral core wheel. It is installed
+under the ``[workbench]`` optional extras in pyproject.toml only::
+
+    pip install 'pragma-encoder[workbench]'
+
+Importing the top-level ``pragma_encoder`` package does NOT import this
+subpackage. It must be imported explicitly::
+
+    from pragma_encoder.workbench import train_pragma
+
+TD-009: the eventual goal is to move this subpackage to a separate distribution
+package so the core wheel has zero platform dependencies. Until then it lives
+here and is labelled as a platform-aware optional layer.
+See docs/tech-debt.md — TD-009.
 
 Public surface:
     train_pragma    — launch PRAGMA pretraining; mode="dry_run" for preview,
@@ -11,12 +34,12 @@ Public surface:
     PragmaRunProtocol, PipelineStep, PIPELINE_STEP_NAMES — supporting types
 
     DSPA/KFP v2 submit path (src/workbench/_submit.py):
-    get_dspa_endpoint       — resolve KFP API endpoint URL from env/defaults
+    get_dspa_endpoint         — resolve KFP API endpoint URL from env/defaults
     get_service_account_token — read SA token from pod mount; never printed
-    DSPAConfig              — lightweight endpoint + auth config value object
-    make_kfp_client         — construct kfp.Client (lazy kfp import)
-    upload_pipeline         — upload compiled YAML to DSPA
-    submit_pipeline_run     — create a KFP pipeline run
+    DSPAConfig                — lightweight endpoint + auth config value object
+    make_kfp_client           — construct kfp.Client (lazy kfp import)
+    upload_pipeline           — upload compiled YAML to DSPA
+    submit_pipeline_run       — create a KFP pipeline run
 
 Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 ADR: docs/decisions/003-workbench-training-api.md
