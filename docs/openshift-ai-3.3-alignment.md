@@ -49,14 +49,19 @@ The workbench runs the `pragma-encoder-workbench` custom image (built from
 inspect models, and launch training from the workbench using:
 
 ```python
-from pragma_encoder.workbench import train_pragma
+from tools.openshift_ai.workbench import train_pragma
 ```
+
+The workbench tooling lives in `tools/openshift_ai/workbench/` — it is importable
+when `PYTHONPATH=.` is set (repo root on `sys.path`) but is **not** part of the
+installed `pragma_encoder` wheel.
 
 The workbench is the user's interactive surface. It consumes `pragma_encoder`
 as a library. It does not define the cluster execution layer.
 
 **Owner:** OpenShift AI. The workbench image is built and maintained by this repo.
 `pragma_encoder` provides the Python library installed into the workbench.
+`tools/openshift_ai/workbench/` provides the workbench-facing helper layer.
 
 ---
 
@@ -615,8 +620,8 @@ When TrainJob reaches GA in a future RHOAI release:
 
 ### Core wheel is platform-neutral
 
-The `pragma_encoder` wheel is platform-neutral. All subpackages except
-`pragma_encoder.workbench` contain no platform-specific code:
+The `pragma_encoder` wheel is fully platform-neutral. All subpackages contain
+no platform-specific code (TD-009 resolved — 2026-05-21):
 
 | Subpackage | Platform-neutral? | Notes |
 |---|---|---|
@@ -628,35 +633,36 @@ The `pragma_encoder` wheel is platform-neutral. All subpackages except
 | `pragma_encoder.training` | Yes | PyTorch + boto3 (S3 is platform-neutral storage) |
 | `pragma_encoder.evaluation` | Yes | Pure Python |
 | `pragma_encoder.data` | Yes | Python + pandas |
-| `pragma_encoder.workbench` | **No** | Platform-aware optional layer — see below |
 
 Platform terms in core module docstrings (e.g. "KFTO PyTorchJob" in `train.py`,
 "Kubernetes Secret" in `checkpoints.py`) are **explanatory context only**. They
 describe the deployment environment; they do not create platform dependencies.
 
-### `pragma_encoder.workbench` is the approved platform-aware exception
+### Workbench tooling lives outside the wheel (TD-009 resolved)
 
-`pragma_encoder.workbench` reads Kubernetes SA tokens, constructs DSPA endpoint
+The platform-aware workbench helpers have been moved to `tools/openshift_ai/workbench/`
+— a directory that is **not packaged into the wheel** (`[tool.setuptools.packages.find]
+where = ["src"]` excludes `tools/`). This fully resolves TD-009.
+
+`tools/openshift_ai/workbench/` reads Kubernetes SA tokens, constructs DSPA endpoint
 URLs from namespace information, and wraps `kfp.Client` for pipeline submission.
-It is platform-aware by design — this is expected and documented.
+It is platform-aware by design and is explicitly excluded from the core wheel.
 
-The isolation is enforced mechanically:
+The boundary is enforced mechanically:
 
-1. **`import pragma_encoder` does not import workbench.** The top-level
-   `__init__.py` contains no import from `pragma_encoder.workbench`.
+1. **`import pragma_encoder.workbench` raises `ModuleNotFoundError`** — verified by
+   `tests/test_platform_neutral_wheel.py::TestWorkbenchRemovedFromWheel`.
 
-2. **`kfp` and `kfp-kubernetes` are `[workbench]` optional extras** in
-   `pyproject.toml`. They are not installed in the training image or in
-   CI without workbench extras.
+2. **`kfp` and `kfp-kubernetes` are NOT in `pyproject.toml` dependencies** — neither
+   in `[project.dependencies]` nor in `[project.optional-dependencies]`. They are
+   listed in `openshift/notebook-image/requirements.txt` for the workbench image only.
 
-3. **`pragma_encoder.workbench.__init__` is annotated** as a
-   "platform-aware optional subpackage" with a TD-009 reference.
-
-4. **`tests/test_platform_neutral_wheel.py` enforces the boundary** mechanically:
-   - No kfp import statements in non-workbench core modules
-   - No Kubernetes pod paths (`/var/run/secrets/kubernetes.io/`) outside workbench
+3. **`tests/test_platform_neutral_wheel.py` enforces the full boundary** mechanically:
+   - No kfp import statements in any core modules
+   - No Kubernetes pod paths (`/var/run/secrets/kubernetes.io/`) in core source
    - No OpenShift CRD resource names in core source (ArgoCD, InferenceService, etc.)
-   - Top-level `__init__.py` has no workbench import statements
+   - `import pragma_encoder.workbench` raises `ModuleNotFoundError`
+   - `tools.openshift_ai.workbench` is importable when `PYTHONPATH=.`
 
 ### Module classification
 
@@ -668,14 +674,14 @@ The isolation is enforced mechanically:
 | `pragma_encoder.tokenizer` | Key-value-time tokenisation | Yes |
 | `pragma_encoder.encoders` | Three-encoder architecture | Yes |
 | `pragma_encoder.masking` | Three-strategy MEM masking | Yes |
-| `pragma_encoder.workbench._submit` | DSPA/KFP endpoint + auth | No — K8s paths, kfp.Client |
-| `pragma_encoder.workbench._api` | Cluster/local mode dispatch | Partial — checks KUBERNETES_SERVICE_HOST |
-| `pragma_encoder.workbench._run` | PragmaRun result object | Yes — pure Python |
-| `pragma_encoder.workbench._decorators` | Pipeline authoring DSL | Mostly — platform refs in docstrings only |
-| `pragma_encoder.workbench._intent` | Intent value objects | Yes — pure Python |
+| `tools.openshift_ai.workbench._submit` | DSPA/KFP endpoint + auth | No — K8s paths, kfp.Client |
+| `tools.openshift_ai.workbench._api` | Cluster/local mode dispatch | Partial — checks KUBERNETES_SERVICE_HOST |
+| `tools.openshift_ai.workbench._run` | PragmaRun result object | Yes — pure Python |
+| `tools.openshift_ai.workbench._decorators` | Pipeline authoring DSL | Mostly — platform refs in docstrings only |
+| `tools.openshift_ai.workbench._intent` | Intent value objects | Yes — pure Python |
 
-TD-009 in `docs/tech-debt.md` documents the eventual goal of moving
-`pragma_encoder.workbench` to a separate distribution package.
+TD-009 in `docs/tech-debt.md` is **resolved**. The workbench helpers were moved to
+`tools/openshift_ai/workbench/` and removed from the `pragma_encoder` distribution.
 
 ---
 

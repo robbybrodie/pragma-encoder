@@ -7,14 +7,15 @@ See docs/openshift-image-contract.md for the authoritative contract.
 
 Four categories:
 
-  TestWorkbenchDependencies — pyproject.toml and notebook requirements.txt
-      must declare kfp and kfp-kubernetes in the workbench extras/image only.
+  TestWorkbenchDependencies — pyproject.toml must NOT declare kfp/kfp-kubernetes
+      in optional-deps (TD-009 resolved). notebook requirements.txt must
+      declare kfp and kfp-kubernetes for the workbench image.
 
   TestTrainingImageContract — openshift/training/Dockerfile.training must
       install the built wheel (not an editable src/ install) and must not
       use runtime git clone.
 
-  TestKfpKubernetesGuard — src/workbench/_submit._require_kfp_kubernetes()
+  TestKfpKubernetesGuard — tools/openshift_ai/workbench/_submit._require_kfp_kubernetes()
       must raise a friendly ImportError (with install hint) when
       kfp_kubernetes is absent, and must never be called at module import
       time (only when secret injection is explicitly requested).
@@ -37,7 +38,7 @@ _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _NOTEBOOK_REQUIREMENTS = _REPO_ROOT / "openshift" / "notebook-image" / "requirements.txt"
 _DOCKERFILE_TRAINING = _REPO_ROOT / "openshift" / "training" / "Dockerfile.training"
-_SUBMIT_PY = _REPO_ROOT / "src" / "pragma_encoder" / "workbench" / "_submit.py"
+_SUBMIT_PY = _REPO_ROOT / "tools" / "openshift_ai" / "workbench" / "_submit.py"
 _CHECKPOINTS_PY = _REPO_ROOT / "src" / "pragma_encoder" / "training" / "checkpoints.py"
 _TRAIN_MODULE = _REPO_ROOT / "src" / "pragma_encoder" / "training" / "train.py"
 _TRAIN_SCRIPT = _REPO_ROOT / "scripts" / "train_pragma.py"  # compatibility wrapper
@@ -54,41 +55,49 @@ class TestWorkbenchDependencies:
     Category: image-contract / dependency-declaration
     """
 
-    def test_pyproject_workbench_extras_includes_kfp(self) -> None:
-        """pyproject.toml [project.optional-dependencies].workbench must include kfp>=2."""
-        text = _PYPROJECT.read_text()
-        assert "workbench" in text, "pyproject.toml must have [project.optional-dependencies]"
-        workbench_line = next(
-            (ln for ln in text.splitlines() if ln.strip().startswith("workbench")), None
-        )
-        assert workbench_line is not None, (
-            "pyproject.toml must define workbench extras "
-            "(line starting with 'workbench = ...')"
-        )
-        assert "kfp" in workbench_line, (
-            f"pyproject.toml workbench extras must include kfp. "
-            f"Got: {workbench_line!r}"
-        )
+    def test_pyproject_has_no_workbench_optional_extras(self) -> None:
+        """pyproject.toml must NOT have [project.optional-dependencies].workbench.
 
-    def test_pyproject_workbench_extras_includes_kfp_kubernetes(self) -> None:
-        """pyproject.toml workbench extras must include kfp-kubernetes.
-
-        kfp-kubernetes is needed in the compile/workbench environment for
-        Kubernetes-native pipeline features (secret injection, PVC mounting).
-        It is NOT a core dependency — only in [project.optional-dependencies].workbench.
-        See docs/openshift-image-contract.md.
+        TD-009 resolved: workbench helpers moved to tools/openshift_ai/workbench/
+        and removed from the wheel. kfp and kfp-kubernetes are now exclusively
+        declared in openshift/notebook-image/requirements.txt.
         """
         text = _PYPROJECT.read_text()
         workbench_line = next(
-            (ln for ln in text.splitlines() if ln.strip().startswith("workbench")), None
+            (ln for ln in text.splitlines() if ln.strip().startswith("workbench =")), None
         )
-        assert workbench_line is not None
-        assert "kfp-kubernetes" in workbench_line, (
-            f"pyproject.toml workbench extras must include kfp-kubernetes. "
-            f"Got: {workbench_line!r}. "
-            "kfp-kubernetes belongs in the workbench/compile environment, "
-            "not in core dependencies. See docs/openshift-image-contract.md."
+        assert workbench_line is None, (
+            "pyproject.toml must NOT have workbench optional-dependencies. "
+            "TD-009 resolved: kfp/kfp-kubernetes are declared in "
+            "openshift/notebook-image/requirements.txt only. "
+            f"Found unexpected line: {workbench_line!r}"
         )
+
+    def test_kfp_not_in_pyproject_optional_dependencies(self) -> None:
+        """kfp must NOT appear in pyproject.toml [project.optional-dependencies].
+
+        TD-009 resolved: the workbench extras were removed. kfp is now
+        exclusively declared in openshift/notebook-image/requirements.txt
+        for the workbench image. This test ensures the extras were not
+        accidentally re-added.
+        """
+        text = _PYPROJECT.read_text()
+        in_optional_deps = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("[project.optional-dependencies]"):
+                in_optional_deps = True
+                continue
+            if in_optional_deps and stripped.startswith("["):
+                in_optional_deps = False
+                continue
+            if in_optional_deps and "kfp" in stripped and not stripped.startswith("#"):
+                pytest.fail(
+                    f"kfp must not appear in [project.optional-dependencies]. "
+                    f"Found: {line!r}. "
+                    "kfp is declared in openshift/notebook-image/requirements.txt only "
+                    "(TD-009 resolved)."
+                )
 
     def test_pyproject_core_dependencies_do_not_include_kfp(self) -> None:
         """kfp must NOT appear in [project.dependencies] (core deps).
@@ -279,8 +288,9 @@ class TestTrainingImageContract:
 
 
 class TestKfpKubernetesGuard:
-    """_require_kfp_kubernetes() guard: lazy, friendly, only when enabled.
+    """tools/openshift_ai/workbench/_submit._require_kfp_kubernetes() guard.
 
+    Lazy, friendly, only when enabled.
     Category: image-contract / guard-behaviour
     """
 
@@ -317,7 +327,7 @@ class TestKfpKubernetesGuard:
         # Python's import system raises ImportError when sys.modules[name] is None.
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
 
-        from pragma_encoder.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from tools.openshift_ai.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         with pytest.raises(ImportError):
             _require_kfp_kubernetes("test feature")
@@ -328,7 +338,7 @@ class TestKfpKubernetesGuard:
         """The ImportError message must include the feature name passed to the guard."""
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
 
-        from pragma_encoder.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from tools.openshift_ai.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         with pytest.raises(ImportError) as exc_info:
             _require_kfp_kubernetes("my-special-feature")
@@ -344,7 +354,7 @@ class TestKfpKubernetesGuard:
         """The ImportError message must include a pip install hint."""
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
 
-        from pragma_encoder.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from tools.openshift_ai.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         with pytest.raises(ImportError) as exc_info:
             _require_kfp_kubernetes()
@@ -368,7 +378,7 @@ class TestKfpKubernetesGuard:
         stub.__version__ = "1.2.0"  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", stub)
 
-        from pragma_encoder.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from tools.openshift_ai.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         result = _require_kfp_kubernetes("test feature")
         assert result is stub, (

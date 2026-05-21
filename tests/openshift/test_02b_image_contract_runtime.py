@@ -3,7 +3,7 @@
 Purpose:
   Prove that the two-image contract holds at runtime in the cluster:
     - Workbench image: kfp + kfp-kubernetes importable
-    - Training image: pragma_encoder.model, pragma_encoder.data, pragma_encoder.workbench importable
+    - Training image: pragma_encoder.model, pragma_encoder.data importable
     - Training image: kfp-kubernetes is present (inherited from workbench base)
       but src/pragma_encoder/training/checkpoints.py does NOT require it at import time
     - Training image: no runtime git clone required
@@ -172,12 +172,14 @@ class TestTrainingImageRuntimeContract:
         test_id: str,
         cleanup_labelled_resources: None,
     ) -> None:
-        """Training image must import pragma_encoder.model, src.data, src.workbench at runtime.
+        """Training image must import pragma_encoder.model, pragma_encoder.data at runtime.
 
         Creates a one-off batch/v1 Job that runs:
-          python -c "import pragma_encoder.model; import pragma_encoder.data; import pragma_encoder.workbench; print('OK')"
+          python -c "import pragma_encoder.model; import pragma_encoder.data; print('OK')"
 
         The job must exit 0.
+        Note: pragma_encoder.workbench is NOT checked — it lives in
+        tools/openshift_ai/workbench/ and is not part of the installed wheel.
         """
         image = os.environ.get("PRAGMA_TRAINING_IMAGE", "").strip()
         if not image:
@@ -195,7 +197,6 @@ class TestTrainingImageRuntimeContract:
             import_check=(
                 "import pragma_encoder.model; "
                 "import pragma_encoder.data; "
-                "import pragma_encoder.workbench; "
                 "import pragma_encoder.training.checkpoints; "
                 "print('PRAGMA core imports OK')"
             ),

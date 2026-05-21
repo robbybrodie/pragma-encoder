@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # ── Imports ───────────────────────────────────────────────────────────────────
-from pragma_encoder.workbench import train_pragma, PIPELINE_STEP_NAMES
+from tools.openshift_ai.workbench import train_pragma, PIPELINE_STEP_NAMES
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Obtain a dry-run PragmaRun to inspect
@@ -212,8 +212,8 @@ print()
 print("PIPELINE_STEP_NAMES:", PIPELINE_STEP_NAMES)
 print()
 print("These same names appear in:")
-print("  src/workbench/_run.py        — PragmaRun.show_pipeline()")
-print("  pipeline/components_pragma.py — PIPELINE_STAGE_NAMES")
+print("  tools/openshift_ai/workbench/_run.py — PragmaRun.show_pipeline()")
+print("  pipeline/components_pragma.py        — PIPELINE_STAGE_NAMES")
 print("  pipeline/pragma_pipeline.py  — five pipeline stages")
 print("  openshift/training/          — PyTorchJob manifests")
 print()

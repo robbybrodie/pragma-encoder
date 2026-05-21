@@ -40,9 +40,8 @@ exclude = ["tests*"]
 
 [project.optional-dependencies]
 # kfp is optional: pipeline components and pragma_pipeline.py import it
-# conditionally (_KFP_AVAILABLE guard). Core training and the workbench API
-# work without kfp installed.
-workbench = ["kfp>=2", "kfp-kubernetes>=1.2"]
+# conditionally (_KFP_AVAILABLE guard). Core training works without kfp.
+# Workbench helpers live in tools/openshift_ai/workbench/ (not in the wheel).
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",

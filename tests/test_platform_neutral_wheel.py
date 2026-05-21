@@ -4,24 +4,22 @@ The core ``pragma_encoder`` package must be platform-neutral:
 
 - ``import pragma_encoder`` must not trigger kfp / kfp-kubernetes imports.
 - Core subpackages (training, model, encoders, masking, data, etc.) must not
-  contain kfp import statements — kfp belongs only in the ``[workbench]``
-  optional extras.
-- Non-workbench modules must not hardcode Kubernetes pod paths
+  contain kfp import statements — kfp is an optional dep only for tools/.
+- Core modules must not hardcode Kubernetes pod paths
   (``/var/run/secrets/kubernetes.io/``).
 - OpenShift-specific platform resource CRD names (ArgoCD, InferenceService,
   DataSciencePipelinesApplication, ServingRuntime, HardwareProfile) must not
-  appear in non-workbench core module source.
+  appear in core module source.
 
-``pragma_encoder.workbench`` is the explicitly-labelled platform-aware exception:
+``pragma_encoder.workbench`` has been REMOVED from the core wheel.
+The workbench helpers now live under ``tools/openshift_ai/workbench/``:
 
-- It is installed under ``[workbench]`` optional extras in pyproject.toml.
-- It is NOT imported by ``import pragma_encoder`` (top-level ``__init__.py``
-  does not reference workbench).
-- It is used only inside OpenShift AI Workbench pods or KFP compile environments.
-- Its ``__init__.py`` is annotated as a platform-aware optional subpackage.
+- ``tools/`` is NOT part of the installed wheel (setuptools only discovers src/).
+- Importable only when the repo root is on ``sys.path`` (``PYTHONPATH=.``).
+- ``import pragma_encoder.workbench`` must raise ``ModuleNotFoundError``.
+- ``import tools.openshift_ai.workbench`` succeeds from the repo root.
 
-TD-009: the eventual goal is to move the workbench subpackage to a separate
-distribution so the core wheel has zero platform dependencies.
+TD-009 resolved: workbench moved out of the wheel entirely.
 See docs/tech-debt.md — TD-009.
 """
 
@@ -38,17 +36,15 @@ import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _SRC_DIR = _REPO_ROOT / "src" / "pragma_encoder"
-_WORKBENCH_DIR = _SRC_DIR / "workbench"
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
 
 def _core_py_files() -> list[pathlib.Path]:
-    """Return all .py source files in src/pragma_encoder/ except workbench/."""
-    return [
-        f
-        for f in sorted(_SRC_DIR.rglob("*.py"))
-        if f.parent != _WORKBENCH_DIR
-    ]
+    """Return all .py source files in src/pragma_encoder/.
+
+    Workbench is no longer present in src/ so no exclusion filter is needed.
+    """
+    return sorted(_SRC_DIR.rglob("*.py"))
 
 
 def _has_kfp_import_statement(py_file: pathlib.Path) -> list[str]:
@@ -134,7 +130,7 @@ class TestTopLevelImportIsNeutral:
             pytest.fail(
                 f"import pragma_encoder raised ImportError when kfp is blocked: {exc}. "
                 "The core pragma_encoder package must not import kfp at module level. "
-                "kfp must be imported only inside pragma_encoder.workbench functions."
+                "kfp must be imported only inside tools.openshift_ai.workbench functions."
             )
         assert mod is not None
 
@@ -167,14 +163,14 @@ class TestTopLevelImportIsNeutral:
 
 # ===========================================================================
 # 2. TestCoreModulesNoPlatformCode
-#    Static source scans: platform-specific code must stay in workbench/
+#    Static source scans: platform-specific code must not be in src/
 # ===========================================================================
 
 
 class TestCoreModulesNoPlatformCode:
     """Core module source must not contain platform-specific code.
 
-    Scans all .py files in src/pragma_encoder/ except workbench/ for:
+    Scans all .py files in src/pragma_encoder/ for:
     - kfp import statements (caught by _has_kfp_import_statement)
     - Hardcoded Kubernetes pod paths (/var/run/secrets/kubernetes.io/)
     - OpenShift-specific CRD resource names that have no business in
@@ -182,14 +178,15 @@ class TestCoreModulesNoPlatformCode:
 
     Platform terms that appear only in docstrings/comments (explaining
     deployment context) are acceptable and are not flagged by these tests.
+    Workbench is no longer in src/ so no exclusion is needed.
     """
 
     def test_no_kfp_import_in_core_modules(self) -> None:
-        """No core module (outside workbench/) may contain a kfp import statement.
+        """No core module in src/pragma_encoder/ may contain a kfp import statement.
 
-        kfp imports belong only in pragma_encoder.workbench — the explicitly
-        labelled platform-aware optional subpackage. A kfp import anywhere
-        else would make kfp a de-facto required dependency for the training image.
+        kfp imports belong only in tools.openshift_ai.workbench — which is NOT
+        part of the installed wheel. A kfp import in src/ would make kfp a
+        de-facto required dependency for the training image.
         """
         violations: list[str] = []
         for py_file in _core_py_files():
@@ -199,8 +196,8 @@ class TestCoreModulesNoPlatformCode:
                 violations.append(f"  {rel}: {hit.strip()!r}")
 
         assert not violations, (
-            "These core (non-workbench) modules contain kfp import statements. "
-            "kfp must only be imported inside pragma_encoder.workbench functions, "
+            "These core modules contain kfp import statements. "
+            "kfp must only be imported inside tools.openshift_ai.workbench functions, "
             "never at module level or in training/model/data code:\n"
             + "\n".join(violations)
         )
@@ -210,7 +207,7 @@ class TestCoreModulesNoPlatformCode:
 
         The path /var/run/secrets/kubernetes.io/ is a Kubernetes pod-mount
         path for service account tokens and namespace files. It belongs only
-        in pragma_encoder.workbench._submit (which reads the SA token for
+        in tools.openshift_ai.workbench._submit (which reads the SA token for
         DSPA authentication). Core training and model code must not assume
         they run inside a Kubernetes pod.
         """
@@ -223,8 +220,8 @@ class TestCoreModulesNoPlatformCode:
                 violations.append(str(rel))
 
         assert not violations, (
-            f"These core (non-workbench) modules contain the Kubernetes pod path "
-            f"'{k8s_path}'. This path belongs only in pragma_encoder.workbench. "
+            f"These core modules contain the Kubernetes pod path "
+            f"'{k8s_path}'. This path belongs only in tools.openshift_ai.workbench. "
             f"Core training code must not assume it runs inside a Kubernetes pod:\n"
             + "\n".join(f"  {v}" for v in violations)
         )
@@ -293,67 +290,103 @@ class TestCoreModulesNoPlatformCode:
 
 
 # ===========================================================================
-# 3. TestWorkbenchIsLabeledPlatformAware
-#    Confirm the workbench subpackage is properly isolated and documented
+# 3. TestWorkbenchRemovedFromWheel
+#    Confirm pragma_encoder.workbench is gone; tools.openshift_ai.workbench works
 # ===========================================================================
 
 
-class TestWorkbenchIsLabeledPlatformAware:
-    """Verify the workbench subpackage is clearly labelled and isolated.
+class TestWorkbenchRemovedFromWheel:
+    """Verify pragma_encoder.workbench has been removed from the installed wheel.
 
-    The workbench subpackage is the approved platform-aware exception in the
-    pragma_encoder distribution. These tests confirm the isolation is
-    mechanical (not just convention):
-    - The __init__.py docstring explicitly calls it out as platform-aware
-    - kfp is in [workbench] optional extras, not core [project.dependencies]
-    - The top-level __init__.py does not import workbench
+    TD-009 resolved: workbench helpers live in tools/openshift_ai/workbench/
+    which is NOT packaged into the wheel (setuptools only finds src/).
+
+    Tests confirm:
+    - import pragma_encoder.workbench raises ModuleNotFoundError
+    - pragma_encoder has no .workbench attribute
+    - The built wheel zip (if present in dist/) contains no workbench directory
+    - tools.openshift_ai.workbench is importable from the repo root
+    - kfp is not in core [project.dependencies]
     """
 
-    def test_workbench_init_docstring_labels_it_platform_aware(self) -> None:
-        """pragma_encoder.workbench.__init__.py must label itself platform-aware.
+    def test_import_pragma_encoder_workbench_raises_module_not_found(self) -> None:
+        """import pragma_encoder.workbench must raise ModuleNotFoundError.
 
-        The docstring must contain the phrase 'platform-aware' so that:
-        - Readers scanning the package understand its special status
-        - The TestWorkbenchIsLabeledPlatformAware test can verify the label
-          mechanically (this very test)
+        The workbench subpackage has been moved to tools/openshift_ai/workbench/
+        and is no longer part of the installed pragma_encoder distribution.
+        Any code that still uses 'import pragma_encoder.workbench' is broken
+        and must be updated to 'import tools.openshift_ai.workbench'.
         """
-        import pragma_encoder.workbench as wb  # noqa: PLC0415
+        with pytest.raises(ModuleNotFoundError):
+            import pragma_encoder.workbench  # noqa: F401,PLC0415
 
-        docstring = wb.__doc__ or ""
-        assert "platform-aware" in docstring.lower(), (
-            "pragma_encoder.workbench.__init__.py must contain 'platform-aware' "
-            "in its module docstring. This labels the subpackage as the approved "
-            "platform-aware exception in the otherwise platform-neutral core wheel. "
-            f"Current docstring (first 200 chars): {docstring[:200]!r}"
+    def test_pragma_encoder_has_no_workbench_attribute(self) -> None:
+        """pragma_encoder must not expose a .workbench attribute.
+
+        After the wheel is installed, pragma_encoder.workbench must not exist
+        as a namespace package or attribute. This confirms the removal is clean.
+        """
+        import pragma_encoder  # noqa: PLC0415
+
+        assert not hasattr(pragma_encoder, "workbench"), (
+            "pragma_encoder must not have a 'workbench' attribute. "
+            "The workbench subpackage has been moved to tools/openshift_ai/workbench/ "
+            "and is no longer part of the installed distribution."
         )
 
-    def test_workbench_init_docstring_references_td009(self) -> None:
-        """pragma_encoder.workbench.__init__.py must reference TD-009.
+    def test_wheel_does_not_contain_workbench_directory(self) -> None:
+        """Built wheel in dist/ must not contain a pragma_encoder/workbench/ directory.
 
-        TD-009 is the tech debt entry documenting the eventual goal of moving
-        workbench helpers to a separate distribution package. The reference in
-        the module docstring links the code to the decision record.
+        Scans the most recent .whl file in dist/ (if present) and asserts that
+        no path within it starts with pragma_encoder/workbench/. If no wheel
+        exists the test is skipped (build first with 'pip wheel .').
         """
-        import pragma_encoder.workbench as wb  # noqa: PLC0415
+        import zipfile  # noqa: PLC0415
 
-        docstring = wb.__doc__ or ""
-        assert "TD-009" in docstring, (
-            "pragma_encoder.workbench.__init__.py must reference 'TD-009' in its "
-            "module docstring. TD-009 is the tech debt entry documenting the "
-            "eventual separation of workbench helpers from the core wheel."
+        dist_dir = _REPO_ROOT / "dist"
+        wheels = sorted(dist_dir.glob("pragma_encoder-*.whl")) if dist_dir.exists() else []
+        if not wheels:
+            pytest.skip("No wheel found in dist/ — build with 'pip wheel .' first")
+
+        latest_wheel = wheels[-1]
+        with zipfile.ZipFile(latest_wheel) as zf:
+            workbench_entries = [
+                name for name in zf.namelist()
+                if "pragma_encoder/workbench" in name
+            ]
+
+        assert not workbench_entries, (
+            f"Wheel {latest_wheel.name} contains workbench entries: {workbench_entries}. "
+            "pragma_encoder/workbench must not be packaged into the wheel. "
+            "Run 'pip wheel .' again after removing src/pragma_encoder/workbench/."
         )
 
-    def test_kfp_is_in_optional_workbench_extras_not_core_deps(self) -> None:
-        """kfp must be in [workbench] optional extras, not in core [project.dependencies].
+    def test_tools_openshift_ai_workbench_is_importable(self) -> None:
+        """tools.openshift_ai.workbench must be importable from the repo root.
+
+        When PYTHONPATH=. (the standard test invocation), tools/ is on sys.path
+        and tools.openshift_ai.workbench must import successfully. This confirms
+        the workbench code is still available — just not from the core wheel.
+        """
+        try:
+            import tools.openshift_ai.workbench as wb  # noqa: PLC0415
+        except ImportError as exc:
+            pytest.fail(
+                f"import tools.openshift_ai.workbench raised ImportError: {exc}. "
+                "The workbench helpers must be importable from the repo root "
+                "when PYTHONPATH=. is set. Check that tools/__init__.py and "
+                "tools/openshift_ai/__init__.py exist."
+            )
+        assert wb is not None
+
+    def test_kfp_is_not_in_core_wheel_dependencies(self) -> None:
+        """kfp must not appear in core [project.dependencies] in pyproject.toml.
 
         Core [project.dependencies] are installed in all environments including
-        the training image. kfp must never be a core dependency — only an
-        optional extra for workbench/compile environments.
+        the training image. kfp must never be a core dependency — it may only
+        appear in optional extras or in tools/ requirements.
         """
         text = _PYPROJECT.read_text()
-
-        # Split into [project.dependencies] block and [project.optional-dependencies] block
-        # Simple heuristic: find the core deps block before optional-dependencies
         lines = text.splitlines()
 
         in_core_deps = False
@@ -374,77 +407,6 @@ class TestWorkbenchIsLabeledPlatformAware:
         for dep_line in core_dep_lines:
             assert "kfp" not in dep_line, (
                 f"kfp appears in core [project.dependencies]: {dep_line!r}. "
-                "kfp must be in [project.optional-dependencies].workbench only. "
+                "kfp must not be a core wheel dependency. "
                 "Core dependencies are installed in the training image where kfp is absent."
-            )
-
-    def test_toplevel_pragma_encoder_does_not_import_workbench(self) -> None:
-        """The top-level pragma_encoder/__init__.py must not import workbench.
-
-        If the top-level init imported workbench, then every ``import pragma_encoder``
-        (including in the training image) would trigger kfp-dependent code paths.
-        The workbench subpackage must be imported explicitly by consumers.
-
-        Docstring mentions of 'workbench' are acceptable (they describe the
-        package structure); only actual import statements are checked here.
-        """
-        init_path = _SRC_DIR / "__init__.py"
-        text = init_path.read_text()
-        assert "from pragma_encoder.workbench import" not in text, (
-            "pragma_encoder/__init__.py must not contain "
-            "'from pragma_encoder.workbench import ...'. "
-            "The workbench subpackage must be imported explicitly by consumers."
-        )
-        assert "import pragma_encoder.workbench" not in text, (
-            "pragma_encoder/__init__.py must not contain "
-            "'import pragma_encoder.workbench'. "
-            "The workbench subpackage must be imported explicitly by consumers."
-        )
-
-    def test_workbench_subpackage_is_importable(self) -> None:
-        """pragma_encoder.workbench must be importable (basic smoke check).
-
-        Confirms the subpackage is installed and its public surface is intact.
-        kfp is imported lazily (inside make_kfp_client / compile), so this
-        import succeeds even without kfp installed.
-        """
-        try:
-            import pragma_encoder.workbench as wb  # noqa: PLC0415
-        except ImportError as exc:
-            pytest.fail(
-                f"import pragma_encoder.workbench raised ImportError: {exc}. "
-                "The workbench subpackage must be importable without kfp installed "
-                "(kfp is imported lazily inside functions, not at module level)."
-            )
-        assert wb is not None
-
-    def test_workbench_kfp_import_is_lazy(self) -> None:
-        """kfp must not be imported at module load time in pragma_encoder.workbench.
-
-        Importing pragma_encoder.workbench must succeed even when kfp is absent.
-        All kfp usage must be inside function bodies (lazy imports), protected
-        by try/except ImportError.
-        """
-        import importlib.util  # noqa: PLC0415
-        import sys  # noqa: PLC0415
-
-        import pytest  # noqa: PLC0415
-
-        # We can only run this check if kfp is NOT currently importable.
-        # If kfp is installed (e.g. in workbench extras CI), skip this variant.
-        kfp_spec = importlib.util.find_spec("kfp")
-        if kfp_spec is not None:
-            pytest.skip("kfp is installed — lazy-import test is only meaningful without kfp")
-
-        # kfp is not installed — importing workbench must still succeed.
-        for key in list(sys.modules):
-            if key.startswith("pragma_encoder.workbench"):
-                pass  # don't remove — we just want to check it was loadable
-
-        try:
-            import pragma_encoder.workbench  # noqa: F401,PLC0415
-        except ImportError as exc:
-            pytest.fail(
-                f"import pragma_encoder.workbench raised ImportError without kfp installed: "
-                f"{exc}. kfp must be imported lazily inside functions, not at module level."
             )

@@ -42,7 +42,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Module under test (will ImportError until implementation is written)
 # ---------------------------------------------------------------------------
-from pragma_encoder.workbench._submit import (
+from tools.openshift_ai.workbench._submit import (
     DSPAConfig,
     get_dspa_endpoint,
     get_run_status,
@@ -621,7 +621,7 @@ class TestSubmitNoSideEffects:
     def test_submit_module_importable_without_kfp(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """pragma_encoder.workbench._submit is importable even when kfp is absent.
+        """tools.openshift_ai.workbench._submit is importable even when kfp is absent.
 
         kfp is imported lazily inside make_kfp_client(), not at module level.
         This allows the submit module to load in environments without kfp.
@@ -633,12 +633,12 @@ class TestSubmitNoSideEffects:
         # We reload using importlib to force a fresh import.
         try:
             import importlib as _il
-            submit_mod = _il.import_module("pragma_encoder.workbench._submit")
+            submit_mod = _il.import_module("tools.openshift_ai.workbench._submit")
             # The module object itself should be available.
             assert submit_mod is not None
         except ImportError as exc:
             pytest.fail(
-                f"pragma_encoder.workbench._submit raised ImportError without kfp installed: {exc}\n"
+                f"tools.openshift_ai.workbench._submit raised ImportError without kfp installed: {exc}\n"
                 "kfp must be imported lazily inside make_kfp_client(), not at module level."
             )
 
@@ -649,10 +649,10 @@ class TestSubmitNoSideEffects:
 
         Regression guard: PragmaPipeline.compile() only uses kfp.compiler
         and pipeline.pragma_pipeline. It must not import or call anything
-        from pragma_encoder.workbench._submit.
+        from tools.openshift_ai.workbench._submit.
         """
-        from pragma_encoder.workbench._decorators import pragma_pipeline
-        from pragma_encoder.workbench._intent import dataset, train
+        from tools.openshift_ai.workbench._decorators import pragma_pipeline
+        from tools.openshift_ai.workbench._intent import dataset, train
 
         @pragma_pipeline(name="test-no-cluster")
         def _p():
@@ -662,7 +662,7 @@ class TestSubmitNoSideEffects:
         # Patch _submit to raise if called — it must NOT be called by compile().
         import importlib as _importlib
 
-        import pragma_encoder.workbench._submit as submit_mod
+        import tools.openshift_ai.workbench._submit as submit_mod
         kfp_available = _importlib.util.find_spec("kfp") is not None
         with mock.patch.object(
             submit_mod, "make_kfp_client", side_effect=AssertionError("submit called!")

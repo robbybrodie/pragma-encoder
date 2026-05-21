@@ -23,7 +23,7 @@ import pytest
 
 from pragma_encoder.data.dataset_manifest import DatasetManifest, DatasetShard
 from pragma_encoder.model.config import PRAGMAConfig
-from pragma_encoder.workbench._run import (
+from tools.openshift_ai.workbench._run import (
     PIPELINE_STEP_NAMES,
     PipelineStep,
     PragmaRun,

@@ -19,6 +19,9 @@ Top-level package structure:
     pragma_encoder.adaptation    — LoRA fine-tuning and linear probes (Section 3.1)
     pragma_encoder.training      — Training objective and data utilities (Section 2.3.5)
     pragma_encoder.evaluation    — Downstream task evaluation (Section 3)
-    pragma_encoder.workbench     — Workbench training API and pipeline utilities
     pragma_encoder.data          — Dataset adapters and manifest (Section 2.4)
+
+Workbench / OpenShift AI tooling is NOT part of this package.
+It lives in tools/openshift_ai/workbench/ in the repository root
+(importable as tools.openshift_ai.workbench when PYTHONPATH=. is set).
 """

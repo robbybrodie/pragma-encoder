@@ -160,10 +160,6 @@ _SMOKE_SHELL = textwrap.dedent("""\
         echo "ERROR: Core pragma_encoder imports failed. Wheel may not be installed."
         exit 1
     }
-    python -c "import pragma_encoder.workbench" || {
-        echo "ERROR: import pragma_encoder.workbench failed. Wheel may be stale."
-        exit 1
-    }
     python -c "import pragma_encoder.training.checkpoints" || {
         echo "ERROR: import pragma_encoder.training.checkpoints failed."
         exit 1

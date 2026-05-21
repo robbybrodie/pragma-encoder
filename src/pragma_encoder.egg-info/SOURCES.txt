@@ -53,12 +53,6 @@ src/pragma_encoder/training/objective.py
 src/pragma_encoder/training/packing.py
 src/pragma_encoder/training/readiness.py
 src/pragma_encoder/training/train.py
-src/pragma_encoder/workbench/__init__.py
-src/pragma_encoder/workbench/_api.py
-src/pragma_encoder/workbench/_decorators.py
-src/pragma_encoder/workbench/_intent.py
-src/pragma_encoder/workbench/_run.py
-src/pragma_encoder/workbench/_submit.py
 tests/test_assembled_batch.py
 tests/test_assembler.py
 tests/test_checkpoint_resume.py
@@ -79,6 +73,7 @@ tests/test_model.py
 tests/test_openshift_ai_fixtures.py
 tests/test_packaging.py
 tests/test_pipeline_components.py
+tests/test_platform_neutral_wheel.py
 tests/test_pragma_run.py
 tests/test_probe.py
 tests/test_profile_state_encoder.py

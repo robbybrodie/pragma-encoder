@@ -265,7 +265,7 @@ class TestPipelineStageNames:
         stage names so show_pipeline() and the pipeline run stay in sync.
         """
         _require_importable()
-        from pragma_encoder.workbench._run import PIPELINE_STEP_NAMES
+        from tools.openshift_ai.workbench._run import PIPELINE_STEP_NAMES
         assert tuple(_comp.PIPELINE_STAGE_NAMES) == PIPELINE_STEP_NAMES, (
             f"PIPELINE_STAGE_NAMES {tuple(_comp.PIPELINE_STAGE_NAMES)} "
             f"must match PIPELINE_STEP_NAMES {PIPELINE_STEP_NAMES}"
@@ -1126,7 +1126,7 @@ class TestNoCircularDependency:
         to module level — violating the lazy-import boundary.
         """
         pipeline_mods_before = {k for k in sys.modules if k.startswith("pipeline")}
-        importlib.import_module("pragma_encoder.workbench._decorators")
+        importlib.import_module("tools.openshift_ai.workbench._decorators")
         pipeline_mods_after = {k for k in sys.modules if k.startswith("pipeline")}
         new_pipeline_mods = pipeline_mods_after - pipeline_mods_before
         assert not new_pipeline_mods, (
