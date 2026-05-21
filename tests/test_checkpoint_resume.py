@@ -25,10 +25,8 @@ TD-006: docs/tech-debt.md — multi-node checkpoint resume with per-pod emptyDir
 
 from __future__ import annotations
 
-import os
 import pathlib
 from datetime import datetime, timezone
-from typing import Optional
 from unittest import mock
 
 import pytest
@@ -48,7 +46,6 @@ from src.training.checkpoints import (  # noqa: E402
     select_latest_checkpoint_key,
     upload_checkpoint_if_rank0,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -652,7 +649,7 @@ class TestLocalSingleNodeResume:
         (tmp_path / "checkpoint_epoch0001.pt").write_bytes(b"ckpt1")
 
         with mock.patch("src.training.checkpoints.parse_s3_config_from_env",
-                        return_value=None) as mock_parse:
+                        return_value=None):
             with mock.patch("src.training.checkpoints._make_s3_client") as mock_make_client:
                 resolve_resume_checkpoint(
                     output_dir=tmp_path,

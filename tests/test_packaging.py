@@ -10,14 +10,24 @@ Why this matters:
   fails even though setuptools is installed.
 
   The correct backend is ``"setuptools.build_meta"``.
+
+TestCleanInstall:
+  Creates a temporary virtualenv and runs ``pip install -e .`` inside it.
+  This is a true clean-install test: no pre-existing packages, no PYTHONPATH.
+  Slower than string-check tests (~5–30s with pip cache) but catches real
+  install-time failures that string checks cannot detect.
 """
 
 from __future__ import annotations
 
 import importlib
 import pathlib
-import tomllib
+import subprocess
+import sys
+import tempfile
+import venv
 
+import tomllib
 
 _PYPROJECT = pathlib.Path(__file__).parent.parent / "pyproject.toml"
 
@@ -74,4 +84,76 @@ class TestPackagingConfig:
             f"[build-system].requires does not include setuptools. "
             f"Got: {requires}. "
             "Add 'setuptools>=68' to the requires list."
+        )
+
+
+class TestCleanInstall:
+    """True clean-install verification using a temporary virtualenv.
+
+    Creates a fresh venv, upgrades pip/setuptools/wheel, then runs
+    ``pip install -e .`` against the project root.  Asserts exit 0.
+
+    This test catches install-time failures that the string-check tests
+    in TestPackagingConfig cannot detect — e.g. a broken [project] table,
+    a missing package_dir, or a bad entry-point declaration.
+
+    The test is slower than the other packaging tests (~5–30s with pip
+    cache) but runs by default as part of ``pytest tests/``.
+
+    On CI the packaging job runs this in isolation so a slow cold-start
+    (no pip cache) does not block other jobs.
+    """
+
+    def test_clean_editable_install(self) -> None:
+        """pip install -e . in a fresh venv must exit 0.
+
+        Steps:
+          1. Create a temporary virtualenv (stdlib venv, no pip cache sharing).
+          2. Upgrade pip, setuptools, and wheel in the venv.
+          3. Run ``pip install -e <project_root>`` inside the venv.
+          4. Assert exit code 0.
+
+        Failure means the package cannot be installed from a clean environment,
+        which would block any user doing ``pip install -e .`` on a fresh clone.
+        """
+        project_root = pathlib.Path(__file__).parent.parent
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            venv_dir = pathlib.Path(tmp_dir) / "venv"
+
+            # Create venv with pip available.
+            venv.create(str(venv_dir), with_pip=True)
+
+            # Resolve venv executables (cross-platform: bin/ on Unix, Scripts/ on Windows).
+            bin_dir = venv_dir / "bin" if (venv_dir / "bin").exists() else venv_dir / "Scripts"
+            pip_exe = bin_dir / "pip"
+
+            # Upgrade build tools so the venv has a modern pip that understands pyproject.toml.
+            upgrade = subprocess.run(
+                [str(pip_exe), "install", "-U", "pip", "setuptools", "wheel"],
+                capture_output=True,
+                text=True,
+            )
+            assert upgrade.returncode == 0, (
+                "pip install -U pip setuptools wheel failed in fresh venv.\n"
+                f"stdout:\n{upgrade.stdout[-2000:]}\n"
+                f"stderr:\n{upgrade.stderr[-2000:]}"
+            )
+
+            # Install the project in editable mode.
+            install = subprocess.run(
+                [str(pip_exe), "install", "-e", str(project_root)],
+                capture_output=True,
+                text=True,
+            )
+            assert install.returncode == 0, (
+                "pip install -e . failed in a fresh virtualenv.\n"
+                "This means the project cannot be installed from a clean checkout.\n"
+                f"stdout:\n{install.stdout[-2000:]}\n"
+                f"stderr:\n{install.stderr[-2000:]}"
+            )
+
+        print(
+            f"\n[TestCleanInstall] pip install -e . succeeded "
+            f"(Python {sys.version.split()[0]})."
         )

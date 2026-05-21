@@ -29,6 +29,11 @@ Guard variables:
   PRAGMA_TRAINING_IMAGE=<img>       — required for Job creation
   PRAGMA_S3_RESUME_PREFIX           — optional; default 'pragma-encoder/test-checkpoints/<test_id>'
 
+Local/static tests (no cluster needed):
+  TestS3ResumeLocalPrereqs and TestS3ResumeManifestRender have been moved to
+  tests/test_s3_manifest_render.py so they run in normal CI without the
+  OpenShift opt-in flag.
+
 Safety:
   - Ephemeral test resources carry both test labels
   - S3 writes only to the PRAGMA_S3_RESUME_PREFIX key space
@@ -108,6 +113,7 @@ User,Card,Year,Month,Day,Time,Amount,Use Chip,Merchant Name,Merchant City,Mercha
 9,0,2023,1,7,20:30,$16.75,Swipe Transaction,Sushi Bar,Hobart,TAS,5812,,No"""
 
 import base64  # noqa: E402
+
 _SMOKE_CSV_B64 = base64.b64encode(_SMOKE_CSV_ROWS.encode()).decode()
 
 # Job name prefix — must keep pod names under 63-char RFC 1035 limit.
@@ -116,57 +122,6 @@ _S3_RESUME_JOB_PREFIX = "pragma-s3"
 
 # DNS label limit (RFC 1035 §2.3.4)
 _DNS_LABEL_LIMIT = 63
-
-
-# ---------------------------------------------------------------------------
-# Local (no cluster) prerequisite checks
-# ---------------------------------------------------------------------------
-
-
-class TestS3ResumeLocalPrereqs:
-    """Local checks — no cluster access required.
-
-    Run whenever RUN_OPENSHIFT_TESTS=1 (no additional opt-in needed).
-    """
-
-    def test_s3_resume_job_prefix_safe(self) -> None:
-        """_S3_RESUME_JOB_PREFIX must leave room for test_id + KFTO master suffix."""
-        typical_test_id_len = 35  # pragma-it-YYYYMMDD-HHMMSS-xxxxxxxx
-        kfto_master_suffix_len = len("-master-0")
-        max_prefix = _DNS_LABEL_LIMIT - typical_test_id_len - 1 - kfto_master_suffix_len
-        assert len(_S3_RESUME_JOB_PREFIX) <= max_prefix, (
-            f"_S3_RESUME_JOB_PREFIX {_S3_RESUME_JOB_PREFIX!r} is "
-            f"{len(_S3_RESUME_JOB_PREFIX)} chars. "
-            f"Max safe prefix: {max_prefix} chars."
-        )
-
-    def test_checkpoints_module_exists(self) -> None:
-        """src/training/checkpoints.py must exist before Level 5 smoke is useful."""
-        checkpoints_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "src" / "training" / "checkpoints.py"
-        )
-        assert checkpoints_path.exists(), (
-            f"src/training/checkpoints.py not found. "
-            "Implement it (Part D) before the Level 5 runtime smoke can pass."
-        )
-
-    def test_train_pragma_has_resolve_resume_checkpoint(self) -> None:
-        """scripts/train_pragma.py must reference resolve_resume_checkpoint.
-
-        This test confirms the TD-006 fix is integrated into the training script.
-        It will fail until train_pragma.py is updated to use checkpoints.py.
-        """
-        train_script = (
-            pathlib.Path(__file__).parent.parent.parent / "scripts" / "train_pragma.py"
-        )
-        text = train_script.read_text()
-        assert "resolve_resume_checkpoint" in text, (
-            "scripts/train_pragma.py must call resolve_resume_checkpoint() "
-            "from src/training/checkpoints.py. "
-            "The TD-006 fix requires all ranks to download the checkpoint. "
-            "Until this is integrated, the Level 5 runtime smoke cannot pass."
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -315,129 +270,6 @@ class TestS3CheckpointResumeSmoke:
         print(
             f"[Level 5] === PASSED: S3 checkpoint/resume (nnodes={self._NNODES}) === "
             f"TD-006 resolution confirmed."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Manifest render tests — local, no cluster access
-# ---------------------------------------------------------------------------
-
-
-class TestS3ResumeManifestRender:
-    """Local manifest-render tests — no cluster access required.
-
-    Calls _render_s3_resume_manifest() and parses the result with
-    yaml.safe_load to verify structural correctness without a cluster.
-
-    Catches regressions like the YAML indentation bug that previously caused
-    oc apply to fail when --resume was embedded in a block scalar.
-
-    7 tests — always run (no guard variable needed).
-    """
-
-    # Common parameters shared by all render calls.
-    _DEFAULTS = dict(
-        job_name="pragma-s3-render-test",
-        namespace="test-ns",
-        image="image-registry.example.com/test/pragma-training:latest",
-        test_id="pragma-it-20260521-120000-deadbeef",
-        nnodes=2,
-        s3_prefix="pragma-encoder/test-checkpoints/pragma-it-20260521",
-        max_steps=5,
-    )
-
-    def test_manifest_is_valid_yaml(self) -> None:
-        """_render_s3_resume_manifest must produce parseable YAML."""
-        import yaml  # noqa: PLC0415
-
-        manifest = _render_s3_resume_manifest(**self._DEFAULTS, resume=False)
-        parsed = yaml.safe_load(manifest)
-        assert parsed is not None, (
-            "_render_s3_resume_manifest must produce non-empty YAML. "
-            f"Got: {manifest[:200]!r}"
-        )
-
-    def test_manifest_kind_is_pytorchjob(self) -> None:
-        """Rendered manifest kind must be PyTorchJob."""
-        import yaml  # noqa: PLC0415
-
-        parsed = yaml.safe_load(_render_s3_resume_manifest(**self._DEFAULTS, resume=False))
-        assert parsed["kind"] == "PyTorchJob", (
-            f"Expected kind=PyTorchJob, got: {parsed.get('kind')!r}"
-        )
-
-    def test_manifest_api_version_is_kubeflow_v1(self) -> None:
-        """Rendered manifest apiVersion must be kubeflow.org/v1."""
-        import yaml  # noqa: PLC0415
-
-        parsed = yaml.safe_load(_render_s3_resume_manifest(**self._DEFAULTS, resume=False))
-        assert parsed["apiVersion"] == "kubeflow.org/v1", (
-            f"Expected apiVersion=kubeflow.org/v1, got: {parsed.get('apiVersion')!r}"
-        )
-
-    def test_manifest_has_master_and_worker(self) -> None:
-        """Rendered manifest must define both Master and Worker replica specs."""
-        import yaml  # noqa: PLC0415
-
-        parsed = yaml.safe_load(_render_s3_resume_manifest(**self._DEFAULTS, resume=False))
-        specs = parsed["spec"]["pytorchReplicaSpecs"]
-        assert "Master" in specs, (
-            "Rendered manifest must define Master replica spec. "
-            f"Found specs: {list(specs.keys())}"
-        )
-        assert "Worker" in specs, (
-            "Rendered manifest must define Worker replica spec. "
-            f"Found specs: {list(specs.keys())}"
-        )
-
-    def test_worker_replicas_equals_nnodes_minus_one(self) -> None:
-        """Worker replicas must equal nnodes - 1 for correct N-node topology."""
-        import yaml  # noqa: PLC0415
-
-        for nnodes in (2, 3, 4):
-            params = {**self._DEFAULTS, "nnodes": nnodes}
-            parsed = yaml.safe_load(_render_s3_resume_manifest(**params, resume=False))
-            worker_replicas = parsed["spec"]["pytorchReplicaSpecs"]["Worker"]["replicas"]
-            assert worker_replicas == nnodes - 1, (
-                f"nnodes={nnodes}: Worker replicas must be nnodes-1={nnodes - 1}. "
-                f"Got: {worker_replicas}"
-            )
-
-    def test_manifest_contains_s3_prefix(self) -> None:
-        """Rendered manifest must include the --s3-checkpoint-prefix argument."""
-        s3_prefix = "pragma-encoder/test-checkpoints/pragma-it-20260521"
-        params = {**self._DEFAULTS, "s3_prefix": s3_prefix}
-        manifest = _render_s3_resume_manifest(**params, resume=False)
-        assert f"--s3-checkpoint-prefix {s3_prefix}" in manifest, (
-            f"Manifest must contain '--s3-checkpoint-prefix {s3_prefix}'. "
-            "The train_pragma.py S3 upload/download depends on this argument."
-        )
-
-    def test_resume_manifest_contains_resume_flag(self) -> None:
-        """Resume manifest must include --resume on the same command line."""
-        manifest = _render_s3_resume_manifest(**self._DEFAULTS, resume=True)
-        assert "--resume" in manifest, (
-            "resume=True manifest must contain '--resume'. "
-            "Without it, train_pragma.py will not attempt to load a checkpoint."
-        )
-
-    def test_non_resume_manifest_lacks_resume_flag(self) -> None:
-        """Non-resume manifest must not contain --resume.
-
-        Prevents false-positive resume attempts on first-run training jobs
-        where no checkpoint exists yet.
-        """
-        manifest = _render_s3_resume_manifest(**self._DEFAULTS, resume=False)
-        # The flag must not appear as a standalone argument.
-        # '--s3-checkpoint-prefix' must still be present (caught by other test).
-        import re  # noqa: PLC0415
-
-        # Match --resume as a word boundary to avoid matching --s3-checkpoint-prefix
-        # or other flags that contain 'resume' as a substring.
-        resume_as_flag = re.search(r"(?<!\w)--resume(?!\w)", manifest)
-        assert resume_as_flag is None, (
-            "resume=False manifest must not contain '--resume'. "
-            f"Found match at position {resume_as_flag.start() if resume_as_flag else 'N/A'}."
         )
 
 

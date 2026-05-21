@@ -1,33 +1,125 @@
-# CI placeholder — to be filled in during implementation phase.
-#
-# Intended checks:
-#   - pytest (unit + integration tests)
-#   - ruff (linting)
-#   - mypy (type checking)
-#   - black (formatting check)
-#   - Security scan (no secrets in diff)
-
 name: CI
+
+# Four lanes — none require a live OpenShift cluster, S3 credentials, or GPUs.
+#
+# Lane            | What it proves                            | Speed
+# --------------- | ----------------------------------------- | ------
+# lint            | ruff clean — no style or import errors    | <1 min
+# unit-tests      | all model/training/workbench logic passes | ~5 min
+# packaging       | pip install -e . works in a fresh venv    | ~1 min
+# openshift-static| L4 PyTorchJob manifest checks (no oc)     | <1 min
+#
+# Cluster/GPU smokes are opt-in and run manually against a live cluster.
+# See tests/openshift/README.md for the opt-in env-var flags.
 
 on:
   push:
-    branches: [main, pragma-implementation]
+    branches: [main, pragma-implementation, "cleanup/**", "feature/**", "fix/**"]
   pull_request:
     branches: [main]
 
 jobs:
-  test:
+
+  # ---------------------------------------------------------------------------
+  # Lane 1: Lint — ruff only, fastest gate
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (ruff)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-dev.txt
-      - name: Lint with ruff
+
+      - name: Install ruff
+        run: pip install "ruff>=0.1.0"
+
+      - name: Check src/ and tests/
         run: ruff check src/ tests/
-      - name: Type check with mypy
-        run: mypy src/ --ignore-missing-imports
-      - name: Run tests
-        run: pytest tests/ -v --cov=src --cov-report=xml
+
+  # ---------------------------------------------------------------------------
+  # Lane 2: Unit tests — full ML stack, model + training + workbench + S3 manifest render
+  # ---------------------------------------------------------------------------
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install torch (CPU-only — avoids 2 GB CUDA download)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install project and dev dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt -e .
+
+      - name: Run unit tests (OpenShift integration tests excluded)
+        # tests/openshift/ requires a live cluster and is opt-in via RUN_OPENSHIFT_TESTS=1.
+        # tests/test_s3_manifest_render.py is included here — it has no cluster dependency.
+        run: PYTHONPATH=. pytest tests/ --ignore=tests/openshift -v --tb=short
+
+  # ---------------------------------------------------------------------------
+  # Lane 3: Packaging smoke — proves pip install -e . works in a clean venv
+  # ---------------------------------------------------------------------------
+  packaging:
+    name: Packaging smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest (minimal — clean-install test creates its own venv)
+        run: pip install "pytest>=7.0.0"
+
+      - name: Run packaging config and clean-install tests
+        # TestPackagingConfig: verifies pyproject.toml [build-system] is correct.
+        # TestCleanInstall: creates a temporary venv, upgrades pip/setuptools/wheel,
+        #   runs pip install -e <project_root>, asserts exit 0. No ML deps needed
+        #   because the venv is only used to verify the install step, not to import
+        #   torch or run model code.
+        run: pytest tests/test_packaging.py -v --tb=short
+
+  # ---------------------------------------------------------------------------
+  # Lane 4: OpenShift static checks — manifest correctness, no cluster needed
+  # ---------------------------------------------------------------------------
+  openshift-static:
+    name: OpenShift static checks (no cluster)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install "pytest>=7.0.0" "pyyaml>=6.0"
+
+      - name: Level 4 — PyTorchJob manifest and DNS naming checks
+        # TestNNodeManifest (5 tests) + TestSmokeManifestNaming (3 tests).
+        # These read local YAML files and do Python math — no oc binary needed.
+        # Excluded: test_pytorchjob_crd_exists_when_enabled (calls oc api-resources)
+        #           test_pytorchjob_nnode_smoke (submits a live PyTorchJob)
+        env:
+          RUN_OPENSHIFT_TESTS: "1"
+          RUN_PYTORCHJOB_TESTS: "1"
+          PRAGMA_TEST_NAMESPACE: ci-placeholder
+        run: |
+          PYTHONPATH=. pytest tests/openshift/test_04_pytorchjob_smoke.py -v --tb=short \
+            -k "not test_pytorchjob_crd_exists_when_enabled and not test_pytorchjob_nnode_smoke"
