@@ -1,10 +1,10 @@
-"""Tests for the PRAGMA workbench submit module (src/workbench/_submit.py).
+"""Tests for the PRAGMA workbench submit module (pragma_encoder/workbench/_submit.py).
 
 These tests are written BEFORE the implementation (TDD red phase).
 They define the contract for the DSPA/KFP v2 submit path from the workbench.
 
 Scope:
-  src/workbench/_submit.py exposes six functions:
+  pragma_encoder/workbench/_submit.py exposes six functions:
     get_dspa_endpoint(...)      — endpoint URL from env/defaults
     get_service_account_token() — reads SA token; never prints
     make_kfp_client(...)        — constructs kfp.Client (kfp optional dep)

@@ -19,7 +19,7 @@ Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 
 # ── Project root on sys.path ──────────────────────────────────────────────────
 # Needed when running as a plain script outside of the installed package.
-# In a workbench pod, src/ is on PYTHONPATH already — this is a no-op.
+# In a workbench pod, the project root is on PYTHONPATH — this is a no-op.
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))

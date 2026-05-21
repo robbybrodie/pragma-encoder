@@ -18,8 +18,8 @@ Freeze the PRAGMA encoder and train a single linear layer on top.
 **Speed:** Minutes on CPU.
 
 ```python
-from src.adaptation import LinearProbe
-from src.evaluation import DownstreamEvaluator
+from pragma_encoder.adaptation import LinearProbe
+from pragma_encoder.evaluation import DownstreamEvaluator
 
 evaluator = DownstreamEvaluator(task_name="fraud_detection", metric="auc")
 
@@ -42,7 +42,7 @@ Apply LoRA adapters to the PRAGMA encoder and fine-tune end-to-end.
 **Speed:** Hours on GPU.
 
 ```python
-from src.adaptation import apply_lora_to_pragma, PRAGMALoRAConfig
+from pragma_encoder.adaptation import apply_lora_to_pragma, PRAGMALoRAConfig
 
 lora_config = PRAGMALoRAConfig(r=16, lora_alpha=32, n_classes=2)
 lora_model = apply_lora_to_pragma(pragma_model, lora_config)

@@ -795,7 +795,7 @@ OpenShift integration tests are required before merging any change that affects:
 - Service account, RBAC, image pull, or S3 secret assumptions
 - Cluster-side dataset staging or S3-backed artefact paths
 - Two-node or multi-node distributed execution on OpenShift
-- `src/workbench/` submit or compile behaviour when it touches cluster runtime
+- `pragma_encoder/workbench/` submit or compile behaviour when it touches cluster runtime
 
 OpenShift tests are **not** required for:
 

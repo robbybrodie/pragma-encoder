@@ -151,7 +151,7 @@ pytest tests/ -v
 
 # Explore architecture
 python -c "
-from src.model import PRAGMA, PRAGMAConfig
+from pragma_encoder.model import PRAGMA, PRAGMAConfig
 config = PRAGMAConfig.pragma_s()
 model = PRAGMA(config)
 n = sum(p.numel() for p in model.parameters())

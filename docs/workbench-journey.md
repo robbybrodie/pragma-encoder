@@ -35,7 +35,7 @@ python examples/workbench/01_train_ibm_tabformer.py
 Or paste the key lines into a notebook cell:
 
 ```python
-from src.workbench import train_pragma
+from pragma_encoder.workbench import train_pragma
 
 run = train_pragma(
     dataset="ibm-tabformer",
@@ -281,15 +281,14 @@ temporary disk allocation that is created when the pod starts and destroyed when
 the pod exits. It is never shared between pods.
 
 ```
-/workspace/repo/   ← git clone of this repository (fetched at startup)
 /workspace/data/   ← training data staged from S3 (fetched at startup)
 /workspace/outputs/← checkpoints written during training (uploaded to S3)
 ```
 
-The init container populates `/workspace` before training begins. It clones the
-repository from GitHub and downloads the training data from S3. The main
-training container then runs entirely from `/workspace` — it never reads from
-S3 during training, only writes checkpoints back to it.
+The init container populates `/workspace` before training begins. It downloads
+the training data from S3. The main training container uses the `pragma_encoder`
+wheel installed in the image — it never reads source code from S3 during training,
+only writes checkpoints back to it.
 
 When the pod exits, `/workspace` disappears. This is fine because S3 is the
 durable store. The local workspace is runtime scratch only.
@@ -400,11 +399,11 @@ You are the scientist who runs experiments inside it.
 
 ## Step 9 — What the workbench API does
 
-The workbench API (`src/workbench`) is the thin layer that data scientists
+The workbench API (`pragma_encoder.workbench`) is the thin layer that data scientists
 interact with. Its public surface is small:
 
 ```python
-from src.workbench import train_pragma, PragmaRun, PIPELINE_STEP_NAMES
+from pragma_encoder.workbench import train_pragma, PragmaRun, PIPELINE_STEP_NAMES
 ```
 
 `train_pragma()` takes four key arguments a data scientist cares about:
@@ -463,7 +462,7 @@ minute on a laptop.
 |------|--------|
 | Preview the pipeline for any model size | Change `model_size="S"` to `"M"` or `"L"` in any example |
 | Prove the model can learn (before real training) | `PYTHONPATH=. python examples/workbench/06_local_learning_validation.py` |
-| Prepare data locally (no cluster) | Run `src/data/fit_tokenizer.py` + `scripts/upload_training_data.py` |
+| Prepare data locally (no cluster) | Run `python -m pragma_encoder.data.fit_tokenizer` + `scripts/upload_training_data.py` |
 | Submit a real single-node training job | Follow `docs/training-guide.md` → Cluster training — PRAGMA-S |
 | Submit a real N-node training job (2-node default) | Apply `openshift/training/pytorchjob-pragma-s-2node.yaml` (see TD-006 note above) |
 | Use PRAGMA embeddings for downstream tasks | See `src/adaptation/probe.py` (linear probe) and `src/adaptation/lora.py` (LoRA) |

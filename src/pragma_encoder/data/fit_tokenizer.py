@@ -109,8 +109,11 @@ def main() -> None:
     with open(VOCAB_PATH, "wb") as f:
         pickle.dump(pipeline, f)
     print(f"\nPipeline serialised → {VOCAB_PATH}")
-    print("Run scripts/train_pragma.py --csv-path data/tabformer/card_transaction.v1.csv "
-          "--vocab-path data/tabformer/vocab.pkl to begin training.")
+    print(
+        "Run: python -m pragma_encoder.training.train "
+        "--csv-path data/tabformer/card_transaction.v1.csv "
+        "--vocab-path data/tabformer/vocab.pkl to begin training."
+    )
 
 
 if __name__ == "__main__":

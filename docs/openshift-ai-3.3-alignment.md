@@ -350,12 +350,12 @@ No current tests cover model serving.
 | Concern | Code |
 |---|---|
 | Model architecture | `src/pragma_encoder/model/` |
-| Training loop | `scripts/train_pragma.py` |
+| Training loop | `pragma_encoder.training.train` (module) |
 | Checkpoint save and local load | `src/pragma_encoder/training/checkpoints.py` |
 | S3 upload / download / list / latest discovery | `src/pragma_encoder/training/checkpoints.py` |
 | Distributed rank-safe resume | `src/pragma_encoder/training/checkpoints.py` |
 | Tokenizer, encoder, masking, MLM | `src/pragma_encoder/` |
-| CLI / module entrypoints | `scripts/`, `src/pragma_encoder/data/fit_tokenizer.py` |
+| CLI / module entrypoints | `pragma-encoder-train`, `python -m pragma_encoder.training.train`, `python -m pragma_encoder.data.fit_tokenizer` |
 | Pipeline component logic | `pipeline/components_pragma.py` |
 
 ### Training image owns
@@ -365,7 +365,7 @@ No current tests cover model serving.
 | Python runtime | Inherited from workbench base image |
 | PyTorch / CUDA / dependencies | Inherited from workbench base image |
 | `pragma_encoder` wheel | `pip install --no-deps dist/pragma_encoder-*.whl` |
-| Training script entrypoint | `scripts/train_pragma.py` copied to `WORKDIR/scripts/` |
+| Training script entrypoint | `pragma-encoder-train` (console script); `scripts/train_pragma.py` compatibility wrapper |
 
 ### Tests own
 

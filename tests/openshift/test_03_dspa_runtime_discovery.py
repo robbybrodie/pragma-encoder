@@ -69,7 +69,7 @@ _skip_no_kfp = pytest.mark.skipif(
     not _KFP_AVAILABLE,
     reason=(
         "kfp is not installed — skipping compile tests. "
-        "Install with: pip install 'pragma-encoder[workbench]' or "
+        "Install with: pip install kfp, or "
         "use the PRAGMA workbench notebook image which includes kfp."
     ),
 )
@@ -424,8 +424,6 @@ class TestKFPSDK:
         image. It is NOT installed in the local development venv by default.
 
         To install locally:
-          pip install 'pragma-encoder[workbench]'
-        Or install kfp directly:
           pip install kfp
         """
         if not _KFP_AVAILABLE:

@@ -79,7 +79,7 @@ there is no cross-attention sublayer and no dedicated history summary token.
 |---|---|
 | Sequence packing | `src/training/packing.py::SequencePacker` |
 | Dynamic batching | `src/training/batching.py::DynamicBatchSampler` |
-| Training entrypoint | `scripts/train_pragma.py` |
+| Training entrypoint | `python -m pragma_encoder.training.train` (canonical); `scripts/train_pragma.py` (compatibility wrapper) |
 | KFP pipeline components | `pipeline/components_pragma.py` — five components (`prepare_dataset`, `upload_artifacts`, `submit_pytorchjob`, `run_pretraining`, `export_checkpoint`); `PIPELINE_STAGE_NAMES` mirrors `PIPELINE_STEP_NAMES`; kfp optional |
 | KFP pipeline | `pipeline/pragma_pipeline.py::pragma_pretraining_pipeline` — five visible §2.4 stages; kfp optional (`_KFP_AVAILABLE` guard); canonical contract is `manifest_uri` (DatasetManifest), not PVC |
 | KFTO PyTorchJob (single-node) | `openshift/training/pytorchjob-pragma-s.yaml` |
@@ -87,8 +87,8 @@ there is no cross-attention sublayer and no dedicated history summary token.
 | S3-backed dataset reference (§2.4 data storage) | `src/data/dataset_manifest.py::DatasetManifest` — immutable reference to prepared shards; carries `PRAGMAConfig` truncation limits (`max_event_tokens=24`, `max_profile_tokens=200`, `max_events=6500`) |
 | Prepared data shard (CSV, Parquet, Arrow) | `src/data/dataset_manifest.py::DatasetShard` — one prepared file within a manifest; format-agnostic |
 | Dataset preparation (IBM TabFormer → manifest) | `src/data/adapters/ibm_tabformer.py::IBMTabFormerAdapter` — fits `FinancialTokenizerPipeline` on 80% training split, serialises vocab, returns `DatasetManifest` with one CSV shard; `upload=False` for local dev |
-| Workbench training API | `src/workbench/_api.py::train_pragma` — maps §2.4 stages to execution path; `mode="dry_run"` returns a `PragmaRun` preview (no side effects); validates `model_size` {"S","M","L"} and `dataset` via adapter registry before dispatch |
-| Pipeline-visible run result | `src/workbench/_run.py::PragmaRun` — wraps a training job; `show_pipeline()` prints the five §2.4 stages (`prepare → upload → submit → train → export`) with status; `metrics()` and `artifacts()` return defensive-copy dicts |
+| Workbench training API | `src/pragma_encoder/workbench/_api.py::train_pragma` — maps §2.4 stages to execution path; `mode="dry_run"` returns a `PragmaRun` preview (no side effects); validates `model_size` {"S","M","L"} and `dataset` via adapter registry before dispatch |
+| Pipeline-visible run result | `src/pragma_encoder/workbench/_run.py::PragmaRun` — wraps a training job; `show_pipeline()` prints the five §2.4 stages (`prepare → upload → submit → train → export`) with status; `metrics()` and `artifacts()` return defensive-copy dicts |
 
 ---
 
