@@ -339,7 +339,7 @@ The training script detects this automatically and:
 - Synchronises all pods at the end of each epoch with a barrier
 - Gates all checkpointing and S3 uploads to rank 0 (the Master pod) only
 
-**What is fully supported on a fresh two-node run:**
+**What is fully supported on a two-node run:**
 
 | Capability | Status |
 |-----------|--------|
@@ -347,21 +347,24 @@ The training script detects this automatically and:
 | Disjoint data sharding via DistributedSampler | Supported |
 | Rank-0-only checkpointing (no S3 write races) | Supported |
 | Epoch barrier synchronisation | Supported |
+| All-rank checkpoint resume from S3 (TD-006 fix) | Supported |
 
-**What is not yet supported — TD-006:**
+**N-node checkpoint resume — TD-006 resolved:**
 
-Checkpoint resume across pods is not correctly implemented for the per-pod
-`emptyDir` storage pattern. If a two-node job is interrupted *after* a
-checkpoint has been saved and then restarted, rank 0 downloads the checkpoint
-from S3 but the Worker pod looks for it in its own (empty) local workspace and
-finds nothing. Rank 0 resumes; rank 1 starts from scratch. Model states diverge.
+Checkpoint resume across pods now correctly handles the per-pod `emptyDir`
+storage pattern. The fix (implemented in `src/training/checkpoints.py`) uses
+an all-rank download pattern:
 
-For the demo manifest (`--max-steps 20`, first run), this does not matter: no
-checkpoint is written before the job exits, so `--resume` is always a no-op.
-The limitation only affects genuine restarts of long-running two-node jobs.
+1. Rank 0 selects the latest checkpoint key from S3.
+2. Rank 0 broadcasts the key string to all ranks via `dist.broadcast_object_list`.
+3. **Every rank independently downloads the checkpoint** from S3 to its own local
+   `emptyDir`. Workers do not depend on rank 0's local files.
+4. All ranks call `dist.barrier()` before loading.
 
-The resolution (all ranks download the checkpoint from S3 independently) is
-described in `docs/tech-debt.md` under **TD-006**. It is not yet implemented.
+If a two-node job is interrupted after a checkpoint has been saved and restarted,
+all ranks resume from the same checkpoint. Model states are consistent.
+
+See `docs/tech-debt.md` under **TD-006** for the full resolution record.
 
 ---
 
@@ -482,4 +485,4 @@ minute on a laptop.
 | `mode="local"` — local subprocess dispatch | **Not yet implemented** |
 | Single-node training via PyTorchJob | **Complete** — `pytorchjob-pragma-s.yaml` |
 | N-node training via PyTorchJob (2-node smoke proven) | **Complete** — `pytorchjob-pragma-s-2node.yaml` (architecture is N-node capable; 2-node is the validated default) |
-| N-node checkpoint resume | **Not yet correct** (TD-006) — ranks must all download checkpoint from S3 independently on restart |
+| N-node checkpoint resume | **Complete** (TD-006 resolved) — all ranks independently download checkpoint from S3; `src/training/checkpoints.py` |

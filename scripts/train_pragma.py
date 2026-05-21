@@ -70,6 +70,7 @@ from src.model import PRAGMA, PRAGMAConfig
 from src.model.assembler import EmbeddingAssembler
 from src.masking import MaskingStrategy
 from src.data import PragmaDataset
+from src.training.checkpoints import resolve_resume_checkpoint, upload_checkpoint_if_rank0
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -114,71 +115,6 @@ def _unwrap(module: torch.nn.Module) -> torch.nn.Module:
     """Return the underlying module when wrapped in DDP, else the module itself."""
     return module.module if isinstance(module, DDP) else module
 
-
-# ---------------------------------------------------------------------------
-# S3 helpers
-# ---------------------------------------------------------------------------
-
-def _s3_client():
-    """Build boto3 client from MODEL_REGISTRY_* env vars.
-
-    Returns (client, bucket) or (None, None) if credentials are absent.
-    """
-    bucket   = os.environ.get("MODEL_REGISTRY_BUCKET")
-    endpoint = os.environ.get("MODEL_REGISTRY_ENDPOINT")
-    access   = os.environ.get("MODEL_REGISTRY_ACCESS_KEY")
-    secret   = os.environ.get("MODEL_REGISTRY_SECRET_KEY")
-    if not all([bucket, endpoint, access, secret]):
-        return None, None
-    try:
-        import boto3  # type: ignore[import]
-    except ImportError:
-        logger.warning("boto3 not installed — S3 checkpoint operations disabled.")
-        return None, None
-    client = boto3.client(
-        "s3",
-        endpoint_url=f"https://{endpoint}",
-        aws_access_key_id=access,
-        aws_secret_access_key=secret,
-        region_name="us-west-2",
-    )
-    return client, bucket
-
-
-def _upload_checkpoint(ckpt_path: Path, s3_prefix: str) -> None:
-    """Upload a local checkpoint file to S3. Rank-0 only."""
-    client, bucket = _s3_client()
-    if client is None:
-        logger.warning("S3 credentials not configured; skipping checkpoint upload.")
-        return
-    s3_key = f"{s3_prefix}/{ckpt_path.name}"
-    logger.info(f"Uploading checkpoint -> s3://{bucket}/{s3_key}")
-    client.upload_file(str(ckpt_path), bucket, s3_key)
-    logger.info("Checkpoint uploaded.")
-
-
-def _download_latest_checkpoint(output_dir: Path, s3_prefix: str) -> Optional[Path]:
-    """Download the most recent checkpoint from S3 to output_dir.
-
-    Returns the local path of the downloaded file, or None if no checkpoint
-    exists in S3 or credentials are absent.
-    """
-    client, bucket = _s3_client()
-    if client is None:
-        return None
-    response = client.list_objects_v2(Bucket=bucket, Prefix=s3_prefix + "/")
-    objects = [o for o in response.get("Contents", []) if o["Key"].endswith(".pt")]
-    if not objects:
-        logger.info(f"No checkpoints found in s3://{bucket}/{s3_prefix}/")
-        return None
-    latest = max(objects, key=lambda o: o["LastModified"])
-    fname = Path(latest["Key"]).name
-    local = output_dir / fname
-    logger.info(f"Downloading checkpoint from s3://{bucket}/{latest['Key']} ...")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    client.download_file(bucket, latest["Key"], str(local))
-    logger.info(f"Downloaded to {local}")
-    return local
 
 
 def _load_checkpoint(
@@ -276,15 +212,6 @@ def get_device(device_arg: str, local_rank: int, distributed: bool) -> torch.dev
             return torch.device("mps")
         return torch.device("cpu")
     return torch.device(device_arg)
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint resume — find latest local checkpoint
-# ---------------------------------------------------------------------------
-
-def _find_latest_local_checkpoint(output_dir: Path) -> Optional[Path]:
-    checkpoints = sorted(output_dir.glob("checkpoint_epoch*.pt"))
-    return checkpoints[-1] if checkpoints else None
 
 
 # ---------------------------------------------------------------------------
@@ -425,20 +352,17 @@ def main() -> None:
     global_step = 0
 
     if args.resume:
-        ckpt = _find_latest_local_checkpoint(output_dir)
-        if ckpt is None and args.s3_checkpoint_prefix and is_rank0:
-            ckpt = _download_latest_checkpoint(output_dir, args.s3_checkpoint_prefix)
-        if distributed:
-            # Broadcast whether rank 0 found a checkpoint
-            found = torch.tensor(1 if ckpt is not None else 0, device=device)
-            dist.broadcast(found, src=0)
-            if not is_rank0 and found.item() == 1:
-                # Non-rank-0 workers: wait for rank 0 to download, then find locally
-                if distributed:
-                    dist.barrier()
-                ckpt = _find_latest_local_checkpoint(output_dir)
-            elif is_rank0 and found.item() == 1:
-                dist.barrier()
+        # TD-006 fix: all ranks independently download the checkpoint from S3.
+        # Old pattern (broken): only rank 0 downloads; workers search their empty emptyDir.
+        # New pattern: rank 0 selects key via S3, broadcasts key string to all ranks,
+        # ALL ranks independently call download_checkpoint_for_rank, then barrier.
+        ckpt = resolve_resume_checkpoint(
+            output_dir=output_dir,
+            s3_prefix=args.s3_checkpoint_prefix,
+            rank=rank,
+            distributed=distributed,
+            device=device,
+        )
         if ckpt is not None:
             start_epoch, global_step = _load_checkpoint(
                 ckpt, model, assembler, optimizer, device
@@ -580,7 +504,7 @@ def main() -> None:
             logger.info(f"Checkpoint saved -> {ckpt_path}")
 
             if args.s3_checkpoint_prefix:
-                _upload_checkpoint(ckpt_path, args.s3_checkpoint_prefix)
+                upload_checkpoint_if_rank0(ckpt_path, args.s3_checkpoint_prefix, is_rank0=True)
 
         # All ranks sync after checkpoint before next epoch
         if distributed:

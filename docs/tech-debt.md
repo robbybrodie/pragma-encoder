@@ -199,46 +199,63 @@ the comment in `strategy.py` to remove the "TODO" framing.
 
 **Date:** 2026-05-19
 **Severity:** Medium (blocks fault-tolerant multi-node training; does not affect fresh runs)
-**Status:** Known limitation — safe for demo, must resolve before production
+**Status:** Resolved — 2026-05-21
 
 ### Description
 `scripts/train_pragma.py` supports `--resume` to restart training from the
-latest checkpoint. The resume logic (lines 419–437) works as follows:
+latest checkpoint. The original (broken) resume logic worked as follows:
 
-1. Rank 0 searches locally, then downloads from S3 if `--s3-checkpoint-prefix` is set.
-2. Rank 0 broadcasts a `found` flag (0 or 1) to all ranks via `dist.broadcast`.
-3. Non-rank-0 workers then call `_find_latest_local_checkpoint(output_dir)` locally.
+1. Rank 0 searched locally, then downloaded from S3 if `--s3-checkpoint-prefix` was set.
+2. Rank 0 broadcast a `found` flag (0 or 1) to all ranks via `dist.broadcast`.
+3. Non-rank-0 workers then called `_find_latest_local_checkpoint(output_dir)` locally.
 
-Step 3 assumes all ranks share the same filesystem (e.g. a shared NFS PVC).
+Step 3 assumed all ranks share the same filesystem (e.g. a shared NFS PVC).
 In the two-node PyTorchJob manifests (`pytorchjob-pragma-s-2node.yaml`), each
 pod has its own independent `emptyDir` for `/workspace`. The Worker pod's
-`output_dir` is empty on startup, so `_find_latest_local_checkpoint` returns
-`None` and the Worker begins from a randomly initialised model state.
+`output_dir` was empty on startup, so `_find_latest_local_checkpoint` returned
+`None` and the Worker began from a randomly initialised model state.
 
-Result: rank 0 resumes from a checkpoint; rank 1 starts from scratch.
-DDP averages gradients across ranks but does not re-synchronise starting
-weights. Training continues with diverged model states.
+Result: rank 0 resumed from a checkpoint; rank 1 started from scratch.
+DDP averaged gradients across ranks but did not re-synchronise starting
+weights. Training continued with diverged model states.
 
-### Impact on demo manifest
-Low for the `--max-steps 20` smoke run. On a fresh first run no checkpoint
-exists anywhere; `--resume` is a no-op for all ranks and training proceeds
-correctly. The bug only activates on a genuine restart where a checkpoint has
-already been saved (i.e. at least one full epoch completed before the job was
-interrupted).
+### Resolution applied (2026-05-21)
 
-### Resolution
-Option A (preferred): All ranks download the checkpoint from S3 independently.
-Replace the broadcast + local-find pattern with a direct S3 download on every
-rank, guarded by whether the checkpoint key exists.
+Option A implemented: all ranks download the checkpoint from S3 independently.
 
-Option B: Use a shared ReadWriteMany PVC for `/workspace/outputs` so all pods
-see the same checkpoint file. This reintroduces a PVC and the associated
-scheduling constraint (all pods must schedule on nodes with access to the PVC).
-Contradicts the no-PVC-as-canonical-storage rule in ADR 003.
+**`src/training/checkpoints.py`** — new module implementing the all-rank download pattern:
+- `parse_s3_config_from_env()` — reads `MODEL_REGISTRY_*` env vars; returns `None` when absent
+- `list_checkpoint_keys(client, bucket, prefix)` — lists `.pt` keys under an S3 prefix
+- `select_latest_checkpoint_key(client, bucket, prefix)` — returns the latest key by `LastModified`
+- `upload_checkpoint_if_rank0(ckpt_path, s3_prefix, is_rank0)` — rank-0-only upload (no-op on workers)
+- `download_checkpoint_for_rank(key, output_dir)` — download by every rank to its own `emptyDir`
+- `barrier_if_distributed(distributed)` — centralised `dist.barrier()` guard
+- `resolve_resume_checkpoint(output_dir, s3_prefix, rank, distributed, device)` — main entry point:
+  1. Rank 0 selects the latest key from S3.
+  2. Rank 0 broadcasts the key string (not a tensor) via `dist.broadcast_object_list`.
+  3. ALL ranks independently call `download_checkpoint_for_rank`.
+  4. All ranks call `dist.barrier()` before returning.
+  5. Falls back to local `.pt` scan in single-node mode when S3 is not configured.
 
-Option A is consistent with the S3-as-durable-store principle.
+**`scripts/train_pragma.py`** — updated to use `resolve_resume_checkpoint`:
+- The broken `if args.resume:` block (17 lines with `dist.broadcast` of a boolean tensor +
+  workers scanning their empty `emptyDir`) is replaced with a 9-line call.
+- Dead helper functions removed: `_s3_client`, `_upload_checkpoint`,
+  `_download_latest_checkpoint`, `_find_latest_local_checkpoint`.
+- `upload_checkpoint_if_rank0` replaces the old `_upload_checkpoint` call.
+
+**Unit tests**: `tests/test_checkpoint_resume.py` — 34 tests, all passing. Covers:
+key selection, S3 config parsing, rank-0 upload semantics, all-rank download semantics,
+broadcast + barrier coordination, local single-node fallback, no-shared-filesystem
+invariant, `barrier_if_distributed` helper, and KFP import boundary.
+
+**No kfp / kfp_kubernetes** imported in `checkpoints.py` (training-image-only module).
+`boto3` imported lazily inside `_make_s3_client()` so the module loads without boto3.
 
 ### References
-- Code: `scripts/train_pragma.py` lines 419–437 (`_resume` block)
+- Code: `src/training/checkpoints.py` (new — TD-006 fix implementation)
+- Code: `scripts/train_pragma.py` (updated — uses `resolve_resume_checkpoint`)
+- Tests: `tests/test_checkpoint_resume.py` (34 tests)
 - Manifest: `openshift/training/pytorchjob-pragma-s-2node.yaml`
 - ADR 003: docs/decisions/003-workbench-training-api.md (no PVC canonical storage)
+- Paper: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4

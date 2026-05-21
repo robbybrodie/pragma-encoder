@@ -83,8 +83,8 @@ Tests never write to S3 unless explicitly authorised.
 | 3 | OpenShift AI KFP v2 pipeline smoke | In progress / xfail | `test_03_pipeline_smoke_run.py` |
 | 3b | Training container Job smoke | Implemented | `test_03b_training_job_smoke.py` |
 | 4 | PyTorchJob N-node smoke (default: nnodes=2) | Implemented | `test_04_pytorchjob_smoke.py` |
-| 5 | S3-backed checkpoint/resume | Future | — |
-| 6 | Scaled training validation | Future | — |
+| 5 | S3-backed checkpoint/resume | Unit tests complete; cluster integration scaffold present | `test_05_s3_checkpoint_resume.py` |
+| 6 | GPU training smoke (single-node opt-in) | Scaffold implemented | `test_06_gpu_training_smoke.py` |
 | 7 | Bank-data adapter validation | Future | — |
 
 ---
@@ -396,9 +396,25 @@ proves the 2-node minimal distributed case. To test N>2:
 set `PRAGMA_PYTORCHJOB_NNODES=<N>` and `PRAGMA_ALLOW_LARGE_NNODE_SMOKE=1`.
 This is not in CI; it is manual cluster validation only.
 
-### Level 5 — S3-backed checkpoint/resume (TD-006)
-Multi-node checkpoint resume with per-pod emptyDir. TD-006 is open. Resolution:
-all ranks download from S3 independently on restart. Not yet implemented.
+### Level 5 — S3-backed checkpoint/resume (TD-006 resolved)
+
+TD-006 is **resolved**. `src/training/checkpoints.py` implements the all-rank download
+pattern: rank 0 selects the S3 key, broadcasts it via `dist.broadcast_object_list`,
+all ranks download independently, then barrier. 34 unit tests pass
+(`tests/test_checkpoint_resume.py`). `scripts/train_pragma.py` uses
+`resolve_resume_checkpoint()` and `upload_checkpoint_if_rank0()`.
+
+The **cluster integration test** (`test_05_s3_checkpoint_resume.py`) is the remaining
+gap: it would submit a PyTorchJob, let it save a checkpoint to S3, interrupt it, restart
+it with `--resume`, and assert both ranks load from the same checkpoint. This requires
+a real S3 bucket configured in the cluster and is future work.
+
+### Level 6 — GPU training smoke (scaffold implemented)
+
+`test_06_gpu_training_smoke.py` is implemented but all tests skip unless
+`RUN_OPENSHIFT_GPU_SMOKE=1`. The scaffold submits a `batch/v1 Job` to a GPU node,
+runs PRAGMA-S training for 1 step, and asserts CUDA evidence in logs. Requires
+a cluster node with `nvidia.com/gpu` capacity and `PRAGMA_TRAINING_IMAGE` set.
 
 ---
 
