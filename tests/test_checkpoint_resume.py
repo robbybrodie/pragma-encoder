@@ -37,7 +37,7 @@ torch = pytest.importorskip("torch")
 # Import under test — will fail (ModuleNotFoundError) until
 # src/training/checkpoints.py is created. That is the expected red phase.
 # ---------------------------------------------------------------------------
-from src.training.checkpoints import (  # noqa: E402
+from pragma_encoder.training.checkpoints import (  # noqa: E402
     barrier_if_distributed,
     download_checkpoint_for_rank,
     list_checkpoint_keys,
@@ -257,9 +257,9 @@ class TestRank0UploadSemantics:
         ckpt_path.write_bytes(b"fake-checkpoint")
 
         mock_client = mock.MagicMock()
-        with mock.patch("src.training.checkpoints._make_s3_client", return_value=mock_client):
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client", return_value=mock_client):
             with mock.patch(
-                "src.training.checkpoints.parse_s3_config_from_env",
+                "pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                 return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                               "access_key": "key", "secret_key": "secret"},
             ):
@@ -281,7 +281,7 @@ class TestRank0UploadSemantics:
         ckpt_path.write_bytes(b"fake-checkpoint")
 
         mock_client = mock.MagicMock()
-        with mock.patch("src.training.checkpoints._make_s3_client", return_value=mock_client):
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client", return_value=mock_client):
             upload_checkpoint_if_rank0(
                 ckpt_path=ckpt_path,
                 s3_prefix="model/ckpts",
@@ -301,7 +301,7 @@ class TestRank0UploadSemantics:
         ckpt_path.write_bytes(b"fake-checkpoint")
 
         with mock.patch(
-            "src.training.checkpoints.parse_s3_config_from_env", return_value=None
+            "pragma_encoder.training.checkpoints.parse_s3_config_from_env", return_value=None
         ):
             # Should not raise, should not call any S3 client
             upload_checkpoint_if_rank0(
@@ -319,9 +319,9 @@ class TestRank0UploadSemantics:
         ckpt_path.write_bytes(b"fake-checkpoint")
 
         mock_client = mock.MagicMock()
-        with mock.patch("src.training.checkpoints._make_s3_client", return_value=mock_client):
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client", return_value=mock_client):
             with mock.patch(
-                "src.training.checkpoints.parse_s3_config_from_env",
+                "pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                 return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                               "access_key": "key", "secret_key": "secret"},
             ):
@@ -358,9 +358,9 @@ class TestAllRankDownloadSemantics:
     ) -> None:
         """download_checkpoint_for_rank calls client.download_file."""
         mock_client = mock.MagicMock()
-        with mock.patch("src.training.checkpoints._make_s3_client", return_value=mock_client):
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client", return_value=mock_client):
             with mock.patch(
-                "src.training.checkpoints.parse_s3_config_from_env",
+                "pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                 return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                               "access_key": "key", "secret_key": "secret"},
             ):
@@ -381,9 +381,9 @@ class TestAllRankDownloadSemantics:
     ) -> None:
         """download_checkpoint_for_rank returns Path with the checkpoint filename."""
         mock_client = mock.MagicMock()
-        with mock.patch("src.training.checkpoints._make_s3_client", return_value=mock_client):
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client", return_value=mock_client):
             with mock.patch(
-                "src.training.checkpoints.parse_s3_config_from_env",
+                "pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                 return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                               "access_key": "key", "secret_key": "secret"},
             ):
@@ -408,9 +408,9 @@ class TestAllRankDownloadSemantics:
         assert not new_dir.exists(), "Pre-condition: directory must not exist"
 
         mock_client = mock.MagicMock()
-        with mock.patch("src.training.checkpoints._make_s3_client", return_value=mock_client):
+        with mock.patch("pragma_encoder.training.checkpoints._make_s3_client", return_value=mock_client):
             with mock.patch(
-                "src.training.checkpoints.parse_s3_config_from_env",
+                "pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                 return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                               "access_key": "key", "secret_key": "secret"},
             ):
@@ -428,7 +428,7 @@ class TestAllRankDownloadSemantics:
     ) -> None:
         """download_checkpoint_for_rank returns None when S3 config is absent."""
         with mock.patch(
-            "src.training.checkpoints.parse_s3_config_from_env", return_value=None
+            "pragma_encoder.training.checkpoints.parse_s3_config_from_env", return_value=None
         ):
             result = download_checkpoint_for_rank(
                 key="model/ckpts/checkpoint_epoch0001.pt",
@@ -475,10 +475,10 @@ class TestBroadcastAndBarrierSemantics:
             ]
         }
 
-        with mock.patch("src.training.checkpoints.parse_s3_config_from_env",
+        with mock.patch("pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                         return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                                       "access_key": "key", "secret_key": "secret"}):
-            with mock.patch("src.training.checkpoints._make_s3_client",
+            with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
                             return_value=mock_client):
                 with mock.patch("torch.distributed.broadcast_object_list") as mock_broadcast:
                     with mock.patch("torch.distributed.barrier"):
@@ -508,10 +508,10 @@ class TestBroadcastAndBarrierSemantics:
         mock_client = mock.MagicMock()
         key = "model/ckpts/checkpoint_epoch0001.pt"
 
-        with mock.patch("src.training.checkpoints.parse_s3_config_from_env",
+        with mock.patch("pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                         return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                                       "access_key": "key", "secret_key": "secret"}):
-            with mock.patch("src.training.checkpoints._make_s3_client",
+            with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
                             return_value=mock_client):
                 with mock.patch("torch.distributed.broadcast_object_list",
                                 side_effect=lambda obj_list, src: obj_list.__setitem__(0, key)):
@@ -540,10 +540,10 @@ class TestBroadcastAndBarrierSemantics:
         mock_client = mock.MagicMock()
         key = "model/ckpts/checkpoint_epoch0001.pt"
 
-        with mock.patch("src.training.checkpoints.parse_s3_config_from_env",
+        with mock.patch("pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                         return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                                       "access_key": "key", "secret_key": "secret"}):
-            with mock.patch("src.training.checkpoints._make_s3_client",
+            with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
                             return_value=mock_client):
                 with mock.patch("torch.distributed.broadcast_object_list",
                                 side_effect=lambda obj_list, src: obj_list.__setitem__(0, key)):
@@ -571,10 +571,10 @@ class TestBroadcastAndBarrierSemantics:
             ]
         }
 
-        with mock.patch("src.training.checkpoints.parse_s3_config_from_env",
+        with mock.patch("pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                         return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                                       "access_key": "key", "secret_key": "secret"}):
-            with mock.patch("src.training.checkpoints._make_s3_client",
+            with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
                             return_value=mock_client):
                 with mock.patch("torch.distributed.broadcast_object_list") as mock_broadcast:
                     with mock.patch("torch.distributed.barrier") as mock_barrier:
@@ -610,7 +610,7 @@ class TestLocalSingleNodeResume:
         (tmp_path / "checkpoint_epoch0002.pt").write_bytes(b"ckpt2")
 
         with mock.patch(
-            "src.training.checkpoints.parse_s3_config_from_env", return_value=None
+            "pragma_encoder.training.checkpoints.parse_s3_config_from_env", return_value=None
         ):
             result = resolve_resume_checkpoint(
                 output_dir=tmp_path,
@@ -630,7 +630,7 @@ class TestLocalSingleNodeResume:
     ) -> None:
         """resolve_resume_checkpoint returns None when output_dir is empty and no S3."""
         with mock.patch(
-            "src.training.checkpoints.parse_s3_config_from_env", return_value=None
+            "pragma_encoder.training.checkpoints.parse_s3_config_from_env", return_value=None
         ):
             result = resolve_resume_checkpoint(
                 output_dir=tmp_path,
@@ -648,9 +648,9 @@ class TestLocalSingleNodeResume:
         """resolve_resume_checkpoint does not make any S3 calls in local mode."""
         (tmp_path / "checkpoint_epoch0001.pt").write_bytes(b"ckpt1")
 
-        with mock.patch("src.training.checkpoints.parse_s3_config_from_env",
+        with mock.patch("pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                         return_value=None):
-            with mock.patch("src.training.checkpoints._make_s3_client") as mock_make_client:
+            with mock.patch("pragma_encoder.training.checkpoints._make_s3_client") as mock_make_client:
                 resolve_resume_checkpoint(
                     output_dir=tmp_path,
                     s3_prefix="",
@@ -699,16 +699,16 @@ class TestNoSharedFilesystemAssumption:
         key = "model/ckpts/checkpoint_epoch0001.pt"
         mock_client = mock.MagicMock()
 
-        with mock.patch("src.training.checkpoints.parse_s3_config_from_env",
+        with mock.patch("pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                         return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                                       "access_key": "key", "secret_key": "secret"}):
-            with mock.patch("src.training.checkpoints._make_s3_client",
+            with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
                             return_value=mock_client):
                 with mock.patch("torch.distributed.broadcast_object_list",
                                 side_effect=lambda obj_list, src: obj_list.__setitem__(0, key)):
                     with mock.patch("torch.distributed.barrier"):
                         with mock.patch(
-                            "src.training.checkpoints._find_latest_local_checkpoint"
+                            "pragma_encoder.training.checkpoints._find_latest_local_checkpoint"
                         ) as mock_local_find:
                             resolve_resume_checkpoint(
                                 output_dir=tmp_path,
@@ -741,10 +741,10 @@ class TestNoSharedFilesystemAssumption:
             "Contents": [_make_s3_object(key, _utc(2026, 1, 1))]
         }
 
-        with mock.patch("src.training.checkpoints.parse_s3_config_from_env",
+        with mock.patch("pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                         return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                                       "access_key": "key", "secret_key": "secret"}):
-            with mock.patch("src.training.checkpoints._make_s3_client",
+            with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
                             return_value=mock_client):
                 # Simulate rank 0
                 with mock.patch("torch.distributed.broadcast_object_list"):
@@ -765,10 +765,10 @@ class TestNoSharedFilesystemAssumption:
 
         mock_client.reset_mock()
 
-        with mock.patch("src.training.checkpoints.parse_s3_config_from_env",
+        with mock.patch("pragma_encoder.training.checkpoints.parse_s3_config_from_env",
                         return_value={"bucket": "my-bucket", "endpoint": "s3.example.com",
                                       "access_key": "key", "secret_key": "secret"}):
-            with mock.patch("src.training.checkpoints._make_s3_client",
+            with mock.patch("pragma_encoder.training.checkpoints._make_s3_client",
                             return_value=mock_client):
                 # Simulate rank 1
                 with mock.patch("torch.distributed.broadcast_object_list",
@@ -834,7 +834,7 @@ class TestNoKfpImport:
     def test_checkpoints_module_does_not_import_kfp(self) -> None:
         """src/training/checkpoints.py must not contain top-level kfp import."""
         checkpoints_path = (
-            pathlib.Path(__file__).parent.parent / "src" / "training" / "checkpoints.py"
+            pathlib.Path(__file__).parent.parent / "src" / "pragma_encoder" / "training" / "checkpoints.py"
         )
         assert checkpoints_path.exists(), (
             f"src/training/checkpoints.py must exist. Path: {checkpoints_path}"
@@ -857,7 +857,7 @@ class TestNoKfpImport:
     def test_checkpoints_module_does_not_import_kfp_kubernetes(self) -> None:
         """src/training/checkpoints.py must not contain top-level kfp_kubernetes import."""
         checkpoints_path = (
-            pathlib.Path(__file__).parent.parent / "src" / "training" / "checkpoints.py"
+            pathlib.Path(__file__).parent.parent / "src" / "pragma_encoder" / "training" / "checkpoints.py"
         )
         assert checkpoints_path.exists(), (
             f"src/training/checkpoints.py must exist. Path: {checkpoints_path}"
@@ -882,7 +882,7 @@ class TestNoKfpImport:
     def test_checkpoints_module_importable_without_kfp(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """src.training.checkpoints must be importable even when kfp is absent."""
+        """pragma_encoder.training.checkpoints must be importable even when kfp is absent."""
         import sys  # noqa: PLC0415
         # Simulate kfp being absent
         monkeypatch.setitem(sys.modules, "kfp", None)
@@ -892,14 +892,14 @@ class TestNoKfpImport:
         # Use monkeypatch.delitem so pytest restores the original module object
         # after this test, preventing cross-test pollution when other tests
         # patch src.training.checkpoints._make_s3_client.
-        monkeypatch.delitem(sys.modules, "src.training.checkpoints", raising=False)
+        monkeypatch.delitem(sys.modules, "pragma_encoder.training.checkpoints", raising=False)
 
         try:
-            import src.training.checkpoints  # noqa: F401,PLC0415
+            import pragma_encoder.training.checkpoints  # noqa: F401,PLC0415
         except ImportError as exc:
             if "kfp" in str(exc).lower():
                 pytest.fail(
-                    f"src.training.checkpoints raised ImportError related to kfp: {exc}. "
+                    f"pragma_encoder.training.checkpoints raised ImportError related to kfp: {exc}. "
                     "The checkpoints module must not require kfp or kfp-kubernetes. "
                     "See docs/openshift-image-contract.md."
                 )

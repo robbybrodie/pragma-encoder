@@ -84,7 +84,7 @@ class TestDecoratedPipelineExample:
         example script — that would produce console output) and compiles it
         to a temporary YAML file. No cluster access is required.
         """
-        from src.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
+        from pragma_encoder.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
 
         @pragma_pipeline(name="pragma-s-test-compile")
         def _test_pipeline() -> None:
@@ -108,7 +108,7 @@ class TestDecoratedPipelineExample:
         An empty or missing file indicates compile() silently failed or
         wrote to the wrong path.
         """
-        from src.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
+        from pragma_encoder.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
 
         @pragma_pipeline(name="pragma-s-yaml-check")
         def _test_pipeline() -> None:
@@ -140,7 +140,7 @@ class TestDecoratedPipelineExample:
         If any are missing, the pipeline definition is incomplete and the
         submitted PipelineRun would not execute the full training workflow.
         """
-        from src.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
+        from pragma_encoder.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
 
         @pragma_pipeline(name="pragma-s-stages-check")
         def _test_pipeline() -> None:
@@ -195,7 +195,7 @@ class TestDecoratedPipelineExample:
         if not _KFP_AVAILABLE:
             # Without kfp, compile() raises ImportError before any oc call.
             # That is the correct and expected behaviour — document it.
-            from src.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
+            from pragma_encoder.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
 
             @pragma_pipeline(name="pragma-s-no-oc-check")
             def _test_pipeline() -> None:
@@ -211,7 +211,7 @@ class TestDecoratedPipelineExample:
             )
             return
 
-        from src.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
+        from pragma_encoder.workbench import dataset, pragma_pipeline, train  # noqa: PLC0415
 
         @pragma_pipeline(name="pragma-s-no-oc-check")
         def _test_pipeline() -> None:

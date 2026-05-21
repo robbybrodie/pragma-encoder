@@ -140,7 +140,7 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     ]
     project_root: pathlib.Path | None = None
     for _candidate in _search_roots:
-        if (_candidate / "src" / "data" / "fit_tokenizer.py").exists():
+        if (_candidate / "src" / "pragma_encoder" / "data" / "fit_tokenizer.py").exists():
             project_root = _candidate
             break
 
@@ -216,7 +216,7 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     # ------------------------------------------------------------------
     print("[smoke] Running fit_tokenizer.py ...")
     subprocess.run(
-        [sys.executable, str(project_root / "src" / "data" / "fit_tokenizer.py")],
+        [sys.executable, str(project_root / "src" / "pragma_encoder" / "data" / "fit_tokenizer.py")],
         cwd=str(work_dir),
         check=True,
     )

@@ -144,7 +144,7 @@ _SMOKE_SHELL = textwrap.dedent("""\
     echo ""
 
     echo "[smoke] --- Step 1: Validating required source files ---"
-    for required_path in scripts/train_pragma.py src/data/fit_tokenizer.py src/model/pragma.py; do
+    for required_path in scripts/train_pragma.py src/pragma_encoder/data/fit_tokenizer.py src/pragma_encoder/model/pragma.py; do
         if [ ! -f "$required_path" ]; then
             echo "ERROR: $required_path not found in image WORKDIR $(pwd)."
             echo "       The training image may be stale or missing PRAGMA source."
@@ -154,12 +154,12 @@ _SMOKE_SHELL = textwrap.dedent("""\
     done
 
     echo "[smoke] --- Step 2: Validating src/ imports ---"
-    python -c "import src.model; import src.encoders; import src.tokenizer" || {
+    python -c "import pragma_encoder.model; import pragma_encoder.encoders; import pragma_encoder.tokenizer" || {
         echo "ERROR: Core PRAGMA imports failed. Image may be missing src/."
         exit 1
     }
-    python -c "import src.workbench" || {
-        echo "ERROR: import src.workbench failed. Image may be stale."
+    python -c "import pragma_encoder.workbench" || {
+        echo "ERROR: import pragma_encoder.workbench failed. Image may be stale."
         exit 1
     }
     echo "[smoke] OK: all PRAGMA source imports passed."
@@ -170,7 +170,7 @@ _SMOKE_SHELL = textwrap.dedent("""\
     echo "[smoke] CSV rows: $(wc -l < data/tabformer/card_transaction.v1.csv) (including header)"
 
     echo "[smoke] --- Step 4: Fitting tokenizer ---"
-    python src/data/fit_tokenizer.py
+    python src/pragma_encoder/data/fit_tokenizer.py
     if [ ! -f data/tabformer/vocab.pkl ]; then
         echo "ERROR: vocab.pkl was not created by fit_tokenizer.py"
         exit 1
@@ -515,7 +515,7 @@ class TestTrainingJobSmokePrereqs:
           4. Reference --model-variant (ensures PRAGMA-S config is used)
         """
         assert "fit_tokenizer.py" in _SMOKE_SHELL, (
-            "_SMOKE_SHELL must call src/data/fit_tokenizer.py. "
+            "_SMOKE_SHELL must call src/pragma_encoder/data/fit_tokenizer.py. "
             "The tokenizer must be fitted before training can start."
         )
         assert "train_pragma.py" in _SMOKE_SHELL, (

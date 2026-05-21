@@ -13,7 +13,7 @@ adding event_valid to PRAGMA.forward() to confirm correctness.
 import pytest
 import torch
 
-from src.model import PRAGMA, PRAGMAConfig
+from pragma_encoder.model import PRAGMA, PRAGMAConfig
 
 # ---------------------------------------------------------------------------
 # Helpers

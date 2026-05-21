@@ -36,8 +36,8 @@ _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _NOTEBOOK_REQUIREMENTS = _REPO_ROOT / "openshift" / "notebook-image" / "requirements.txt"
 _DOCKERFILE_TRAINING = _REPO_ROOT / "openshift" / "training" / "Dockerfile.training"
-_SUBMIT_PY = _REPO_ROOT / "src" / "workbench" / "_submit.py"
-_CHECKPOINTS_PY = _REPO_ROOT / "src" / "training" / "checkpoints.py"
+_SUBMIT_PY = _REPO_ROOT / "src" / "pragma_encoder" / "workbench" / "_submit.py"
+_CHECKPOINTS_PY = _REPO_ROOT / "src" / "pragma_encoder" / "training" / "checkpoints.py"
 _TRAIN_SCRIPT = _REPO_ROOT / "scripts" / "train_pragma.py"
 
 
@@ -155,7 +155,7 @@ class TestTrainingImageContract:
         text = _DOCKERFILE_TRAINING.read_text()
         assert "COPY" in text and "src/" in text, (
             "Dockerfile.training must COPY src/ into the image. "
-            "KFP component pods import from src.* — source must be baked in. "
+            "KFP component pods import from pragma_encoder.* — source must be baked in. "
             "See docs/openshift-image-contract.md."
         )
         copy_lines = [ln for ln in text.splitlines() if "COPY" in ln and "src/" in ln]
@@ -270,7 +270,7 @@ class TestKfpKubernetesGuard:
         # Python's import system raises ImportError when sys.modules[name] is None.
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
 
-        from src.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from pragma_encoder.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         with pytest.raises(ImportError):
             _require_kfp_kubernetes("test feature")
@@ -281,7 +281,7 @@ class TestKfpKubernetesGuard:
         """The ImportError message must include the feature name passed to the guard."""
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
 
-        from src.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from pragma_encoder.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         with pytest.raises(ImportError) as exc_info:
             _require_kfp_kubernetes("my-special-feature")
@@ -297,7 +297,7 @@ class TestKfpKubernetesGuard:
         """The ImportError message must include a pip install hint."""
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
 
-        from src.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from pragma_encoder.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         with pytest.raises(ImportError) as exc_info:
             _require_kfp_kubernetes()
@@ -321,7 +321,7 @@ class TestKfpKubernetesGuard:
         stub.__version__ = "1.2.0"  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", stub)
 
-        from src.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from pragma_encoder.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         result = _require_kfp_kubernetes("test feature")
         assert result is stub, (
@@ -408,7 +408,7 @@ class TestKfpKubernetesBoundary:
     def test_checkpoints_importable_when_kfp_absent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """src.training.checkpoints must be importable when kfp is absent.
+        """pragma_encoder.training.checkpoints must be importable when kfp is absent.
 
         Simulates the training image environment where kfp is not installed.
         The checkpoints module must import cleanly — no kfp-related ImportError.
@@ -423,14 +423,14 @@ class TestKfpKubernetesBoundary:
         # Use monkeypatch.delitem so pytest restores the original module object
         # after this test, preventing cross-test pollution when other tests
         # patch src.training.checkpoints._make_s3_client.
-        monkeypatch.delitem(sys.modules, "src.training.checkpoints", raising=False)
+        monkeypatch.delitem(sys.modules, "pragma_encoder.training.checkpoints", raising=False)
 
         try:
-            import src.training.checkpoints  # noqa: F401,PLC0415
+            import pragma_encoder.training.checkpoints  # noqa: F401,PLC0415
         except ImportError as exc:
             if "kfp" in str(exc).lower():
                 pytest.fail(
-                    f"src.training.checkpoints raised kfp-related ImportError: {exc}. "
+                    f"pragma_encoder.training.checkpoints raised kfp-related ImportError: {exc}. "
                     "The checkpoints module must not require kfp or kfp-kubernetes. "
                     "See docs/openshift-image-contract.md."
                 )

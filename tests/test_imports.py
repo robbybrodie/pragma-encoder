@@ -19,35 +19,35 @@ class TestModuleImports:
 
     def test_config_imports(self) -> None:
         """src/model/config.py must import cleanly."""
-        import src.model.config  # noqa: F401
+        import pragma_encoder.model.config  # noqa: F401
 
     def test_tokenizer_imports(self) -> None:
         """src/tokenizer/ must import cleanly."""
-        import src.tokenizer  # noqa: F401
+        import pragma_encoder.tokenizer  # noqa: F401
 
     def test_encoders_imports(self) -> None:
         """src/encoders/ must import cleanly."""
-        import src.encoders  # noqa: F401
+        import pragma_encoder.encoders  # noqa: F401
 
     def test_masking_imports(self) -> None:
         """src/masking/ must import cleanly."""
-        import src.masking  # noqa: F401
+        import pragma_encoder.masking  # noqa: F401
 
     def test_model_imports(self) -> None:
         """src/model/ must import cleanly."""
-        import src.model  # noqa: F401
+        import pragma_encoder.model  # noqa: F401
 
     def test_adaptation_imports(self) -> None:
         """src/adaptation/ must import cleanly."""
-        import src.adaptation  # noqa: F401
+        import pragma_encoder.adaptation  # noqa: F401
 
     def test_training_imports(self) -> None:
         """src/training/ must import cleanly."""
-        import src.training  # noqa: F401
+        import pragma_encoder.training  # noqa: F401
 
     def test_evaluation_imports(self) -> None:
         """src/evaluation/ must import cleanly."""
-        import src.evaluation  # noqa: F401
+        import pragma_encoder.evaluation  # noqa: F401
 
 
 class TestDependencyGraph:
@@ -64,17 +64,17 @@ class TestDependencyGraph:
 
         It is the root of the dependency graph.
         """
-        import src.model.config as config_module
+        import pragma_encoder.model.config as config_module
 
         source = inspect.getsource(config_module)
 
         forbidden = [
-            "from src.tokenizer",
-            "from src.encoders",
-            "from src.masking",
-            "import src.tokenizer",
-            "import src.encoders",
-            "import src.masking",
+            "from pragma_encoder.tokenizer",
+            "from pragma_encoder.encoders",
+            "from pragma_encoder.masking",
+            "import pragma_encoder.tokenizer",
+            "import pragma_encoder.encoders",
+            "import pragma_encoder.masking",
         ]
         for pattern in forbidden:
             assert pattern not in source, (
@@ -83,15 +83,15 @@ class TestDependencyGraph:
 
     def test_tokenizer_does_not_import_encoders(self) -> None:
         """src/tokenizer/ must not import from src/encoders/."""
-        import src.tokenizer as tok_module
+        import pragma_encoder.tokenizer as tok_module
 
         source = inspect.getsource(tok_module)
 
         forbidden = [
-            "from src.encoders",
-            "import src.encoders",
-            "from src.model",
-            "import src.model",
+            "from pragma_encoder.encoders",
+            "import pragma_encoder.encoders",
+            "from pragma_encoder.model",
+            "import pragma_encoder.model",
         ]
         for pattern in forbidden:
             assert pattern not in source, (
@@ -104,15 +104,15 @@ class TestDependencyGraph:
         Encoders depend on config and rope only.
         They must not create circular dependencies with the model.
         """
-        import src.encoders as enc_module
+        import pragma_encoder.encoders as enc_module
 
         source = inspect.getsource(enc_module)
 
         forbidden = [
-            "from src.model.pragma",
-            "import src.model.pragma",
-            "from src.adaptation",
-            "import src.adaptation",
+            "from pragma_encoder.model.pragma",
+            "import pragma_encoder.model.pragma",
+            "from pragma_encoder.adaptation",
+            "import pragma_encoder.adaptation",
         ]
         for pattern in forbidden:
             assert pattern not in source, (
@@ -127,15 +127,15 @@ class TestDependencyGraph:
         this test fails with a clear message.
         """
         modules_in_order = [
-            "src.model.config",
-            "src.tokenizer",
-            "src.encoders.rope",
-            "src.encoders",
-            "src.masking",
-            "src.model",
-            "src.adaptation",
-            "src.training",
-            "src.evaluation",
+            "pragma_encoder.model.config",
+            "pragma_encoder.tokenizer",
+            "pragma_encoder.encoders.rope",
+            "pragma_encoder.encoders",
+            "pragma_encoder.masking",
+            "pragma_encoder.model",
+            "pragma_encoder.adaptation",
+            "pragma_encoder.training",
+            "pragma_encoder.evaluation",
         ]
 
         for module_path in modules_in_order:
@@ -160,11 +160,11 @@ class TestNamingConventions:
 
     def test_pragma_config_class_exists(self) -> None:
         """PRAGMAConfig must exist in src/model/config.py."""
-        from src.model.config import PRAGMAConfig  # noqa: F401
+        from pragma_encoder.model.config import PRAGMAConfig  # noqa: F401
 
     def test_pragma_config_has_three_variants(self) -> None:
         """PRAGMAConfig must have pragma_s, pragma_m, pragma_l classmethods."""
-        from src.model.config import PRAGMAConfig
+        from pragma_encoder.model.config import PRAGMAConfig
 
         assert hasattr(PRAGMAConfig, "pragma_s"), (
             "PRAGMAConfig must have a pragma_s() classmethod"
@@ -178,32 +178,32 @@ class TestNamingConventions:
 
     def test_profile_state_encoder_class_name(self) -> None:
         """Class must be named ProfileStateEncoder exactly."""
-        from src.encoders.profile_state_encoder import ProfileStateEncoder  # noqa: F401
+        from pragma_encoder.encoders.profile_state_encoder import ProfileStateEncoder  # noqa: F401
 
     def test_event_encoder_class_name(self) -> None:
         """Class must be named EventEncoder exactly."""
-        from src.encoders.event_encoder import EventEncoder  # noqa: F401
+        from pragma_encoder.encoders.event_encoder import EventEncoder  # noqa: F401
 
     def test_history_encoder_class_name(self) -> None:
         """Class must be named HistoryEncoder exactly."""
-        from src.encoders.history_encoder import HistoryEncoder  # noqa: F401
+        from pragma_encoder.encoders.history_encoder import HistoryEncoder  # noqa: F401
 
     def test_rope_class_name(self) -> None:
         """Class must be named RoPEEncoding exactly."""
-        from src.encoders.rope import RoPEEncoding  # noqa: F401
+        from pragma_encoder.encoders.rope import RoPEEncoding  # noqa: F401
 
     def test_masking_strategy_class_name(self) -> None:
         """Class must be named MaskingStrategy exactly."""
-        from src.masking.strategy import MaskingStrategy  # noqa: F401
+        from pragma_encoder.masking.strategy import MaskingStrategy  # noqa: F401
 
     def test_pragma_model_class_name(self) -> None:
         """Full model must be named PRAGMA exactly."""
-        from src.model.pragma import PRAGMA  # noqa: F401
+        from pragma_encoder.model.pragma import PRAGMA  # noqa: F401
 
     def test_lora_adapter_class_name(self) -> None:
         """LoRA adapter must be named LoRAAdapter exactly."""
-        from src.adaptation.lora import LoRAAdapter  # noqa: F401
+        from pragma_encoder.adaptation.lora import LoRAAdapter  # noqa: F401
 
     def test_embedding_probe_class_name(self) -> None:
         """Embedding probe must be named EmbeddingProbe exactly."""
-        from src.adaptation.probe import EmbeddingProbe  # noqa: F401
+        from pragma_encoder.adaptation.probe import EmbeddingProbe  # noqa: F401

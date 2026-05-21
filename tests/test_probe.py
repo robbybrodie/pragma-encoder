@@ -30,8 +30,8 @@ sklearn = pytest.importorskip("sklearn", reason="sklearn not installed")
 
 import numpy as np
 
-from src.adaptation.probe import EmbeddingProbe
-from src.model.config import PRAGMAConfig
+from pragma_encoder.adaptation.probe import EmbeddingProbe
+from pragma_encoder.model.config import PRAGMAConfig
 
 _CONFIG = PRAGMAConfig.pragma_s()
 

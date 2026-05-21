@@ -154,23 +154,23 @@ class TestCleanInstall:
             )
 
             # Verify the installed package is importable using the venv Python.
-            # src/__init__.py exists, so 'import src' is the canonical import check.
+            # The public Python package is 'pragma_encoder' (not 'src').
             python_exe = bin_dir / "python"
             import_check = subprocess.run(
-                [str(python_exe), "-c", "import src"],
+                [str(python_exe), "-c", "import pragma_encoder"],
                 capture_output=True,
                 text=True,
             )
             assert import_check.returncode == 0, (
-                "import src failed in the venv after pip install -e .\n"
-                "The package was installed (exit 0) but the top-level 'src' "
-                "namespace is not importable. Check pyproject.toml "
-                "[tool.setuptools] configuration.\n"
+                "import pragma_encoder failed in the venv after pip install -e .\n"
+                "The package was installed (exit 0) but 'pragma_encoder' is not "
+                "importable. Check pyproject.toml [tool.setuptools.packages.find] — "
+                "where must be ['src'] and src/pragma_encoder/__init__.py must exist.\n"
                 f"stdout:\n{import_check.stdout}\n"
                 f"stderr:\n{import_check.stderr}"
             )
 
         print(
-            f"\n[TestCleanInstall] pip install -e . and import src succeeded "
+            f"\n[TestCleanInstall] pip install -e . and import pragma_encoder succeeded "
             f"(Python {sys.version.split()[0]})."
         )

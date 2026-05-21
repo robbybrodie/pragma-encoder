@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import pytest
 
-from src.data.dataset_manifest import DatasetManifest, DatasetShard
-from src.model.config import PRAGMAConfig
-from src.workbench._run import (
+from pragma_encoder.data.dataset_manifest import DatasetManifest, DatasetShard
+from pragma_encoder.model.config import PRAGMAConfig
+from pragma_encoder.workbench._run import (
     PIPELINE_STEP_NAMES,
     PipelineStep,
     PragmaRun,

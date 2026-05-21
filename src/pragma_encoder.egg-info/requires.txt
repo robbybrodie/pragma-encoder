@@ -1,0 +1,4 @@
+
+[workbench]
+kfp>=2
+kfp-kubernetes>=1.2

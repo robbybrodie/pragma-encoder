@@ -66,11 +66,11 @@ from torch.utils.data.distributed import DistributedSampler
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.model import PRAGMA, PRAGMAConfig
-from src.model.assembler import EmbeddingAssembler
-from src.masking import MaskingStrategy
-from src.data import PragmaDataset
-from src.training.checkpoints import resolve_resume_checkpoint, upload_checkpoint_if_rank0
+from pragma_encoder.model import PRAGMA, PRAGMAConfig
+from pragma_encoder.model.assembler import EmbeddingAssembler
+from pragma_encoder.masking import MaskingStrategy
+from pragma_encoder.data import PragmaDataset
+from pragma_encoder.training.checkpoints import resolve_resume_checkpoint, upload_checkpoint_if_rank0
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

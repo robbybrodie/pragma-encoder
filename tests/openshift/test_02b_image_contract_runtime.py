@@ -72,7 +72,7 @@ class TestImageContractLocalPrereqs:
     _DOCKERFILE_TRAINING = _REPO_ROOT / "openshift" / "training" / "Dockerfile.training"
     _NOTEBOOK_REQUIREMENTS = _REPO_ROOT / "openshift" / "notebook-image" / "requirements.txt"
     _PYPROJECT = _REPO_ROOT / "pyproject.toml"
-    _CHECKPOINTS_PY = _REPO_ROOT / "src" / "training" / "checkpoints.py"
+    _CHECKPOINTS_PY = _REPO_ROOT / "src" / "pragma_encoder" / "training" / "checkpoints.py"
 
     def test_dockerfile_training_exists(self) -> None:
         """openshift/training/Dockerfile.training must exist."""
@@ -92,11 +92,11 @@ class TestImageContractLocalPrereqs:
         )
 
     def test_dockerfile_training_validates_imports_at_build(self) -> None:
-        """Dockerfile.training must include a RUN python -c 'import src.*' validation step."""
+        """Dockerfile.training must include a RUN python -c 'import pragma_encoder.*' validation step."""
         text = self._DOCKERFILE_TRAINING.read_text()
-        has_import_check = "python" in text and "import src" in text
+        has_import_check = "python" in text and "import pragma_encoder" in text
         assert has_import_check, (
-            "Dockerfile.training must run 'python -c \"import src.*\"' at build time. "
+            "Dockerfile.training must run 'python -c \"import pragma_encoder.*\"' at build time. "
             "This catches missing __init__.py or broken imports at image build, "
             "not at job runtime. See docs/openshift-image-contract.md."
         )
@@ -172,10 +172,10 @@ class TestTrainingImageRuntimeContract:
         test_id: str,
         cleanup_labelled_resources: None,
     ) -> None:
-        """Training image must import src.model, src.data, src.workbench at runtime.
+        """Training image must import pragma_encoder.model, src.data, src.workbench at runtime.
 
         Creates a one-off batch/v1 Job that runs:
-          python -c "import src.model; import src.data; import src.workbench; print('OK')"
+          python -c "import pragma_encoder.model; import pragma_encoder.data; import pragma_encoder.workbench; print('OK')"
 
         The job must exit 0.
         """
@@ -194,7 +194,7 @@ class TestTrainingImageRuntimeContract:
             test_id=test_id,
             import_check=(
                 "import sys; sys.path.insert(0, '/opt/app-root/src/pragma-encoder'); "
-                "import src.model; import src.data; import src.workbench; "
+                "import pragma_encoder.model; import pragma_encoder.data; import pragma_encoder.workbench; "
                 "print('PRAGMA core imports OK')"
             ),
             expected_marker="PRAGMA core imports OK",
@@ -231,7 +231,7 @@ class TestTrainingImageRuntimeContract:
             import_check=(
                 "import sys; sys.path.insert(0, '/opt/app-root/src/pragma-encoder'); "
                 "sys.modules['kfp_kubernetes'] = None; "  # Simulate absence
-                "import src.training.checkpoints; "
+                "import pragma_encoder.training.checkpoints; "
                 "print('checkpoints importable without kfp_kubernetes OK')"
             ),
             expected_marker="checkpoints importable without kfp_kubernetes OK",

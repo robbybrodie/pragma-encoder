@@ -31,7 +31,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.model import PRAGMA, PRAGMAConfig
+from pragma_encoder.model import PRAGMA, PRAGMAConfig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

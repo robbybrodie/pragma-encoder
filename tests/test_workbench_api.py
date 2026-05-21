@@ -27,9 +27,9 @@ import os
 
 import pytest
 
-from src.model.config import PRAGMAConfig
-from src.workbench._api import train_pragma
-from src.workbench._run import (
+from pragma_encoder.model.config import PRAGMAConfig
+from pragma_encoder.workbench._api import train_pragma
+from pragma_encoder.workbench._run import (
     PIPELINE_STEP_NAMES,
     PragmaRun,
     PragmaRunProtocol,
@@ -409,7 +409,7 @@ class TestDryRunVisibility:
         Verifies the distinction between dry_run and a real run at the data level.
         A PragmaRun created without run_mode must have run_mode=None (not 'dry_run').
         """
-        from src.data.dataset_manifest import DatasetManifest, DatasetShard
+        from pragma_encoder.data.dataset_manifest import DatasetManifest, DatasetShard
         manifest = DatasetManifest(
             dataset_name="ibm-tabformer",
             dataset_version="v1",
@@ -459,7 +459,7 @@ class TestLocalModeContract:
 
     def _make_manifest(self):
         """Return a minimal DatasetManifest for use as a mock prepare() return value."""
-        from src.data.dataset_manifest import DatasetManifest, DatasetShard
+        from pragma_encoder.data.dataset_manifest import DatasetManifest, DatasetShard
         shard = DatasetShard(uri="local/shard.csv", format="csv", rows=4)
         return DatasetManifest(
             dataset_name="ibm-tabformer",
@@ -482,8 +482,8 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-             patch("src.workbench._api.subprocess") as mock_subp, \
+        with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
              patch("pathlib.Path.mkdir"):
             mock_subp.run.return_value = MagicMock(returncode=returncode)
             run = train_pragma(
@@ -650,8 +650,8 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-             patch("src.workbench._api.subprocess") as mock_subp, \
+        with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
              patch("pathlib.Path.mkdir"):
             mock_subp.run.return_value = MagicMock(returncode=0)
             train_pragma(
@@ -688,8 +688,8 @@ class TestLocalModeContract:
                     "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
             env_backup[var] = os.environ.pop(var, None)
         try:
-            with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-                 patch("src.workbench._api.subprocess") as mock_subp, \
+            with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+                 patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
                  patch("pathlib.Path.mkdir"):
                 mock_subp.run.return_value = MagicMock(returncode=0)
                 run = train_pragma(
@@ -721,8 +721,8 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-             patch("src.workbench._api.subprocess") as mock_subp, \
+        with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
              patch("pathlib.Path.mkdir"):
             mock_subp.run.return_value = MagicMock(returncode=0)
             train_pragma(
@@ -781,8 +781,8 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        with patch("src.workbench._api.get_adapter", return_value=mock_adapter_cls), \
-             patch("src.workbench._api.subprocess") as mock_subp, \
+        with patch("pragma_encoder.workbench._api.get_adapter", return_value=mock_adapter_cls), \
+             patch("pragma_encoder.workbench._api.subprocess") as mock_subp, \
              patch("pathlib.Path.mkdir"):
             mock_subp.run.return_value = MagicMock(returncode=0)
             train_pragma(

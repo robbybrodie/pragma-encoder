@@ -38,11 +38,11 @@ import time
 import torch
 
 # ── PRAGMA ────────────────────────────────────────────────────────────────────
-from src.masking import MaskingStrategy
-from src.model import PRAGMA, PRAGMAConfig
-from src.model.assembler import EmbeddingAssembler
-from src.tokenizer.vocabulary import VocabularySpec
-from src.training.readiness import make_readiness_report
+from pragma_encoder.masking import MaskingStrategy
+from pragma_encoder.model import PRAGMA, PRAGMAConfig
+from pragma_encoder.model.assembler import EmbeddingAssembler
+from pragma_encoder.tokenizer.vocabulary import VocabularySpec
+from pragma_encoder.training.readiness import make_readiness_report
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────

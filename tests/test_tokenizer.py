@@ -21,12 +21,12 @@ from typing import Any, List, Union
 
 import pytest
 
-from src.model.config import PRAGMAConfig
-from src.tokenizer.base import BaseTokenizer
-from src.tokenizer.categorical import CategoricalTokenizer
-from src.tokenizer.numerical import NumericalTokenizer
-from src.tokenizer.pipeline import TokenizerPipeline
-from src.tokenizer.temporal import TemporalTokenizer
+from pragma_encoder.model.config import PRAGMAConfig
+from pragma_encoder.tokenizer.base import BaseTokenizer
+from pragma_encoder.tokenizer.categorical import CategoricalTokenizer
+from pragma_encoder.tokenizer.numerical import NumericalTokenizer
+from pragma_encoder.tokenizer.pipeline import TokenizerPipeline
+from pragma_encoder.tokenizer.temporal import TemporalTokenizer
 
 # ---------------------------------------------------------------------------
 # Test fixtures and helpers
@@ -115,7 +115,7 @@ class TestShapes:
     def test_textual_encode_returns_list_of_ints(self) -> None:
         """§2.2: textual value tokeniser → list of ints (BPE subwords)."""
         pytest.importorskip("tokenizers", reason="tokenizers library not installed")
-        from src.tokenizer.textual import TextualTokenizer
+        from pragma_encoder.tokenizer.textual import TextualTokenizer
 
         tok = TextualTokenizer(vocab_size=100, max_length=16)
         corpus = [

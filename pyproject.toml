@@ -10,6 +10,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["tests*"]
+
 [project.optional-dependencies]
 # kfp is optional: pipeline components and pragma_pipeline.py import it
 # conditionally (_KFP_AVAILABLE guard). Core training and the workbench API
@@ -51,7 +55,7 @@ ignore = ["N806", "N812"]
 # E402 (module-level import not at top) is intentional here.
 "tests/test_*.py" = ["E402"]
 # The IBM TabFormer smoke CSV header is a fixed-format string that cannot be wrapped.
-"src/data/adapters/ibm_tabformer_smoke.py" = ["E501"]
+"src/pragma_encoder/data/adapters/ibm_tabformer_smoke.py" = ["E501"]
 # The Level 3b smoke test embeds a TabFormer CSV header and assertion messages that
 # cannot be wrapped without altering the fixed IBM format or test clarity.
 "tests/openshift/test_03b_training_job_smoke.py" = ["E501"]
@@ -68,3 +72,14 @@ ignore = ["N806", "N812"]
 "tests/openshift/test_05_s3_checkpoint_resume.py" = ["E501"]
 # The Level 6 GPU smoke test has long shell script lines and assertion messages.
 "tests/openshift/test_06_gpu_training_smoke.py" = ["E501"]
+# The image contract runtime test has assertion messages that include long
+# pragma_encoder module paths — these cannot be shortened without losing clarity.
+"tests/openshift/test_02b_image_contract_runtime.py" = ["E501"]
+# The checkpoint resume tests have mock.patch strings and assertion messages
+# that include full pragma_encoder.training.checkpoints module paths.
+"tests/test_checkpoint_resume.py" = ["E501"]
+# The workbench API test has a with-statement that exceeds 100 chars after the
+# pragma_encoder namespace rename; the mock.patch path cannot be shortened.
+"tests/test_workbench_api.py" = ["E501"]
+# The workbench submit test has an error message with the full module path.
+"tests/test_workbench_submit.py" = ["E501"]

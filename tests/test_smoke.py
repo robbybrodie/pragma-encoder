@@ -15,10 +15,10 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="torch not installed")
 
-from src.masking import MaskingStrategy
-from src.model import PRAGMA, PRAGMAConfig
-from src.model.assembler import EmbeddingAssembler
-from src.tokenizer.vocabulary import VocabularySpec
+from pragma_encoder.masking import MaskingStrategy
+from pragma_encoder.model import PRAGMA, PRAGMAConfig
+from pragma_encoder.model.assembler import EmbeddingAssembler
+from pragma_encoder.tokenizer.vocabulary import VocabularySpec
 
 
 def test_full_pipeline_smoke():

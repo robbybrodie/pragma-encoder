@@ -32,8 +32,8 @@ torch = pytest.importorskip("torch", reason="torch not installed")
 nn = torch.nn
 import torch.nn.functional as F
 
-from src.model.config import PRAGMAConfig
-from src.model.mlm_head import MLMHead
+from pragma_encoder.model.config import PRAGMAConfig
+from pragma_encoder.model.mlm_head import MLMHead
 
 _CONFIG = PRAGMAConfig.pragma_s()
 

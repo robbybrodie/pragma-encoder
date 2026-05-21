@@ -265,7 +265,7 @@ class TestPipelineStageNames:
         stage names so show_pipeline() and the pipeline run stay in sync.
         """
         _require_importable()
-        from src.workbench._run import PIPELINE_STEP_NAMES
+        from pragma_encoder.workbench._run import PIPELINE_STEP_NAMES
         assert tuple(_comp.PIPELINE_STAGE_NAMES) == PIPELINE_STEP_NAMES, (
             f"PIPELINE_STAGE_NAMES {tuple(_comp.PIPELINE_STAGE_NAMES)} "
             f"must match PIPELINE_STEP_NAMES {PIPELINE_STEP_NAMES}"
@@ -1027,7 +1027,7 @@ class TestDatasetAdapterUsage:
         src = _src_text(_COMPONENTS_PATH)
         assert "get_adapter" in src, (
             "pipeline/components_pragma.py must reference get_adapter() "
-            "(from src.data.adapters import get_adapter) in the prepare stage. "
+            "(from pragma_encoder.data.adapters import get_adapter) in the prepare stage. "
             "Do not hardcode IBM TabFormer-specific logic in the pipeline."
         )
 
@@ -1057,7 +1057,7 @@ class TestDatasetAdapterUsage:
         has_config_ref = "PRAGMAConfig" in src or "_MODEL_SIZE_MAP" in src
         assert has_config_ref, (
             "pipeline/components_pragma.py must reference PRAGMAConfig or "
-            "_MODEL_SIZE_MAP from src.model.config in the train stage. "
+            "_MODEL_SIZE_MAP from pragma_encoder.model.config in the train stage. "
             "Do not reimplement the model_size → config mapping."
         )
 
@@ -1126,7 +1126,7 @@ class TestNoCircularDependency:
         to module level — violating the lazy-import boundary.
         """
         pipeline_mods_before = {k for k in sys.modules if k.startswith("pipeline")}
-        importlib.import_module("src.workbench._decorators")
+        importlib.import_module("pragma_encoder.workbench._decorators")
         pipeline_mods_after = {k for k in sys.modules if k.startswith("pipeline")}
         new_pipeline_mods = pipeline_mods_after - pipeline_mods_before
         assert not new_pipeline_mods, (

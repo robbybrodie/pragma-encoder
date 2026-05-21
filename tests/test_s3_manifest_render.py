@@ -80,7 +80,7 @@ class TestS3ResumeLocalPrereqs:
         """
         checkpoints_path = (
             pathlib.Path(__file__).parent.parent
-            / "src" / "training" / "checkpoints.py"
+            / "src" / "pragma_encoder" / "training" / "checkpoints.py"
         )
         assert checkpoints_path.exists(), (
             "src/training/checkpoints.py not found. "

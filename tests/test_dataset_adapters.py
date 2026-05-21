@@ -23,9 +23,9 @@ from pathlib import Path
 
 import pytest
 
-from src.data.adapters import DatasetAdapterProtocol, IBMTabFormerAdapter, get_adapter
-from src.data.dataset_manifest import DatasetManifest, DatasetManifestProtocol
-from src.model.config import PRAGMAConfig
+from pragma_encoder.data.adapters import DatasetAdapterProtocol, IBMTabFormerAdapter, get_adapter
+from pragma_encoder.data.dataset_manifest import DatasetManifest, DatasetManifestProtocol
+from pragma_encoder.model.config import PRAGMAConfig
 
 # ---------------------------------------------------------------------------
 # Fixtures — minimal TabFormer CSV for local (upload=False) testing

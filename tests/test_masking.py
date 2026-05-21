@@ -32,8 +32,8 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="torch not installed")
 
-from src.masking.strategy import MaskingStrategy
-from src.model.config import PRAGMAConfig
+from pragma_encoder.masking.strategy import MaskingStrategy
+from pragma_encoder.model.config import PRAGMAConfig
 
 _CONFIG = PRAGMAConfig.pragma_s()
 
