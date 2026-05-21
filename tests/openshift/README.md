@@ -314,7 +314,7 @@ PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder-training:latest \
 pytest tests/openshift/test_05_s3_checkpoint_resume.py -q
 ```
 
-Expected: 4 passed (3 local prereqs + 1 two-run S3 checkpoint/resume runtime smoke). ~70s.
+Expected: 4 passed (3 local prereqs + 1 two-run S3 checkpoint/resume runtime smoke). Runtime is typically around 70s on the reference test cluster.
 
 ---
 

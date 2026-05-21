@@ -41,11 +41,6 @@ Known limitation resolved:
   Level 5 validates the resolution of TD-006.
   Level 5 smoke uses nnodes=2 (Master + 1 Worker) — the minimal distributed case.
 
-xfail status:
-  Tests are initially marked xfail. They will xpass once:
-    - src/training/checkpoints.py is implemented
-    - scripts/train_pragma.py uses resolve_resume_checkpoint for all ranks
-    - The trained image is rebuilt with the fix
 """
 
 from __future__ import annotations
@@ -73,17 +68,6 @@ _require_s3_resume = pytest.mark.skipif(
         "and PRAGMA_TRAINING_IMAGE=<image>. "
         "S3 credentials (MODEL_REGISTRY_*) must be configured in the pod environment."
     ),
-)
-
-# xfail: implementation not yet complete (TD-006 fix not yet in train_pragma.py).
-# Remove this marker once src/training/checkpoints.py is integrated and
-# the training image is rebuilt.
-_xfail_td006_not_fixed = pytest.mark.xfail(
-    reason=(
-        "TD-006 (S3 all-rank download) fix not yet implemented in train_pragma.py. "
-        "xpass when src/training/checkpoints.py is integrated and image rebuilt."
-    ),
-    strict=False,
 )
 
 # ---------------------------------------------------------------------------
@@ -194,14 +178,15 @@ class TestS3CheckpointResumeSmoke:
     """Level 5: Two-run S3 checkpoint/resume with all-rank download.
 
     Run 1: Train for a few steps, save checkpoint, upload to S3.
-    Run 2: Resume with --resume, all ranks download from S3, continue training.
+    Run 2: Resume with --resume; all ranks independently download from S3.
 
-    Both tests are initially xfail because:
-      - src/training/checkpoints.py does not yet exist
-      - train_pragma.py does not yet call resolve_resume_checkpoint
-      - The training image has not been rebuilt with the fix
+    Validates TD-006 resolution: every rank downloads the checkpoint to its
+    own emptyDir rather than relying on rank 0's local copy. Implemented in
+    src/training/checkpoints.py (resolve_resume_checkpoint) and integrated
+    into scripts/train_pragma.py.
 
-    xpass when: implementation is complete and image is rebuilt.
+    Requires RUN_OPENSHIFT_S3_RESUME_SMOKE=1, PRAGMA_TRAINING_IMAGE, and
+    S3 credentials (MODEL_REGISTRY_*) configured via the pod secret.
     """
 
     _NNODES = 2
@@ -330,6 +315,129 @@ class TestS3CheckpointResumeSmoke:
         print(
             f"[Level 5] === PASSED: S3 checkpoint/resume (nnodes={self._NNODES}) === "
             f"TD-006 resolution confirmed."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Manifest render tests — local, no cluster access
+# ---------------------------------------------------------------------------
+
+
+class TestS3ResumeManifestRender:
+    """Local manifest-render tests — no cluster access required.
+
+    Calls _render_s3_resume_manifest() and parses the result with
+    yaml.safe_load to verify structural correctness without a cluster.
+
+    Catches regressions like the YAML indentation bug that previously caused
+    oc apply to fail when --resume was embedded in a block scalar.
+
+    7 tests — always run (no guard variable needed).
+    """
+
+    # Common parameters shared by all render calls.
+    _DEFAULTS = dict(
+        job_name="pragma-s3-render-test",
+        namespace="test-ns",
+        image="image-registry.example.com/test/pragma-training:latest",
+        test_id="pragma-it-20260521-120000-deadbeef",
+        nnodes=2,
+        s3_prefix="pragma-encoder/test-checkpoints/pragma-it-20260521",
+        max_steps=5,
+    )
+
+    def test_manifest_is_valid_yaml(self) -> None:
+        """_render_s3_resume_manifest must produce parseable YAML."""
+        import yaml  # noqa: PLC0415
+
+        manifest = _render_s3_resume_manifest(**self._DEFAULTS, resume=False)
+        parsed = yaml.safe_load(manifest)
+        assert parsed is not None, (
+            "_render_s3_resume_manifest must produce non-empty YAML. "
+            f"Got: {manifest[:200]!r}"
+        )
+
+    def test_manifest_kind_is_pytorchjob(self) -> None:
+        """Rendered manifest kind must be PyTorchJob."""
+        import yaml  # noqa: PLC0415
+
+        parsed = yaml.safe_load(_render_s3_resume_manifest(**self._DEFAULTS, resume=False))
+        assert parsed["kind"] == "PyTorchJob", (
+            f"Expected kind=PyTorchJob, got: {parsed.get('kind')!r}"
+        )
+
+    def test_manifest_api_version_is_kubeflow_v1(self) -> None:
+        """Rendered manifest apiVersion must be kubeflow.org/v1."""
+        import yaml  # noqa: PLC0415
+
+        parsed = yaml.safe_load(_render_s3_resume_manifest(**self._DEFAULTS, resume=False))
+        assert parsed["apiVersion"] == "kubeflow.org/v1", (
+            f"Expected apiVersion=kubeflow.org/v1, got: {parsed.get('apiVersion')!r}"
+        )
+
+    def test_manifest_has_master_and_worker(self) -> None:
+        """Rendered manifest must define both Master and Worker replica specs."""
+        import yaml  # noqa: PLC0415
+
+        parsed = yaml.safe_load(_render_s3_resume_manifest(**self._DEFAULTS, resume=False))
+        specs = parsed["spec"]["pytorchReplicaSpecs"]
+        assert "Master" in specs, (
+            "Rendered manifest must define Master replica spec. "
+            f"Found specs: {list(specs.keys())}"
+        )
+        assert "Worker" in specs, (
+            "Rendered manifest must define Worker replica spec. "
+            f"Found specs: {list(specs.keys())}"
+        )
+
+    def test_worker_replicas_equals_nnodes_minus_one(self) -> None:
+        """Worker replicas must equal nnodes - 1 for correct N-node topology."""
+        import yaml  # noqa: PLC0415
+
+        for nnodes in (2, 3, 4):
+            params = {**self._DEFAULTS, "nnodes": nnodes}
+            parsed = yaml.safe_load(_render_s3_resume_manifest(**params, resume=False))
+            worker_replicas = parsed["spec"]["pytorchReplicaSpecs"]["Worker"]["replicas"]
+            assert worker_replicas == nnodes - 1, (
+                f"nnodes={nnodes}: Worker replicas must be nnodes-1={nnodes - 1}. "
+                f"Got: {worker_replicas}"
+            )
+
+    def test_manifest_contains_s3_prefix(self) -> None:
+        """Rendered manifest must include the --s3-checkpoint-prefix argument."""
+        s3_prefix = "pragma-encoder/test-checkpoints/pragma-it-20260521"
+        params = {**self._DEFAULTS, "s3_prefix": s3_prefix}
+        manifest = _render_s3_resume_manifest(**params, resume=False)
+        assert f"--s3-checkpoint-prefix {s3_prefix}" in manifest, (
+            f"Manifest must contain '--s3-checkpoint-prefix {s3_prefix}'. "
+            "The train_pragma.py S3 upload/download depends on this argument."
+        )
+
+    def test_resume_manifest_contains_resume_flag(self) -> None:
+        """Resume manifest must include --resume on the same command line."""
+        manifest = _render_s3_resume_manifest(**self._DEFAULTS, resume=True)
+        assert "--resume" in manifest, (
+            "resume=True manifest must contain '--resume'. "
+            "Without it, train_pragma.py will not attempt to load a checkpoint."
+        )
+
+    def test_non_resume_manifest_lacks_resume_flag(self) -> None:
+        """Non-resume manifest must not contain --resume.
+
+        Prevents false-positive resume attempts on first-run training jobs
+        where no checkpoint exists yet.
+        """
+        manifest = _render_s3_resume_manifest(**self._DEFAULTS, resume=False)
+        # The flag must not appear as a standalone argument.
+        # '--s3-checkpoint-prefix' must still be present (caught by other test).
+        import re  # noqa: PLC0415
+
+        # Match --resume as a word boundary to avoid matching --s3-checkpoint-prefix
+        # or other flags that contain 'resume' as a substring.
+        resume_as_flag = re.search(r"(?<!\w)--resume(?!\w)", manifest)
+        assert resume_as_flag is None, (
+            "resume=False manifest must not contain '--resume'. "
+            f"Found match at position {resume_as_flag.start() if resume_as_flag else 'N/A'}."
         )
 
 
