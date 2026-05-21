@@ -436,6 +436,57 @@ expected keys. The sealed production Secret is at
 
 ---
 
+## Storage Adapter Boundary
+
+`pragma_encoder` separates storage transport from checkpoint semantics via the
+`CheckpointStore` Protocol in `src/pragma_encoder/training/checkpoints.py`.
+
+### What this boundary enforces
+
+| Layer | What it owns |
+|---|---|
+| `CheckpointStore` (Protocol) | Interface: `latest_key()`, `fetch()`, `put()` |
+| `LocalCheckpointStore` | Filesystem operations only — no S3 calls |
+| `S3CheckpointStore` | boto3 S3 operations — no local filesystem assumptions beyond `output_dir` |
+| `build_checkpoint_store()` | Factory: reads `MODEL_REGISTRY_*` env vars, returns correct adapter |
+| `resolve_resume_checkpoint()` | Distributed rank coordination — calls storage adapter, does not know transport details |
+| `train.py` | Calls adapter `put()` after each checkpoint save; calls `resolve_resume_checkpoint()` on resume |
+
+### What the boundary prevents
+
+- Training code does not contain S3-specific logic — it calls the `CheckpointStore` interface
+- The `CheckpointStore` adapters do not know which Kubernetes Secret supplied `MODEL_REGISTRY_*`
+- `pragma-workbench-env` (the Secret name) does not appear in `src/pragma_encoder` — it is a
+  platform fixture (`openshift/secrets/`, `tests/openshift/fixtures/`) only
+- `LocalCheckpointStore.put()` is a deliberate no-op — the training loop saves files locally
+  before calling `put()`, so there is nothing to persist again
+
+### Storage adapter selection logic
+
+```
+build_checkpoint_store(output_dir, s3_prefix)
+  ├── MODEL_REGISTRY_BUCKET set AND MODEL_REGISTRY_ENDPOINT set AND s3_prefix non-empty
+  │   └── returns S3CheckpointStore(config, s3_prefix)
+  └── otherwise
+      └── returns LocalCheckpointStore(output_dir)
+```
+
+An empty `s3_prefix` disables S3 even when env vars are present. This is the
+correct single-node / CI / local development behaviour.
+
+### `pragma-workbench-env` is a platform fixture, not a product abstraction
+
+The `pragma-workbench-env` Secret is:
+- Defined in `openshift/secrets/workbench-secret.template.yaml`
+- Referenced in `tests/openshift/fixtures/` as the cluster-side Secret name
+- **Not referenced in `src/pragma_encoder/`** — the package reads `MODEL_REGISTRY_*`
+  env vars from the process environment and does not care which Secret provided them
+
+Mechanical enforcement: `TestPlatformNameBoundary` in `tests/test_checkpoint_resume.py`
+scans all `src/pragma_encoder/*.py` files and fails if `pragma-workbench-env` appears.
+
+---
+
 ## Hardware Profile — Current and Target State
 
 ### Current state
