@@ -443,7 +443,7 @@ Key changes:
 
 **Date:** 2026-05-22
 **Severity:** Low (functional; emits DeprecationWarning; no production credential risk)
-**Status:** Open — code fallback in place; re-sealing required to resolve
+**Status:** Resolved — 2026-05-22 (SealedSecret re-sealed with native AWS_* keys)
 
 ### Description
 
