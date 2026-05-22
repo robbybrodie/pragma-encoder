@@ -224,7 +224,7 @@ weights. Training continued with diverged model states.
 Option A implemented: all ranks download the checkpoint from S3 independently.
 
 **`src/training/checkpoints.py`** — new module implementing the all-rank download pattern:
-- `parse_s3_config_from_env()` — reads `MODEL_REGISTRY_*` env vars; returns `None` when absent
+- `parse_s3_config_from_env()` — reads native `AWS_*` env vars (primary) or `MODEL_REGISTRY_*` (deprecated fallback); returns `None` when absent
 - `list_checkpoint_keys(client, bucket, prefix)` — lists `.pt` keys under an S3 prefix
 - `select_latest_checkpoint_key(client, bucket, prefix)` — returns the latest key by `LastModified`
 - `upload_checkpoint_if_rank0(ckpt_path, s3_prefix, is_rank0)` — rank-0-only upload (no-op on workers)
@@ -436,3 +436,87 @@ Key changes:
 - Docs: `docs/openshift-ai-3.3-alignment.md` — Platform Neutrality section
 - ADR 003: `docs/decisions/003-workbench-training-api.md`
 - ADR 004: `docs/decisions/004-workbench-decorated-pipelines.md`
+
+---
+
+## TD-010: SealedSecret carries legacy MODEL_REGISTRY_* key names
+
+**Date:** 2026-05-22
+**Severity:** Low (functional; emits DeprecationWarning; no production credential risk)
+**Status:** Open — code fallback in place; re-sealing required to resolve
+
+### Description
+
+The live SealedSecret (`openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml`)
+was sealed with legacy custom key names:
+
+```
+MODEL_REGISTRY_ACCESS_KEY   → should be: AWS_ACCESS_KEY_ID
+MODEL_REGISTRY_SECRET_KEY   → should be: AWS_SECRET_ACCESS_KEY
+MODEL_REGISTRY_ENDPOINT     → should be: AWS_S3_ENDPOINT
+MODEL_REGISTRY_BUCKET       → should be: AWS_S3_BUCKET
+```
+
+The native OpenShift AI S3 Connection schema (source of truth: `redhat-ods-applications/s3`
+ConfigMap) uses the `AWS_*` names. The RHOAI dashboard injects these into pods as env vars
+when a Connection is attached.
+
+Additionally, the SealedSecret carried two non-S3 credentials that do not belong in an
+S3 Connection:
+- `AI_PLATFORM_API_URL` — RHOAI dashboard URL; belongs in a platform ConfigMap
+- `NGC_API_KEY` — NVIDIA registry credential; belongs in a separate `registry-credentials` Secret
+
+### Current state
+
+`src/pragma_encoder/training/checkpoints.py` and
+`src/pragma_encoder/data/adapters/ibm_tabformer.py` now read native `AWS_*` keys first
+and fall back to `MODEL_REGISTRY_*` keys with `DeprecationWarning`. This keeps the live
+cluster working while re-sealing is pending.
+
+```
+DeprecationWarning: S3 config read from deprecated MODEL_REGISTRY_* env vars.
+Re-seal the workbench runtime secret with native AWS_* key names (TD-010).
+```
+
+### Resolution
+
+1. Populate the plaintext template with real credentials:
+   ```bash
+   cp openshift/secrets/workbench-secret.template.yaml openshift/secrets/workbench-secret.yaml
+   # Edit workbench-secret.yaml with real AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+   # AWS_S3_ENDPOINT, AWS_S3_BUCKET values.
+   ```
+
+2. Re-seal with kubeseal:
+   ```bash
+   kubeseal --scope namespace-wide \
+     --namespace pragma-encoder \
+     --format yaml \
+     < openshift/secrets/workbench-secret.yaml \
+     > openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml
+   ```
+
+3. Commit the new sealed file. Delete the plaintext file.
+
+4. Once the new Secret is live on the cluster the `DeprecationWarning` will stop and the
+   `MODEL_REGISTRY_*` fallback path can be removed from `checkpoints.py` and
+   `ibm_tabformer.py`.
+
+5. Non-S3 credentials (`NGC_API_KEY`) must be moved to a separate
+   `openshift/gitops/secrets/registry-credentials.sealed.yaml`.
+
+### Blocking criteria for removal of fallback
+
+The `MODEL_REGISTRY_*` fallback code in `checkpoints.py` and `ibm_tabformer.py` may be
+removed when:
+- The re-sealed Secret is live on the cluster (`oc get secret pragma-workbench-env -o json | jq '.data | keys'` shows only `AWS_*` keys)
+- All OpenShift cluster tests pass without DeprecationWarning
+
+### References
+- Sealed Secret: `openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml`
+- Template: `openshift/secrets/workbench-secret.template.yaml`
+- Code: `src/pragma_encoder/training/checkpoints.py` — `parse_s3_config_from_env()`
+- Code: `src/pragma_encoder/data/adapters/ibm_tabformer.py` — `_upload_to_s3()`
+- Schema source of truth: `oc get cm s3 -n redhat-ods-applications -o yaml`
+- Tests: `tests/test_checkpoint_resume.py::TestS3ConfigFromEnv::test_deprecated_model_registry_fallback_emits_warning`
+- Tests: `tests/test_openshift_ai_fixtures.py::TestObjectStorageConnectionFixture::test_no_model_registry_aliases_in_connection_fixture`

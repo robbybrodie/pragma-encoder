@@ -6,7 +6,7 @@ Transforms the IBM TabFormer synthetic credit-card CSV into a DatasetManifest:
   3. Fits FinancialTokenizerPipeline on the first 80% of customers (training split).
   4. Rebuilds the vocabulary layout after fitting (required — see fit_tokenizer.py).
   5. Serialises the fitted pipeline to a local vocab file (pickle).
-  6. If upload=True: uploads CSV and vocab to S3 via MODEL_REGISTRY_* env vars.
+  6. If upload=True: uploads CSV and vocab to S3 via native AWS_* env vars.
   7. Returns a DatasetManifest with one CSV shard, vocab_uri, source metadata, and
      the exact PRAGMAConfig instance passed in.
 
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import warnings
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -212,40 +213,55 @@ class IBMTabFormerAdapter:
         )
 
     def _upload_to_s3(self) -> None:
-        """Upload CSV and vocab to S3 using MODEL_REGISTRY_* env vars.
+        """Upload CSV and vocab to S3 using native OpenShift AI S3 Connection env vars.
 
-        Reads credentials from environment variables:
+        Reads credentials from native env var names first:
+            AWS_S3_BUCKET, AWS_S3_ENDPOINT, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+
+        Deprecated fallback (emits DeprecationWarning):
             MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT,
             MODEL_REGISTRY_ACCESS_KEY, MODEL_REGISTRY_SECRET_KEY
 
         Raises:
-            EnvironmentError: If any required credential env var is missing.
+            EnvironmentError: If neither native AWS_* nor legacy MODEL_REGISTRY_*
+                              bucket and endpoint env vars are set.
             Exception: boto3 raises on S3 connection or upload failure.
         """
         import boto3  # optional import — not required when upload=False
 
-        required = [
-            "MODEL_REGISTRY_BUCKET",
-            "MODEL_REGISTRY_ENDPOINT",
-            "MODEL_REGISTRY_ACCESS_KEY",
-            "MODEL_REGISTRY_SECRET_KEY",
-        ]
-        missing = [k for k in required if not os.environ.get(k)]
-        if missing:
-            raise EnvironmentError(
-                f"S3 upload requires these MODEL_REGISTRY_* env vars: {missing}"
+        # --- Primary path: native OpenShift AI S3 Connection keys ---
+        bucket = os.environ.get("AWS_S3_BUCKET", "").strip()
+        endpoint = os.environ.get("AWS_S3_ENDPOINT", "").strip()
+        access_key = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
+        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
+
+        if not bucket or not endpoint:
+            # --- Deprecated fallback: MODEL_REGISTRY_* keys ---
+            bucket = os.environ.get("MODEL_REGISTRY_BUCKET", "").strip()
+            endpoint = os.environ.get("MODEL_REGISTRY_ENDPOINT", "").strip()
+            access_key = os.environ.get("MODEL_REGISTRY_ACCESS_KEY", "").strip()
+            secret_key = os.environ.get("MODEL_REGISTRY_SECRET_KEY", "").strip()
+            if not bucket or not endpoint:
+                raise EnvironmentError(
+                    "S3 upload requires AWS_S3_BUCKET and AWS_S3_ENDPOINT env vars "
+                    "(native OpenShift AI S3 Connection schema). "
+                    "See docs/openshift-storage-pattern.md §Credentials."
+                )
+            warnings.warn(
+                "S3 upload using deprecated MODEL_REGISTRY_* env vars. "
+                "Re-seal the workbench runtime secret with native AWS_S3_BUCKET / "
+                "AWS_S3_ENDPOINT / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY key names. "
+                "See TD-010 in docs/tech-debt.md.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
-        bucket = os.environ["MODEL_REGISTRY_BUCKET"]
-        endpoint = os.environ["MODEL_REGISTRY_ENDPOINT"]
-        access_key = os.environ["MODEL_REGISTRY_ACCESS_KEY"]
-        secret_key = os.environ["MODEL_REGISTRY_SECRET_KEY"]
-
+        endpoint_url = endpoint if endpoint.startswith("http") else f"https://{endpoint}"
         s3 = boto3.client(
             "s3",
-            endpoint_url=f"https://{endpoint}",
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key or None,
+            aws_secret_access_key=secret_key or None,
         )
 
         s3.upload_file(str(self._csv_path), bucket, _S3_CSV_KEY)

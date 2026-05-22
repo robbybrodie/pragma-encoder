@@ -169,10 +169,14 @@ class TestProperties:
     ) -> None:
         """ADR 003: upload=False must not attempt S3 access.
 
-        Unset all MODEL_REGISTRY_* env vars. If prepare(upload=False) tries
-        to connect to S3, it will fail with a missing-credentials error.
-        With upload=False, it must succeed silently.
+        Unset all S3 env vars (native AWS_* and legacy MODEL_REGISTRY_*).
+        If prepare(upload=False) tries to connect to S3, it will fail with a
+        missing-credentials error. With upload=False, it must succeed silently.
         """
+        monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
+        monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
         monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
         monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         monkeypatch.delenv("MODEL_REGISTRY_ACCESS_KEY", raising=False)

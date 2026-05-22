@@ -25,8 +25,21 @@ semantics. Two concrete adapters are provided:
   ``S3CheckpointStore``     — S3-compatible object store via boto3.
 
 Use ``build_checkpoint_store()`` to select the right adapter at runtime.
-The adapter reads ``MODEL_REGISTRY_*`` env vars; it does not know which
-Kubernetes Secret or OpenShift Connection provided them.
+The adapter reads native OpenShift AI S3 Connection env vars (``AWS_*``);
+it does not know which Kubernetes Secret or OpenShift Connection provided them.
+
+Native OpenShift AI S3 Connection env var names (source of truth:
+``redhat-ods-applications/s3`` ConfigMap, RHOAI 2.25.6):
+
+    AWS_ACCESS_KEY_ID      (required)
+    AWS_SECRET_ACCESS_KEY  (required)
+    AWS_S3_ENDPOINT        (required)
+    AWS_DEFAULT_REGION     (optional)
+    AWS_S3_BUCKET          (optional)
+
+Deprecated fallback: ``MODEL_REGISTRY_*`` env vars are still accepted with a
+``DeprecationWarning``. Re-seal the workbench runtime secret with native
+``AWS_*`` key names to remove the fallback (see TD-010 in docs/tech-debt.md).
 
 No shared filesystem (emptyDir) is assumed between ranks.
 No kfp / kfp-kubernetes is imported — this is a training-image-only module.
@@ -35,6 +48,7 @@ environments where boto3 is not installed (e.g. local dev without S3 access).
 
 Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 TD-006: docs/tech-debt.md — multi-node checkpoint resume with per-pod emptyDir
+TD-010: docs/tech-debt.md — SealedSecret needs re-sealing with native AWS_* keys
 """
 
 from __future__ import annotations
@@ -42,6 +56,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+import warnings
 from typing import Optional, Protocol, runtime_checkable
 
 import torch
@@ -72,19 +87,53 @@ class _S3Config(dict):
 
 
 def parse_s3_config_from_env() -> Optional[_S3Config]:
-    """Parse S3 connection config from MODEL_REGISTRY_* environment variables.
+    """Parse S3 connection config from environment variables.
 
-    Required vars: MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT.
-    Optional vars: MODEL_REGISTRY_ACCESS_KEY, MODEL_REGISTRY_SECRET_KEY.
+    Reads native OpenShift AI S3 Connection env var names first:
+        AWS_S3_BUCKET          (required)
+        AWS_S3_ENDPOINT        (required)
+        AWS_ACCESS_KEY_ID      (optional — anonymous access if absent)
+        AWS_SECRET_ACCESS_KEY  (optional — anonymous access if absent)
+
+    Deprecated fallback (emits DeprecationWarning):
+        MODEL_REGISTRY_BUCKET   → bucket
+        MODEL_REGISTRY_ENDPOINT → endpoint
+        MODEL_REGISTRY_ACCESS_KEY  → access_key
+        MODEL_REGISTRY_SECRET_KEY  → secret_key
+
+    The fallback exists because the live SealedSecret still carries
+    MODEL_REGISTRY_* key names (see TD-010 in docs/tech-debt.md).
+    Re-seal the secret with native AWS_* key names to remove the warning.
 
     Returns:
         _S3Config dict with keys: bucket, endpoint, access_key, secret_key.
-        None if MODEL_REGISTRY_BUCKET or MODEL_REGISTRY_ENDPOINT is absent/empty.
+        None if neither AWS_S3_BUCKET/AWS_S3_ENDPOINT nor
+        MODEL_REGISTRY_BUCKET/MODEL_REGISTRY_ENDPOINT are present.
     """
+    # --- Primary path: native OpenShift AI S3 Connection keys ---
+    bucket = os.environ.get("AWS_S3_BUCKET", "").strip()
+    endpoint = os.environ.get("AWS_S3_ENDPOINT", "").strip()
+    if bucket and endpoint:
+        return _S3Config(
+            bucket=bucket,
+            endpoint=endpoint,
+            access_key=os.environ.get("AWS_ACCESS_KEY_ID", "").strip(),
+            secret_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip(),
+        )
+
+    # --- Deprecated fallback: MODEL_REGISTRY_* keys ---
     bucket = os.environ.get("MODEL_REGISTRY_BUCKET", "").strip()
     endpoint = os.environ.get("MODEL_REGISTRY_ENDPOINT", "").strip()
     if not bucket or not endpoint:
         return None
+    warnings.warn(
+        "S3 config read from deprecated MODEL_REGISTRY_* env vars. "
+        "Re-seal the workbench runtime secret with native AWS_S3_BUCKET / "
+        "AWS_S3_ENDPOINT / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY key names. "
+        "See TD-010 in docs/tech-debt.md.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return _S3Config(
         bucket=bucket,
         endpoint=endpoint,
@@ -253,9 +302,10 @@ class LocalCheckpointStore:
 class S3CheckpointStore:
     """Checkpoint store backed by an S3-compatible object store.
 
-    Reads ``MODEL_REGISTRY_*`` env vars for connection config (via the
-    ``_S3Config`` passed at construction).  Does not know which Kubernetes
-    Secret or OpenShift AI Connection provided those env vars.
+    Reads native OpenShift AI S3 Connection env vars (``AWS_S3_BUCKET``,
+    ``AWS_S3_ENDPOINT``, ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``)
+    via the ``_S3Config`` passed at construction.  Does not know which
+    Kubernetes Secret or OpenShift AI Connection provided those env vars.
 
     Used for distributed (multi-node) training where each pod has its own
     ephemeral emptyDir and must independently download checkpoints from S3.
@@ -295,14 +345,14 @@ def build_checkpoint_store(
 ) -> CheckpointStore:
     """Factory: return the appropriate CheckpointStore for the current environment.
 
-    Returns ``S3CheckpointStore`` when both ``MODEL_REGISTRY_*`` env vars are
-    present (bucket + endpoint) and ``s3_prefix`` is non-empty.
+    Returns ``S3CheckpointStore`` when S3 env vars are present (bucket +
+    endpoint) and ``s3_prefix`` is non-empty.
 
     Returns ``LocalCheckpointStore`` otherwise (local development, CI, or any
     run where S3 is not configured).
 
     The caller (``train.py``) passes ``--s3-checkpoint-prefix`` as ``s3_prefix``.
-    The ``MODEL_REGISTRY_*`` env vars are read from the process environment;
+    The native ``AWS_*`` env vars are read from the process environment;
     the factory does not care whether they came from a Kubernetes Secret,
     an OpenShift AI Connection, a ``.env`` file, or a shell export.
 

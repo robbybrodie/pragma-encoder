@@ -2,34 +2,29 @@
 #
 # OpenShift AI 3.3 primitive: Connection (Data Connection)
 #
-# In the RHOAI dashboard, a user creates an object-storage Connection by
-# providing S3 credentials. RHOAI creates a Kubernetes Secret annotated with:
-#   opendatahub.io/managed: "true"
-#   opendatahub.io/connection-type: s3
+# Schema source of truth: redhat-ods-applications/s3 ConfigMap, RHOAI 2.25.6
 #
-# The Secret is then injected into workbench pods and training pods as env vars.
+#   oc get cm s3 -n redhat-ods-applications -o yaml
 #
-# Standard RHOAI Connection env var names:
-#   AWS_ACCESS_KEY_ID
-#   AWS_SECRET_ACCESS_KEY
-#   AWS_S3_BUCKET
-#   AWS_S3_ENDPOINT
-#   AWS_DEFAULT_REGION
+# The RHOAI dashboard creates a Connection by prompting for these fields.
+# The dashboard creates a Kubernetes Secret annotated with
+# opendatahub.io/connection-type: s3, which is then injected into pods as env vars.
 #
-# Alignment note:
-#   The current pragma-encoder training code reads MODEL_REGISTRY_* env vars
-#   (MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT, MODEL_REGISTRY_ACCESS_KEY,
-#   MODEL_REGISTRY_SECRET_KEY). These are equivalent in function to the AWS_*
-#   names that a standard RHOAI Connection would inject.
+# Native S3 Connection env var names (from cluster ConfigMap — authoritative):
+#   AWS_ACCESS_KEY_ID      required  display: "Access key"
+#   AWS_SECRET_ACCESS_KEY  required  display: "Secret key"
+#   AWS_S3_ENDPOINT        required  display: "Endpoint"
+#   AWS_DEFAULT_REGION     optional  display: "Region"
+#   AWS_S3_BUCKET          optional  display: "Bucket"
 #
-#   This fixture uses MODEL_REGISTRY_* naming to match the current code.
-#   When migrating to a formal RHOAI Connection, either:
-#   - create the Connection with these custom key names, OR
-#   - update checkpoints.py to read AWS_S3_BUCKET / AWS_S3_ENDPOINT etc.
+# Non-S3 credentials DO NOT belong in this Connection:
+#   NGC_API_KEY   → belongs in a separate registry-credentials Secret
+#   AI_PLATFORM_API_URL → belongs in a separate platform ConfigMap or workbench env
 #
 # DO NOT commit a populated version of this file.
 # Use kubeseal to seal credentials: see openshift/secrets/workbench-secret.template.yaml
 #
+# Reference: docs/openshift-storage-pattern.md §Credentials
 # Reference: docs/openshift-ai-3.3-alignment.md §Connection / Data Connection
 
 apiVersion: v1
@@ -40,17 +35,16 @@ metadata:
   annotations:
     opendatahub.io/managed: "true"
     opendatahub.io/connection-type: s3
+    opendatahub.io/display-name: "PRAGMA Object Storage"
   labels:
     opendatahub.io/dashboard: "true"
 type: Opaque
 stringData:
-  # S3 credentials — used by pragma_encoder.training.checkpoints
-  # Variable names match what pragma-encoder training code reads.
-  MODEL_REGISTRY_BUCKET: REPLACE_ME
-  MODEL_REGISTRY_ENDPOINT: REPLACE_ME     # e.g. https://s3.example.com
-  MODEL_REGISTRY_ACCESS_KEY: REPLACE_ME
-  MODEL_REGISTRY_SECRET_KEY: REPLACE_ME
-
-  # Additional workbench env vars (not used by training code directly)
-  NGC_API_KEY: REPLACE_ME
-  HF_TOKEN: REPLACE_ME
+  # -----------------------------------------------------------------------
+  # Native OpenShift AI S3 Connection fields (source of truth: cluster schema)
+  # -----------------------------------------------------------------------
+  AWS_ACCESS_KEY_ID: REPLACE_ME       # S3 access key ID (required)
+  AWS_SECRET_ACCESS_KEY: REPLACE_ME   # S3 secret access key (required)
+  AWS_S3_ENDPOINT: REPLACE_ME         # S3 endpoint URL, e.g. https://s3.us-west-2.amazonaws.com (required)
+  AWS_DEFAULT_REGION: REPLACE_ME      # S3 region, e.g. us-west-2 (optional)
+  AWS_S3_BUCKET: REPLACE_ME           # S3 bucket name (optional — can also be passed per-job)

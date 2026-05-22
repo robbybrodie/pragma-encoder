@@ -230,9 +230,12 @@ class TestDryRunBehavior:
     def test_dry_run_does_not_access_s3(self, monkeypatch) -> None:
         """ADR 003: dry_run must not access S3, even when upload=True.
 
-        Remove all MODEL_REGISTRY_* credentials — any S3 access would raise.
+        Remove all S3 credentials (native AWS_* and legacy MODEL_REGISTRY_*) —
+        any S3 access would raise a missing-credentials error.
         """
-        for var in ("MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET",
+        for var in ("AWS_S3_ENDPOINT", "AWS_S3_BUCKET",
+                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                    "MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET",
                     "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
             monkeypatch.delenv(var, raising=False)
 
@@ -674,7 +677,7 @@ class TestLocalModeContract:
         """ADR 003: local mode must succeed without any S3 credentials.
 
         adapter.prepare(upload=False) ensures no boto3 connection is made.
-        No MODEL_REGISTRY_* env vars are required for local mode.
+        No S3 env vars (AWS_* or MODEL_REGISTRY_*) are required for local mode.
         """
         from unittest.mock import MagicMock, patch
         manifest = self._make_manifest()
@@ -682,9 +685,11 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        # Scrub all S3 credentials — local mode must not need them
+        # Scrub all S3 credentials (native AWS_* and legacy MODEL_REGISTRY_*) — local mode must not need them
         env_backup = {}
-        for var in ("MODEL_REGISTRY_BUCKET", "MODEL_REGISTRY_ENDPOINT",
+        for var in ("AWS_S3_BUCKET", "AWS_S3_ENDPOINT",
+                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                    "MODEL_REGISTRY_BUCKET", "MODEL_REGISTRY_ENDPOINT",
                     "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
             env_backup[var] = os.environ.pop(var, None)
         try:
