@@ -178,14 +178,24 @@ class TestCheckpointKeySelection:
 
 
 class TestS3ConfigFromEnv:
-    """Validate S3 config parsing from MODEL_REGISTRY_* env vars."""
+    """Validate S3 config parsing from native AWS_* env vars (primary path).
+
+    The primary path reads the native OpenShift AI S3 Connection env var names:
+        AWS_S3_BUCKET          required
+        AWS_S3_ENDPOINT        required
+        AWS_ACCESS_KEY_ID      optional
+        AWS_SECRET_ACCESS_KEY  optional
+
+    A deprecated fallback reads MODEL_REGISTRY_* keys and emits DeprecationWarning.
+    See TD-010 in docs/tech-debt.md.
+    """
 
     def test_returns_none_when_bucket_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """parse_s3_config_from_env returns None when MODEL_REGISTRY_BUCKET is unset."""
+        """parse_s3_config_from_env returns None when both AWS_S3_BUCKET and MODEL_REGISTRY_BUCKET are unset."""
+        monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
         monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "s3.example.com")
-        monkeypatch.setenv("MODEL_REGISTRY_ACCESS_KEY", "key")
-        monkeypatch.setenv("MODEL_REGISTRY_SECRET_KEY", "secret")
+        monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
+        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         assert result is None, (
             "parse_s3_config_from_env must return None when BUCKET is missing. "
@@ -193,54 +203,94 @@ class TestS3ConfigFromEnv:
         )
 
     def test_returns_none_when_endpoint_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """parse_s3_config_from_env returns None when MODEL_REGISTRY_ENDPOINT is unset."""
-        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "my-bucket")
+        """parse_s3_config_from_env returns None when both AWS_S3_ENDPOINT and MODEL_REGISTRY_ENDPOINT are unset."""
+        monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
+        monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
         monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
-        monkeypatch.setenv("MODEL_REGISTRY_ACCESS_KEY", "key")
-        monkeypatch.setenv("MODEL_REGISTRY_SECRET_KEY", "secret")
         result = parse_s3_config_from_env()
         assert result is None, (
             "parse_s3_config_from_env must return None when ENDPOINT is missing. "
             f"Got: {result!r}"
         )
 
-    def test_returns_config_dict_when_all_vars_set(
+    def test_returns_config_dict_when_native_vars_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """parse_s3_config_from_env returns a config dict when all vars are set."""
-        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "my-bucket")
-        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "s3.example.com")
-        monkeypatch.setenv("MODEL_REGISTRY_ACCESS_KEY", "access-key")
-        monkeypatch.setenv("MODEL_REGISTRY_SECRET_KEY", "secret-key")
+        """parse_s3_config_from_env returns a config dict when native AWS_* vars are set."""
+        monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "access-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret-key")
+        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
+        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         assert result is not None, (
-            "parse_s3_config_from_env must return a config dict when all vars are set."
+            "parse_s3_config_from_env must return a config dict when AWS_* vars are set."
         )
         assert isinstance(result, dict), (
             f"parse_s3_config_from_env must return a dict. Got: {type(result).__name__}"
         )
         assert "bucket" in result, "Config dict must include 'bucket' key."
         assert result["bucket"] == "my-bucket", (
-            f"Config bucket must match MODEL_REGISTRY_BUCKET. Got: {result['bucket']!r}"
+            f"Config bucket must match AWS_S3_BUCKET. Got: {result['bucket']!r}"
         )
 
     def test_config_does_not_expose_secret_in_repr(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """parse_s3_config_from_env result must not expose the secret key in repr."""
-        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "my-bucket")
-        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "s3.example.com")
-        monkeypatch.setenv("MODEL_REGISTRY_ACCESS_KEY", "access-key")
-        monkeypatch.setenv("MODEL_REGISTRY_SECRET_KEY", "very-secret-key-12345")
+        monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "access-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "very-secret-key-12345")
+        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
+        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         if result is None:
             return  # Covered by other tests
         # Repr must not contain the raw secret value
         result_repr = repr(result)
         assert "very-secret-key-12345" not in result_repr, (
-            "Config repr must not expose the raw MODEL_REGISTRY_SECRET_KEY value. "
+            "Config repr must not expose the raw AWS_SECRET_ACCESS_KEY value. "
             "Use a redacted placeholder or exclude from repr. "
             f"Got: {result_repr!r}"
+        )
+
+    def test_deprecated_model_registry_fallback_emits_warning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MODEL_REGISTRY_* fallback returns config but emits DeprecationWarning.
+
+        TD-010: The live SealedSecret uses legacy MODEL_REGISTRY_* key names.
+        The fallback keeps the cluster deployment working while re-sealing is pending.
+        """
+        import warnings  # noqa: PLC0415
+
+        monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
+        monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
+        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "legacy-bucket")
+        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "legacy.s3.example.com")
+        monkeypatch.setenv("MODEL_REGISTRY_ACCESS_KEY", "legacy-key")
+        monkeypatch.setenv("MODEL_REGISTRY_SECRET_KEY", "legacy-secret")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = parse_s3_config_from_env()
+
+        assert result is not None, (
+            "MODEL_REGISTRY_* fallback must still return a config dict (TD-010 compatibility)."
+        )
+        assert result["bucket"] == "legacy-bucket", (
+            f"Fallback config must read MODEL_REGISTRY_BUCKET. Got: {result['bucket']!r}"
+        )
+        deprecation_warnings = [
+            w for w in caught if issubclass(w.category, DeprecationWarning)
+        ]
+        assert deprecation_warnings, (
+            "parse_s3_config_from_env must emit DeprecationWarning when reading "
+            "MODEL_REGISTRY_* fallback env vars. "
+            "Re-seal the workbench runtime secret with native AWS_* key names (TD-010)."
         )
 
 
@@ -1060,12 +1110,14 @@ class TestCheckpointStoreBoundary:
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """build_checkpoint_store returns LocalCheckpointStore when S3 config absent."""
+        monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
+        monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
         monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
         monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="some/prefix")
         assert isinstance(store, LocalCheckpointStore), (
             "build_checkpoint_store must return LocalCheckpointStore when "
-            "MODEL_REGISTRY_BUCKET / MODEL_REGISTRY_ENDPOINT are absent. "
+            "AWS_S3_BUCKET / AWS_S3_ENDPOINT are absent. "
             f"Got: {type(store).__name__}"
         )
 
@@ -1073,8 +1125,10 @@ class TestCheckpointStoreBoundary:
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """build_checkpoint_store returns LocalCheckpointStore when s3_prefix is empty."""
-        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "my-bucket")
-        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "s3.example.com")
+        monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
+        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
+        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="")
         assert isinstance(store, LocalCheckpointStore), (
             "build_checkpoint_store must return LocalCheckpointStore when s3_prefix is empty, "
@@ -1085,17 +1139,19 @@ class TestCheckpointStoreBoundary:
     def test_factory_returns_s3_store_when_config_and_prefix_present(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """build_checkpoint_store returns S3CheckpointStore when env vars + prefix set."""
-        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "my-bucket")
-        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "s3.example.com")
-        monkeypatch.setenv("MODEL_REGISTRY_ACCESS_KEY", "key")
-        monkeypatch.setenv("MODEL_REGISTRY_SECRET_KEY", "secret")
+        """build_checkpoint_store returns S3CheckpointStore when native AWS_* env vars + prefix set."""
+        monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
+        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         store = build_checkpoint_store(
             output_dir=tmp_path, s3_prefix="pragma-encoder/ckpts"
         )
         assert isinstance(store, S3CheckpointStore), (
             "build_checkpoint_store must return S3CheckpointStore when "
-            "MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT, and s3_prefix are all set. "
+            "AWS_S3_BUCKET, AWS_S3_ENDPOINT, and s3_prefix are all set. "
             f"Got: {type(store).__name__}"
         )
 
@@ -1110,9 +1166,9 @@ class TestPlatformNameBoundary:
     """Validate that platform fixture names are absent from the pragma_encoder package.
 
     The pragma_encoder wheel must not contain OpenShift-specific fixture names
-    such as 'pragma-workbench-env' (a Kubernetes Secret name used as a test
-    default). The package reads MODEL_REGISTRY_* env vars; it does not care
-    which Secret provided them.
+    such as 'pragma-workbench-env' (a Kubernetes Secret name). The package reads
+    native AWS_* env vars from the process environment; it does not care which
+    Secret provided them.
 
     This test scans the source tree to enforce the boundary mechanically.
     """
@@ -1125,9 +1181,9 @@ class TestPlatformNameBoundary:
 
         'pragma-workbench-env' is a Kubernetes Secret name — a platform fixture
         defined in openshift/secrets/ and tests/openshift/fixtures/. It must not
-        appear in the installable package source. The package reads
-        MODEL_REGISTRY_* env vars directly; it does not know which Secret
-        provided them.
+        appear in the installable package source. The package reads native
+        AWS_* env vars from the process environment; it does not know which
+        Secret provided them.
         """
         src_dir = self._src_pragma_encoder_dir()
         assert src_dir.exists(), f"src/pragma_encoder must exist at {src_dir}"
@@ -1139,7 +1195,7 @@ class TestPlatformNameBoundary:
         assert not violations, (
             "These src/pragma_encoder files reference 'pragma-workbench-env', "
             "which is a Kubernetes Secret name (OpenShift platform fixture). "
-            "Replace with platform-neutral language referencing MODEL_REGISTRY_* env vars.\n"
+            "Replace with platform-neutral language referencing native AWS_* env vars.\n"
             + "\n".join(f"  {v}" for v in violations)
         )
 

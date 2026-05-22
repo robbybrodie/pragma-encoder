@@ -269,7 +269,8 @@ class TestCoreModulesNoPlatformCode:
 
         'pragma-workbench-env' is a Kubernetes Secret name — a platform fixture
         in openshift/secrets/ and tests/openshift/fixtures/. Core modules must
-        read MODEL_REGISTRY_* env vars without naming the Secret that provides them.
+        read native AWS_* env vars from the process environment without naming
+        the Secret that provides them.
 
         This test is complementary to TestPlatformNameBoundary in
         test_checkpoint_resume.py, which scans the same directory. Both tests
@@ -284,7 +285,7 @@ class TestCoreModulesNoPlatformCode:
         assert not violations, (
             "These core (non-workbench) modules reference 'pragma-workbench-env', "
             "which is a Kubernetes Secret name. Replace with platform-neutral "
-            "language referencing MODEL_REGISTRY_* env vars:\n"
+            "language referencing native AWS_* env vars:\n"
             + "\n".join(f"  {v}" for v in violations)
         )
 

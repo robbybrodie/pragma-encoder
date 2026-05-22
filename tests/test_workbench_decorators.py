@@ -165,7 +165,9 @@ class TestPragmaPipelineDecorator:
 
     def test_decorator_does_not_access_s3(self, monkeypatch) -> None:
         """ADR 004: decorating a function must not access S3, even if creds absent."""
-        for var in ("MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET",
+        for var in ("AWS_S3_ENDPOINT", "AWS_S3_BUCKET",
+                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                    "MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET",
                     "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
             monkeypatch.delenv(var, raising=False)
 
@@ -236,7 +238,8 @@ class TestDatasetIntent:
 
     def test_dataset_does_not_access_s3(self, monkeypatch) -> None:
         """ADR 004: dataset() must not access S3."""
-        for var in ("MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET"):
+        for var in ("AWS_S3_ENDPOINT", "AWS_S3_BUCKET",
+                    "MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET"):
             monkeypatch.delenv(var, raising=False)
 
         dataset("ibm-tabformer")  # must not raise
@@ -314,7 +317,8 @@ class TestTrainIntent:
 
     def test_train_does_not_access_s3(self, monkeypatch) -> None:
         """ADR 004: train() must not access S3."""
-        for var in ("MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET"):
+        for var in ("AWS_S3_ENDPOINT", "AWS_S3_BUCKET",
+                    "MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET"):
             monkeypatch.delenv(var, raising=False)
 
         train(dataset=self._ds(), model_size="S")  # must not raise
@@ -486,7 +490,9 @@ class TestCompileNoSideEffects:
         """ADR 004: compile() must not access S3, even if creds are absent."""
         pytest.importorskip("kfp", reason="kfp not installed")
 
-        for var in ("MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET",
+        for var in ("AWS_S3_ENDPOINT", "AWS_S3_BUCKET",
+                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                    "MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET",
                     "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
             monkeypatch.delenv(var, raising=False)
 
@@ -695,7 +701,8 @@ class TestTrainPragmaModeIntegration:
 
     def test_train_pragma_pipeline_mode_does_not_access_s3(self, monkeypatch) -> None:
         """ADR 004: train_pragma(mode='pipeline') must not access S3."""
-        for var in ("MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET"):
+        for var in ("AWS_S3_ENDPOINT", "AWS_S3_BUCKET",
+                    "MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET"):
             monkeypatch.delenv(var, raising=False)
 
         # Must not raise

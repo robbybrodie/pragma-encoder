@@ -243,27 +243,33 @@ class TestConnectionFixture:
         )
 
     def test_connection_has_required_storage_keys(self) -> None:
-        """Connection fixture must carry the S3 env var keys pragma_encoder reads."""
+        """Connection fixture must carry the native OpenShift AI S3 Connection env var names.
+
+        Source of truth: redhat-ods-applications/s3 ConfigMap, RHOAI 2.25.6.
+        Required fields (injected into pods as env vars by the RHOAI dashboard):
+            AWS_ACCESS_KEY_ID      required
+            AWS_SECRET_ACCESS_KEY  required
+            AWS_S3_ENDPOINT        required
+        """
         doc = _load_yaml(self._CONN)
         string_data = doc.get("stringData", {})
         required_keys = {
-            "MODEL_REGISTRY_BUCKET",
-            "MODEL_REGISTRY_ENDPOINT",
-            "MODEL_REGISTRY_ACCESS_KEY",
-            "MODEL_REGISTRY_SECRET_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_S3_ENDPOINT",
         }
         missing = required_keys - set(string_data.keys())
         assert not missing, (
-            f"Connection fixture is missing required keys: {missing}. "
-            "pragma_encoder.training.checkpoints reads these env vars from the pod. "
-            "Reference: docs/openshift-ai-3.3-alignment.md §Env Var Contract"
+            f"Connection fixture is missing required native S3 keys: {missing}. "
+            "Source of truth: oc get cm s3 -n redhat-ods-applications -o yaml. "
+            "Reference: docs/openshift-storage-pattern.md §Credentials"
         )
 
     def test_connection_credentials_are_placeholder(self) -> None:
         """Credential values must be REPLACE_ME — never real credentials."""
         doc = _load_yaml(self._CONN)
         string_data = doc.get("stringData", {})
-        cred_keys = {"MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"}
+        cred_keys = {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
         for key in cred_keys:
             if key in string_data:
                 assert string_data[key] == "REPLACE_ME", (

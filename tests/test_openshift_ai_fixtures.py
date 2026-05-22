@@ -104,26 +104,75 @@ class TestObjectStorageConnectionFixture:
             "This annotation is applied by RHOAI to Connections it manages."
         )
 
-    def test_has_model_registry_env_vars(self) -> None:
-        """Fixture must template all four MODEL_REGISTRY_* env vars.
+    def test_has_native_s3_env_vars(self) -> None:
+        """Fixture must carry the native OpenShift AI S3 Connection env var names.
 
-        These are the env vars read by pragma_encoder.training.checkpoints.
-        The naming gap (MODEL_REGISTRY_* vs standard RHOAI AWS_*) is documented
-        in docs/openshift-ai-3.3-alignment.md §Alignment gap.
+        Source of truth: redhat-ods-applications/s3 ConfigMap (RHOAI 2.25.6):
+          AWS_ACCESS_KEY_ID      required
+          AWS_SECRET_ACCESS_KEY  required
+          AWS_S3_ENDPOINT        required
+          AWS_DEFAULT_REGION     optional
+          AWS_S3_BUCKET          optional
+
+        The Connection fixture must use these native names so the RHOAI dashboard
+        can populate the mandatory fields from the Secret.
         """
         doc = _load_yaml(_CONNECTION_TEMPLATE)
         string_data = doc.get("stringData", {}) or {}
-        required_keys = {
-            "MODEL_REGISTRY_BUCKET",
-            "MODEL_REGISTRY_ENDPOINT",
-            "MODEL_REGISTRY_ACCESS_KEY",
-            "MODEL_REGISTRY_SECRET_KEY",
+        required_native_keys = {
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_S3_ENDPOINT",
         }
-        missing = required_keys - set(string_data.keys())
+        missing = required_native_keys - set(string_data.keys())
         assert not missing, (
-            f"Connection fixture is missing MODEL_REGISTRY_* keys: {sorted(missing)}\n"
-            "pragma_encoder.training.checkpoints reads these env vars from the pod.\n"
-            "See: docs/openshift-ai-3.3-alignment.md §Env Var Contract"
+            f"Connection fixture is missing native S3 keys: {sorted(missing)}\n"
+            "Source of truth: oc get cm s3 -n redhat-ods-applications -o yaml\n"
+            "See: docs/openshift-storage-pattern.md §Credentials"
+        )
+
+    def test_no_model_registry_aliases_in_connection_fixture(self) -> None:
+        """S3 Connection fixture must not contain MODEL_REGISTRY_* aliases.
+
+        MODEL_REGISTRY_* are custom names that do not match the native RHOAI
+        Connection schema. Including them alongside native AWS_* names would
+        silently duplicate credentials and create inconsistency risk.
+        """
+        doc = _load_yaml(_CONNECTION_TEMPLATE)
+        string_data = doc.get("stringData", {}) or {}
+        alias_keys = {k for k in string_data if k.startswith("MODEL_REGISTRY_")}
+        assert not alias_keys, (
+            f"Connection fixture contains MODEL_REGISTRY_* alias keys: {sorted(alias_keys)}\n"
+            "Use only native OpenShift AI S3 Connection keys (AWS_*).\n"
+            "The training code reads AWS_* with MODEL_REGISTRY_* as a deprecated fallback."
+        )
+
+    def test_no_ngc_api_key_in_connection_fixture(self) -> None:
+        """S3 Connection fixture must not contain NGC_API_KEY.
+
+        NGC_API_KEY is an NVIDIA registry credential — it does not belong
+        in an S3-type Connection. Move it to a separate registry-credentials Secret.
+        """
+        doc = _load_yaml(_CONNECTION_TEMPLATE)
+        string_data = doc.get("stringData", {}) or {}
+        assert "NGC_API_KEY" not in string_data, (
+            "Connection fixture contains NGC_API_KEY. "
+            "NGC credentials belong in a separate registry-credentials Secret, "
+            "not in the S3 Connection."
+        )
+
+    def test_no_ai_platform_api_url_in_connection_fixture(self) -> None:
+        """S3 Connection fixture must not contain AI_PLATFORM_API_URL.
+
+        AI_PLATFORM_API_URL is an RHOAI dashboard URL — it does not belong
+        in an S3-type Connection. Move it to a platform ConfigMap or workbench env.
+        """
+        doc = _load_yaml(_CONNECTION_TEMPLATE)
+        string_data = doc.get("stringData", {}) or {}
+        assert "AI_PLATFORM_API_URL" not in string_data, (
+            "Connection fixture contains AI_PLATFORM_API_URL. "
+            "This is an RHOAI platform URL, not an S3 credential. "
+            "It does not belong in the S3 Connection."
         )
 
     def test_no_real_credentials(self) -> None:

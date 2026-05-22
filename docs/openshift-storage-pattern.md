@@ -109,14 +109,23 @@ deployment those credentials are stored in the `pragma-workbench-env` Secret (a
 test fixture/default managed as a Sealed Secret in
 `openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml`).
 
-Required keys:
+Required keys (native OpenShift AI S3 Connection schema):
 
-| Key | Description |
-|---|---|
-| `MODEL_REGISTRY_BUCKET` | S3 bucket name |
-| `MODEL_REGISTRY_ENDPOINT` | S3 endpoint hostname (no scheme) |
-| `MODEL_REGISTRY_ACCESS_KEY` | S3 access key ID |
-| `MODEL_REGISTRY_SECRET_KEY` | S3 secret access key |
+| Key | Description | Required |
+|---|---|---|
+| `AWS_S3_BUCKET` | S3 bucket name | yes |
+| `AWS_S3_ENDPOINT` | S3 endpoint URL (e.g. `https://s3.us-west-2.amazonaws.com`) | yes |
+| `AWS_ACCESS_KEY_ID` | S3 access key ID | yes |
+| `AWS_SECRET_ACCESS_KEY` | S3 secret access key | yes |
+| `AWS_DEFAULT_REGION` | S3 region (e.g. `us-west-2`) | no |
+
+Source of truth: `oc get cm s3 -n redhat-ods-applications -o yaml`.
+These are the env var names the RHOAI dashboard injects into pods when a Connection is attached.
+
+> **TD-010:** The live SealedSecret (`workbench-runtime-secret.sealed.yaml`) currently uses
+> legacy `MODEL_REGISTRY_*` key names. The training code falls back to these with a
+> `DeprecationWarning`. Re-seal the secret with native `AWS_*` key names to resolve.
+> See `docs/tech-debt.md §TD-010`.
 
 The secret is referenced via `envFrom.secretRef` in both the init container
 and main container of every training manifest. Credentials are never
