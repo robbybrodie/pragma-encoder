@@ -285,6 +285,101 @@ class TestConnectionFixture:
 
 
 # ===========================================================================
+# 3b. SealedSecret Connection metadata — regression guard
+# ===========================================================================
+
+
+class TestSealedSecretConnectionMetadata:
+    """The SealedSecret template.metadata must include RHOAI Connection annotations/labels.
+
+    A SealedSecret's spec.template.metadata is plain (unencrypted) YAML. The
+    Sealed Secrets controller copies it verbatim to the resulting Secret's metadata.
+    Without the RHOAI annotations/labels the Secret decrypts successfully but does
+    NOT appear as a Connection in the OpenShift AI dashboard.
+
+    Root-cause history: workbench-runtime-secret.sealed.yaml was committed
+    without opendatahub.io/managed, opendatahub.io/connection-type, or
+    opendatahub.io/dashboard labels. The Secret existed on the cluster but the
+    RHOAI dashboard showed no Connections. Fixed 2026-05-22.
+
+    This test prevents that regression without re-sealing the credential data.
+    """
+
+    _SEALED = (
+        _REPO_ROOT
+        / "openshift"
+        / "gitops"
+        / "secrets"
+        / "workbench-runtime-secret.sealed.yaml"
+    )
+
+    def test_sealed_secret_file_exists(self) -> None:
+        assert self._SEALED.exists(), (
+            "openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml must exist. "
+            "This is the ArgoCD-synced encrypted form of the workbench Connection secret."
+        )
+
+    def test_sealed_secret_kind(self) -> None:
+        doc = _load_yaml(self._SEALED)
+        assert doc["kind"] == "SealedSecret", (
+            "openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml "
+            f"must be kind: SealedSecret. Found: {doc.get('kind')!r}"
+        )
+
+    def test_sealed_secret_template_has_managed_annotation(self) -> None:
+        """spec.template.metadata.annotations must include opendatahub.io/managed: 'true'.
+
+        Without this annotation the resulting Secret is not shown as a Connection
+        in the RHOAI dashboard. The template section is plain YAML — no re-sealing needed.
+        """
+        doc = _load_yaml(self._SEALED)
+        annotations = (
+            doc.get("spec", {})
+            .get("template", {})
+            .get("metadata", {})
+            .get("annotations", {})
+        )
+        assert annotations.get("opendatahub.io/managed") == "true", (
+            "SealedSecret spec.template.metadata.annotations must include "
+            "opendatahub.io/managed: 'true'. "
+            "Without this the resulting Secret is not shown as an RHOAI Connection. "
+            f"Current annotations: {annotations}"
+        )
+
+    def test_sealed_secret_template_has_connection_type_annotation(self) -> None:
+        """spec.template.metadata.annotations must include opendatahub.io/connection-type: s3."""
+        doc = _load_yaml(self._SEALED)
+        annotations = (
+            doc.get("spec", {})
+            .get("template", {})
+            .get("metadata", {})
+            .get("annotations", {})
+        )
+        assert annotations.get("opendatahub.io/connection-type") == "s3", (
+            "SealedSecret spec.template.metadata.annotations must include "
+            "opendatahub.io/connection-type: s3. "
+            "Without this the RHOAI dashboard does not classify the Connection as S3. "
+            f"Current annotations: {annotations}"
+        )
+
+    def test_sealed_secret_template_has_dashboard_label(self) -> None:
+        """spec.template.metadata.labels must include opendatahub.io/dashboard: 'true'."""
+        doc = _load_yaml(self._SEALED)
+        labels = (
+            doc.get("spec", {})
+            .get("template", {})
+            .get("metadata", {})
+            .get("labels", {})
+        )
+        assert labels.get("opendatahub.io/dashboard") == "true", (
+            "SealedSecret spec.template.metadata.labels must include "
+            "opendatahub.io/dashboard: 'true'. "
+            "Without this the resulting Secret is not visible in the RHOAI project view. "
+            f"Current labels: {labels}"
+        )
+
+
+# ===========================================================================
 # 4. HardwareProfile
 # ===========================================================================
 
