@@ -122,9 +122,8 @@ Required keys (native OpenShift AI S3 Connection schema):
 Source of truth: `oc get cm s3 -n redhat-ods-applications -o yaml`.
 These are the env var names the RHOAI dashboard injects into pods when a Connection is attached.
 
-> **TD-010:** The live SealedSecret (`workbench-runtime-secret.sealed.yaml`) currently uses
-> legacy `MODEL_REGISTRY_*` key names. The training code falls back to these with a
-> `DeprecationWarning`. Re-seal the secret with native `AWS_*` key names to resolve.
+> **TD-010 Resolved (2026-05-22):** The SealedSecret was re-sealed with native `AWS_*` key names.
+> The `MODEL_REGISTRY_*` fallback code has been removed from the codebase.
 > See `docs/tech-debt.md §TD-010`.
 
 The secret is referenced via `envFrom.secretRef` in both the init container

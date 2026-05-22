@@ -71,7 +71,7 @@ _require_s3_resume = pytest.mark.skipif(
         "Set RUN_OPENSHIFT_S3_RESUME_SMOKE=1 to enable. "
         "Also requires RUN_OPENSHIFT_TESTS=1, PRAGMA_TEST_NAMESPACE=<namespace>, "
         "and PRAGMA_TRAINING_IMAGE=<image>. "
-        "S3 credentials (MODEL_REGISTRY_*) must be configured in the pod environment."
+        "S3 credentials (AWS_*) must be configured in the pod environment."
     ),
 )
 
@@ -141,7 +141,7 @@ class TestS3CheckpointResumeSmoke:
     into scripts/train_pragma.py.
 
     Requires RUN_OPENSHIFT_S3_RESUME_SMOKE=1, PRAGMA_TRAINING_IMAGE, and
-    S3 credentials (MODEL_REGISTRY_*) configured via the pod secret.
+    S3 credentials (AWS_*) configured via the pod secret (pragma-workbench-env).
     """
 
     _NNODES = 2
@@ -171,7 +171,7 @@ class TestS3CheckpointResumeSmoke:
              - 'Checkpoint downloaded' or equivalent on all ranks
 
         Known limitation:
-          This test requires S3 credentials (MODEL_REGISTRY_*) to be configured
+          This test requires S3 credentials (AWS_*) to be configured
           in the pod via the Kubernetes Secret injected by the RBAC/workbench setup.
         """
         image = os.environ.get("PRAGMA_TRAINING_IMAGE", "").strip()

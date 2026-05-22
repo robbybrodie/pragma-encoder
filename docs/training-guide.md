@@ -68,11 +68,11 @@ For any cluster job (both PRAGMA-S and PRAGMA-M), upload the data to S3 first.
 This only needs to be done once — the operation is idempotent.
 
 ```bash
-# Export credentials (same keys as pragma-workbench-env secret):
-export MODEL_REGISTRY_BUCKET=<bucket>
-export MODEL_REGISTRY_ENDPOINT=<host-without-scheme>
-export MODEL_REGISTRY_ACCESS_KEY=<access-key>
-export MODEL_REGISTRY_SECRET_KEY=<secret-key>
+# Export credentials (same keys as pragma-workbench-env secret — native RHOAI S3 Connection schema):
+export AWS_S3_BUCKET=<bucket>
+export AWS_S3_ENDPOINT=https://<host>   # full URL including scheme
+export AWS_ACCESS_KEY_ID=<access-key>
+export AWS_SECRET_ACCESS_KEY=<secret-key>
 
 # Dry run first to verify paths:
 python scripts/upload_training_data.py --dry-run

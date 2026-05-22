@@ -44,8 +44,8 @@ spec:
       secure: true
       s3CredentialsSecret:
         secretName: pragma-workbench-env
-        accessKey: MODEL_REGISTRY_ACCESS_KEY
-        secretKey: MODEL_REGISTRY_SECRET_KEY
+        accessKey: AWS_ACCESS_KEY_ID
+        secretKey: AWS_SECRET_ACCESS_KEY
 
   # Internal MariaDB for pipeline metadata. For production, configure an
   # external MySQL-compatible database under database.externalDB instead.

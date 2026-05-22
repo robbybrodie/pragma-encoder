@@ -37,10 +37,6 @@ Native OpenShift AI S3 Connection env var names (source of truth:
     AWS_DEFAULT_REGION     (optional)
     AWS_S3_BUCKET          (optional)
 
-Deprecated fallback: ``MODEL_REGISTRY_*`` env vars are still accepted with a
-``DeprecationWarning``. Re-seal the workbench runtime secret with native
-``AWS_*`` key names to remove the fallback (see TD-010 in docs/tech-debt.md).
-
 No shared filesystem (emptyDir) is assumed between ranks.
 No kfp / kfp-kubernetes is imported — this is a training-image-only module.
 boto3 is imported lazily inside functions so the module can be loaded in
@@ -56,7 +52,6 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-import warnings
 from typing import Optional, Protocol, runtime_checkable
 
 import torch
@@ -89,56 +84,28 @@ class _S3Config(dict):
 def parse_s3_config_from_env() -> Optional[_S3Config]:
     """Parse S3 connection config from environment variables.
 
-    Reads native OpenShift AI S3 Connection env var names first:
+    Reads native OpenShift AI S3 Connection env var names:
         AWS_S3_BUCKET          (required)
         AWS_S3_ENDPOINT        (required)
         AWS_ACCESS_KEY_ID      (optional — anonymous access if absent)
         AWS_SECRET_ACCESS_KEY  (optional — anonymous access if absent)
 
-    Deprecated fallback (emits DeprecationWarning):
-        MODEL_REGISTRY_BUCKET   → bucket
-        MODEL_REGISTRY_ENDPOINT → endpoint
-        MODEL_REGISTRY_ACCESS_KEY  → access_key
-        MODEL_REGISTRY_SECRET_KEY  → secret_key
-
-    The fallback exists because the live SealedSecret still carries
-    MODEL_REGISTRY_* key names (see TD-010 in docs/tech-debt.md).
-    Re-seal the secret with native AWS_* key names to remove the warning.
+    Schema source of truth: ``oc get cm s3 -n redhat-ods-applications -o yaml``
+    (RHOAI 2.25.6, platform.opendatahub.io/version).
 
     Returns:
         _S3Config dict with keys: bucket, endpoint, access_key, secret_key.
-        None if neither AWS_S3_BUCKET/AWS_S3_ENDPOINT nor
-        MODEL_REGISTRY_BUCKET/MODEL_REGISTRY_ENDPOINT are present.
+        None if AWS_S3_BUCKET or AWS_S3_ENDPOINT is absent.
     """
-    # --- Primary path: native OpenShift AI S3 Connection keys ---
     bucket = os.environ.get("AWS_S3_BUCKET", "").strip()
     endpoint = os.environ.get("AWS_S3_ENDPOINT", "").strip()
-    if bucket and endpoint:
-        return _S3Config(
-            bucket=bucket,
-            endpoint=endpoint,
-            access_key=os.environ.get("AWS_ACCESS_KEY_ID", "").strip(),
-            secret_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip(),
-        )
-
-    # --- Deprecated fallback: MODEL_REGISTRY_* keys ---
-    bucket = os.environ.get("MODEL_REGISTRY_BUCKET", "").strip()
-    endpoint = os.environ.get("MODEL_REGISTRY_ENDPOINT", "").strip()
     if not bucket or not endpoint:
         return None
-    warnings.warn(
-        "S3 config read from deprecated MODEL_REGISTRY_* env vars. "
-        "Re-seal the workbench runtime secret with native AWS_S3_BUCKET / "
-        "AWS_S3_ENDPOINT / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY key names. "
-        "See TD-010 in docs/tech-debt.md.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     return _S3Config(
         bucket=bucket,
         endpoint=endpoint,
-        access_key=os.environ.get("MODEL_REGISTRY_ACCESS_KEY", "").strip(),
-        secret_key=os.environ.get("MODEL_REGISTRY_SECRET_KEY", "").strip(),
+        access_key=os.environ.get("AWS_ACCESS_KEY_ID", "").strip(),
+        secret_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip(),
     )
 
 

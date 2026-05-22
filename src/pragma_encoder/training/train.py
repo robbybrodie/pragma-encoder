@@ -186,7 +186,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="S3 key prefix for checkpoint uploads, e.g. "
              "'pragma-encoder/checkpoints/pragma-s'. "
              "If set, each checkpoint is uploaded to S3 immediately after saving. "
-             "Credentials are read from MODEL_REGISTRY_* env vars.",
+             "Credentials are read from AWS_* env vars (native RHOAI S3 Connection schema).",
     )
     parser.add_argument(
         "--resume",

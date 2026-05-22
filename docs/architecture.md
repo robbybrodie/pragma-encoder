@@ -233,15 +233,16 @@ use CPU regardless of available hardware.
 
 Checkpoint and resume semantics live in `pragma_encoder.training.checkpoints`.
 S3 is a platform-neutral storage adapter — not an OpenShift platform abstraction.
-The wheel reads standard environment variables for S3 configuration:
+The wheel reads native OpenShift AI S3 Connection environment variables:
 
 ```
-MODEL_REGISTRY_ENDPOINT_URL
-MODEL_REGISTRY_BUCKET
-MODEL_REGISTRY_ACCESS_KEY
-MODEL_REGISTRY_SECRET_KEY
+AWS_S3_ENDPOINT        (required — full URL including scheme)
+AWS_S3_BUCKET          (required)
+AWS_ACCESS_KEY_ID      (optional)
+AWS_SECRET_ACCESS_KEY  (optional)
 ```
 
+Schema source of truth: `oc get cm s3 -n redhat-ods-applications -o yaml`.
 These are supplied by an OpenShift AI Connection. The wheel must not create
 Connections, Secrets, or S3 buckets. The `pragma-workbench-env` Secret is the
 test fixture/default representing that connection in this deployment — it is not
@@ -276,7 +277,7 @@ RHOAI 3.3 primitives mapped to this repo:
 |---|---|---|
 | Data Science Project | GA | `pragma-encoder` namespace |
 | Workbench | GA | `openshift/gitops/workbench/notebook.yaml` |
-| Connection (object storage) | GA | Supplies `MODEL_REGISTRY_*` env vars |
+| Connection (object storage) | GA | Supplies native `AWS_*` env vars (`AWS_S3_BUCKET`, `AWS_S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) |
 | HardwareProfile | GA | Schedules GPU nodes for training |
 | Data Science Pipeline (DSPA) | GA | KFP v2; `openshift/gitops/pipeline/dspa.yaml` |
 | PyTorchJob (`kubeflow.org/v1`) | GA | Current runtime proof for training |

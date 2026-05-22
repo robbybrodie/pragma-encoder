@@ -1,5 +1,9 @@
 # OpenShift AI 3.3 Alignment
 
+> **Note (2026-05-22):** The `MODEL_REGISTRY_*` env var naming described in this document
+> has been superseded. All code, manifests, and secrets now use the native RHOAI S3
+> Connection schema (`AWS_*` keys). See `docs/tech-debt.md §TD-010` for the resolution.
+
 This document maps the `pragma-encoder` repository to Red Hat OpenShift AI (RHOAI) 3.3
 primitives. It is the authoritative statement of:
 
@@ -80,23 +84,17 @@ The `pragma-workbench-env` Secret in this repo is a **test fixture/default**
 that represents what an RHOAI object-storage Connection would inject into
 workbench pods or training pods.
 
-The `pragma_encoder` checkpoint code reads:
+The `pragma_encoder` checkpoint code reads native RHOAI S3 Connection env vars:
 ```
-MODEL_REGISTRY_BUCKET     — bucket name
-MODEL_REGISTRY_ENDPOINT   — S3 endpoint URL
-MODEL_REGISTRY_ACCESS_KEY — access key
-MODEL_REGISTRY_SECRET_KEY — secret key
+AWS_S3_BUCKET          — bucket name (required)
+AWS_S3_ENDPOINT        — S3 endpoint URL including scheme (required)
+AWS_ACCESS_KEY_ID      — access key (optional)
+AWS_SECRET_ACCESS_KEY  — secret key (optional)
 ```
 
-These names (`MODEL_REGISTRY_*`) are specific to this repo and predate the
-standard RHOAI Connection env var naming (`AWS_*`). They are equivalent in
-function. When a formal RHOAI Connection replaces the current manual Secret,
-either:
-- the Connection is created with `MODEL_REGISTRY_*` keys (using RHOAI's
-  custom key names feature), or
-- the training code is updated to read standard `AWS_S3_BUCKET` etc.
-
-**This is a known naming gap.** See [env var contract](#env-var-contract) below.
+Schema source of truth: `oc get cm s3 -n redhat-ods-applications -o yaml`.
+The `MODEL_REGISTRY_*` naming used previously (pre-TD-010) has been fully removed.
+See [env var contract](#env-var-contract) below.
 
 **Owner:** OpenShift AI / OpenShift owns the Connection and credential injection.
 `pragma_encoder` owns the checkpoint logic that consumes the injected env vars.

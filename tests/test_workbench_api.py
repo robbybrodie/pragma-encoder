@@ -230,13 +230,11 @@ class TestDryRunBehavior:
     def test_dry_run_does_not_access_s3(self, monkeypatch) -> None:
         """ADR 003: dry_run must not access S3, even when upload=True.
 
-        Remove all S3 credentials (native AWS_* and legacy MODEL_REGISTRY_*) —
+        Remove all S3 credentials (native AWS_* schema) —
         any S3 access would raise a missing-credentials error.
         """
         for var in ("AWS_S3_ENDPOINT", "AWS_S3_BUCKET",
-                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
-                    "MODEL_REGISTRY_ENDPOINT_URL", "MODEL_REGISTRY_BUCKET",
-                    "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
+                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
             monkeypatch.delenv(var, raising=False)
 
         # Must not raise — dry_run must bypass all S3 operations
@@ -677,7 +675,7 @@ class TestLocalModeContract:
         """ADR 003: local mode must succeed without any S3 credentials.
 
         adapter.prepare(upload=False) ensures no boto3 connection is made.
-        No S3 env vars (AWS_* or MODEL_REGISTRY_*) are required for local mode.
+        No S3 env vars (AWS_* schema) are required for local mode.
         """
         from unittest.mock import MagicMock, patch
         manifest = self._make_manifest()
@@ -685,12 +683,10 @@ class TestLocalModeContract:
         mock_adapter.prepare.return_value = manifest
         mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
-        # Scrub all S3 credentials (native AWS_* and legacy MODEL_REGISTRY_*) — local mode must not need them
+        # Scrub all S3 credentials (native AWS_* schema) — local mode must not need them
         env_backup = {}
         for var in ("AWS_S3_BUCKET", "AWS_S3_ENDPOINT",
-                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
-                    "MODEL_REGISTRY_BUCKET", "MODEL_REGISTRY_ENDPOINT",
-                    "MODEL_REGISTRY_ACCESS_KEY", "MODEL_REGISTRY_SECRET_KEY"):
+                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
             env_backup[var] = os.environ.pop(var, None)
         try:
             with patch("tools.openshift_ai.workbench._api.get_adapter", return_value=mock_adapter_cls), \

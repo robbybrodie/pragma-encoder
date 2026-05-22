@@ -144,7 +144,7 @@ class TestObjectStorageConnectionFixture:
         assert not alias_keys, (
             f"Connection fixture contains MODEL_REGISTRY_* alias keys: {sorted(alias_keys)}\n"
             "Use only native OpenShift AI S3 Connection keys (AWS_*).\n"
-            "The training code reads AWS_* with MODEL_REGISTRY_* as a deprecated fallback."
+            "MODEL_REGISTRY_* are not part of the RHOAI S3 Connection schema."
         )
 
     def test_no_ngc_api_key_in_connection_fixture(self) -> None:

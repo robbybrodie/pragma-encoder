@@ -178,24 +178,21 @@ class TestCheckpointKeySelection:
 
 
 class TestS3ConfigFromEnv:
-    """Validate S3 config parsing from native AWS_* env vars (primary path).
+    """Validate S3 config parsing from native AWS_* env vars.
 
-    The primary path reads the native OpenShift AI S3 Connection env var names:
+    Reads the native OpenShift AI S3 Connection env var names:
         AWS_S3_BUCKET          required
         AWS_S3_ENDPOINT        required
         AWS_ACCESS_KEY_ID      optional
         AWS_SECRET_ACCESS_KEY  optional
 
-    A deprecated fallback reads MODEL_REGISTRY_* keys and emits DeprecationWarning.
-    See TD-010 in docs/tech-debt.md.
+    Schema source of truth: ``oc get cm s3 -n redhat-ods-applications -o yaml``
     """
 
     def test_returns_none_when_bucket_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """parse_s3_config_from_env returns None when both AWS_S3_BUCKET and MODEL_REGISTRY_BUCKET are unset."""
+        """parse_s3_config_from_env returns None when AWS_S3_BUCKET is unset."""
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         assert result is None, (
             "parse_s3_config_from_env must return None when BUCKET is missing. "
@@ -203,11 +200,9 @@ class TestS3ConfigFromEnv:
         )
 
     def test_returns_none_when_endpoint_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """parse_s3_config_from_env returns None when both AWS_S3_ENDPOINT and MODEL_REGISTRY_ENDPOINT are unset."""
+        """parse_s3_config_from_env returns None when AWS_S3_ENDPOINT is unset."""
         monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
         monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         assert result is None, (
             "parse_s3_config_from_env must return None when ENDPOINT is missing. "
@@ -222,8 +217,6 @@ class TestS3ConfigFromEnv:
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "access-key")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret-key")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         assert result is not None, (
             "parse_s3_config_from_env must return a config dict when AWS_* vars are set."
@@ -244,8 +237,6 @@ class TestS3ConfigFromEnv:
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "access-key")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "very-secret-key-12345")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         if result is None:
             return  # Covered by other tests
@@ -255,42 +246,6 @@ class TestS3ConfigFromEnv:
             "Config repr must not expose the raw AWS_SECRET_ACCESS_KEY value. "
             "Use a redacted placeholder or exclude from repr. "
             f"Got: {result_repr!r}"
-        )
-
-    def test_deprecated_model_registry_fallback_emits_warning(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """MODEL_REGISTRY_* fallback returns config but emits DeprecationWarning.
-
-        TD-010: The live SealedSecret uses legacy MODEL_REGISTRY_* key names.
-        The fallback keeps the cluster deployment working while re-sealing is pending.
-        """
-        import warnings  # noqa: PLC0415
-
-        monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
-        monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
-        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "legacy-bucket")
-        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "legacy.s3.example.com")
-        monkeypatch.setenv("MODEL_REGISTRY_ACCESS_KEY", "legacy-key")
-        monkeypatch.setenv("MODEL_REGISTRY_SECRET_KEY", "legacy-secret")
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = parse_s3_config_from_env()
-
-        assert result is not None, (
-            "MODEL_REGISTRY_* fallback must still return a config dict (TD-010 compatibility)."
-        )
-        assert result["bucket"] == "legacy-bucket", (
-            f"Fallback config must read MODEL_REGISTRY_BUCKET. Got: {result['bucket']!r}"
-        )
-        deprecation_warnings = [
-            w for w in caught if issubclass(w.category, DeprecationWarning)
-        ]
-        assert deprecation_warnings, (
-            "parse_s3_config_from_env must emit DeprecationWarning when reading "
-            "MODEL_REGISTRY_* fallback env vars. "
-            "Re-seal the workbench runtime secret with native AWS_* key names (TD-010)."
         )
 
 
@@ -1112,8 +1067,6 @@ class TestCheckpointStoreBoundary:
         """build_checkpoint_store returns LocalCheckpointStore when S3 config absent."""
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
         monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="some/prefix")
         assert isinstance(store, LocalCheckpointStore), (
             "build_checkpoint_store must return LocalCheckpointStore when "
@@ -1127,8 +1080,6 @@ class TestCheckpointStoreBoundary:
         """build_checkpoint_store returns LocalCheckpointStore when s3_prefix is empty."""
         monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="")
         assert isinstance(store, LocalCheckpointStore), (
             "build_checkpoint_store must return LocalCheckpointStore when s3_prefix is empty, "
@@ -1144,8 +1095,6 @@ class TestCheckpointStoreBoundary:
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         store = build_checkpoint_store(
             output_dir=tmp_path, s3_prefix="pragma-encoder/ckpts"
         )
