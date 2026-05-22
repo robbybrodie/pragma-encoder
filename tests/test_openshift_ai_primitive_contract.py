@@ -877,7 +877,7 @@ class TestBoundaryContracts:
     def test_pragma_encoder_workbench_not_in_wheel(self) -> None:
         """pragma_encoder.workbench must raise ModuleNotFoundError — it is not in the wheel.
 
-        The workbench tooling lives in tools/openshift_ai/workbench/ and is
+        The workbench tooling lives in tools/workbench/ and is
         explicitly excluded from the package by pyproject.toml ([tool.setuptools.packages.find]
         where = ['src']). This is TD-009 resolved.
         """
@@ -885,7 +885,7 @@ class TestBoundaryContracts:
             import pragma_encoder.workbench  # noqa: F401
             pytest.fail(
                 "pragma_encoder.workbench was importable. "
-                "The workbench module must live in tools/openshift_ai/workbench/, "
+                "The workbench module must live in tools/workbench/, "
                 "not in the pragma_encoder package. "
                 "See docs/openshift-ai-3.3-alignment.md §Platform Neutrality."
             )
@@ -893,12 +893,12 @@ class TestBoundaryContracts:
             pass  # Expected — pragma_encoder.workbench is not in the wheel
 
     def test_tools_workbench_importable(self) -> None:
-        """tools.openshift_ai.workbench must be importable when PYTHONPATH=repo root."""
-        spec = importlib.util.find_spec("tools.openshift_ai.workbench")
+        """tools.workbench must be importable when PYTHONPATH=repo root."""
+        spec = importlib.util.find_spec("tools.workbench")
         assert spec is not None, (
-            "tools.openshift_ai.workbench is not importable. "
+            "tools.workbench is not importable. "
             "Ensure PYTHONPATH includes the repository root (PYTHONPATH=.). "
-            "The workbench tooling lives in tools/openshift_ai/workbench/."
+            "The workbench tooling lives in tools/workbench/."
         )
 
     def test_argocd_does_not_sync_src(self) -> None:

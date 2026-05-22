@@ -17,7 +17,7 @@ Architecture boundary:
   Level 3b proves the training image runs. Level 3 proves the product
   pipeline path (DSPA/KFP v2) runs.
 
-Submit path (tools/openshift_ai/workbench/_submit.py — fully implemented):
+Submit path (tools/workbench/_submit.py — fully implemented):
   1. get_dspa_endpoint()         — resolve DSPA KFP API URL from env/namespace
   2. get_service_account_token() — read SA token from pod mount; never printed
   3. make_kfp_client()           — construct kfp.Client (kfp is optional dep)
@@ -62,7 +62,7 @@ import unittest.mock as mock
 
 import pytest
 
-from tools.openshift_ai.workbench._submit import (
+from tools.workbench._submit import (
     DSPAConfig,
     get_dspa_endpoint,
     get_run_status,  # noqa: F401 — imported for contract completeness
@@ -106,7 +106,7 @@ _KFP_PORT = 8888
 
 
 class TestKFPPipelineSmokePrereqs:
-    """Local contract tests for tools/openshift_ai/workbench/_submit.py.
+    """Local contract tests for tools/workbench/_submit.py.
 
     5 tests — no cluster access needed.
     Run whenever RUN_OPENSHIFT_TESTS=1, regardless of RUN_OPENSHIFT_PIPELINE_SMOKE.
@@ -118,7 +118,7 @@ class TestKFPPipelineSmokePrereqs:
     def test_submit_module_importable_without_kfp(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """tools.openshift_ai.workbench._submit must import cleanly even when kfp is absent.
+        """tools.workbench._submit must import cleanly even when kfp is absent.
 
         kfp is an optional dependency. The submit module must not import
         kfp at module level — only lazily inside make_kfp_client(). This
@@ -129,14 +129,14 @@ class TestKFPPipelineSmokePrereqs:
         monkeypatch.setitem(sys.modules, "kfp", None)  # type: ignore[arg-type]
 
         try:
-            submit_mod = importlib.import_module("tools.openshift_ai.workbench._submit")
+            submit_mod = importlib.import_module("tools.workbench._submit")
             assert submit_mod is not None, (
-                "tools.openshift_ai.workbench._submit must be importable without kfp. "
+                "tools.workbench._submit must be importable without kfp. "
                 "kfp must be imported lazily inside make_kfp_client(), not at module level."
             )
         except ImportError as exc:
             pytest.fail(
-                f"tools.openshift_ai.workbench._submit raised ImportError without kfp: {exc}. "
+                f"tools.workbench._submit raised ImportError without kfp: {exc}. "
                 "kfp must be imported lazily inside make_kfp_client()."
             )
 
@@ -163,7 +163,7 @@ class TestKFPPipelineSmokePrereqs:
         assert result == expected, (
             f"Expected PRAGMA_TEST_NAMESPACE={namespace!r} to produce {expected!r}. "
             f"Got: {result!r}. "
-            "Check get_dspa_endpoint() resolution order in tools/openshift_ai/workbench/_submit.py."
+            "Check get_dspa_endpoint() resolution order in tools/workbench/_submit.py."
         )
         assert result.startswith("https://"), (
             "Endpoint must use https:// — DSPA port 8888 uses TLS (self-signed cert)."

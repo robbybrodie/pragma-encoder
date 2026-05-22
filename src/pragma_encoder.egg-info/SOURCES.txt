@@ -71,6 +71,7 @@ tests/test_masking.py
 tests/test_mlm_head.py
 tests/test_model.py
 tests/test_openshift_ai_fixtures.py
+tests/test_openshift_ai_primitive_contract.py
 tests/test_packaging.py
 tests/test_pipeline_components.py
 tests/test_platform_neutral_wheel.py

@@ -15,7 +15,7 @@ Four categories:
       install the built wheel (not an editable src/ install) and must not
       use runtime git clone.
 
-  TestKfpKubernetesGuard — tools/openshift_ai/workbench/_submit._require_kfp_kubernetes()
+  TestKfpKubernetesGuard — tools/workbench/_submit._require_kfp_kubernetes()
       must raise a friendly ImportError (with install hint) when
       kfp_kubernetes is absent, and must never be called at module import
       time (only when secret injection is explicitly requested).
@@ -38,7 +38,7 @@ _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _NOTEBOOK_REQUIREMENTS = _REPO_ROOT / "openshift" / "notebook-image" / "requirements.txt"
 _DOCKERFILE_TRAINING = _REPO_ROOT / "openshift" / "training" / "Dockerfile.training"
-_SUBMIT_PY = _REPO_ROOT / "tools" / "openshift_ai" / "workbench" / "_submit.py"
+_SUBMIT_PY = _REPO_ROOT / "tools" / "workbench" / "_submit.py"
 _CHECKPOINTS_PY = _REPO_ROOT / "src" / "pragma_encoder" / "training" / "checkpoints.py"
 _TRAIN_MODULE = _REPO_ROOT / "src" / "pragma_encoder" / "training" / "train.py"
 _TRAIN_SCRIPT = _REPO_ROOT / "scripts" / "train_pragma.py"  # compatibility wrapper
@@ -58,7 +58,7 @@ class TestWorkbenchDependencies:
     def test_pyproject_has_no_workbench_optional_extras(self) -> None:
         """pyproject.toml must NOT have [project.optional-dependencies].workbench.
 
-        TD-009 resolved: workbench helpers moved to tools/openshift_ai/workbench/
+        TD-009 resolved: workbench helpers moved to tools/workbench/
         and removed from the wheel. kfp and kfp-kubernetes are now exclusively
         declared in openshift/notebook-image/requirements.txt.
         """
@@ -288,7 +288,7 @@ class TestTrainingImageContract:
 
 
 class TestKfpKubernetesGuard:
-    """tools/openshift_ai/workbench/_submit._require_kfp_kubernetes() guard.
+    """tools/workbench/_submit._require_kfp_kubernetes() guard.
 
     Lazy, friendly, only when enabled.
     Category: image-contract / guard-behaviour
@@ -327,7 +327,7 @@ class TestKfpKubernetesGuard:
         # Python's import system raises ImportError when sys.modules[name] is None.
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
 
-        from tools.openshift_ai.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from tools.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         with pytest.raises(ImportError):
             _require_kfp_kubernetes("test feature")
@@ -338,7 +338,7 @@ class TestKfpKubernetesGuard:
         """The ImportError message must include the feature name passed to the guard."""
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
 
-        from tools.openshift_ai.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from tools.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         with pytest.raises(ImportError) as exc_info:
             _require_kfp_kubernetes("my-special-feature")
@@ -354,7 +354,7 @@ class TestKfpKubernetesGuard:
         """The ImportError message must include a pip install hint."""
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", None)
 
-        from tools.openshift_ai.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from tools.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         with pytest.raises(ImportError) as exc_info:
             _require_kfp_kubernetes()
@@ -378,7 +378,7 @@ class TestKfpKubernetesGuard:
         stub.__version__ = "1.2.0"  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "kfp_kubernetes", stub)
 
-        from tools.openshift_ai.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
+        from tools.workbench._submit import _require_kfp_kubernetes  # noqa: PLC0415
 
         result = _require_kfp_kubernetes("test feature")
         assert result is stub, (

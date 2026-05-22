@@ -6,7 +6,7 @@ to a KFP v2 pipeline YAML for submission to OpenShift Pipelines.
 
 Target UX::
 
-    from tools.openshift_ai.workbench import pragma_pipeline, dataset, train
+    from tools.workbench import pragma_pipeline, dataset, train
 
     @pragma_pipeline(name="pragma-s-ibm-tabformer")
     def run():

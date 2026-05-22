@@ -12,12 +12,12 @@ The core ``pragma_encoder`` package must be platform-neutral:
   appear in core module source.
 
 ``pragma_encoder.workbench`` has been REMOVED from the core wheel.
-The workbench helpers now live under ``tools/openshift_ai/workbench/``:
+The workbench helpers now live under ``tools/workbench/``:
 
 - ``tools/`` is NOT part of the installed wheel (setuptools only discovers src/).
 - Importable only when the repo root is on ``sys.path`` (``PYTHONPATH=.``).
 - ``import pragma_encoder.workbench`` must raise ``ModuleNotFoundError``.
-- ``import tools.openshift_ai.workbench`` succeeds from the repo root.
+- ``import tools.workbench`` succeeds from the repo root.
 
 TD-009 resolved: workbench moved out of the wheel entirely.
 See docs/tech-debt.md — TD-009.
@@ -130,7 +130,7 @@ class TestTopLevelImportIsNeutral:
             pytest.fail(
                 f"import pragma_encoder raised ImportError when kfp is blocked: {exc}. "
                 "The core pragma_encoder package must not import kfp at module level. "
-                "kfp must be imported only inside tools.openshift_ai.workbench functions."
+                "kfp must be imported only inside tools.workbench functions."
             )
         assert mod is not None
 
@@ -184,7 +184,7 @@ class TestCoreModulesNoPlatformCode:
     def test_no_kfp_import_in_core_modules(self) -> None:
         """No core module in src/pragma_encoder/ may contain a kfp import statement.
 
-        kfp imports belong only in tools.openshift_ai.workbench — which is NOT
+        kfp imports belong only in tools.workbench — which is NOT
         part of the installed wheel. A kfp import in src/ would make kfp a
         de-facto required dependency for the training image.
         """
@@ -197,7 +197,7 @@ class TestCoreModulesNoPlatformCode:
 
         assert not violations, (
             "These core modules contain kfp import statements. "
-            "kfp must only be imported inside tools.openshift_ai.workbench functions, "
+            "kfp must only be imported inside tools.workbench functions, "
             "never at module level or in training/model/data code:\n"
             + "\n".join(violations)
         )
@@ -207,7 +207,7 @@ class TestCoreModulesNoPlatformCode:
 
         The path /var/run/secrets/kubernetes.io/ is a Kubernetes pod-mount
         path for service account tokens and namespace files. It belongs only
-        in tools.openshift_ai.workbench._submit (which reads the SA token for
+        in tools.workbench._submit (which reads the SA token for
         DSPA authentication). Core training and model code must not assume
         they run inside a Kubernetes pod.
         """
@@ -221,7 +221,7 @@ class TestCoreModulesNoPlatformCode:
 
         assert not violations, (
             f"These core modules contain the Kubernetes pod path "
-            f"'{k8s_path}'. This path belongs only in tools.openshift_ai.workbench. "
+            f"'{k8s_path}'. This path belongs only in tools.workbench. "
             f"Core training code must not assume it runs inside a Kubernetes pod:\n"
             + "\n".join(f"  {v}" for v in violations)
         )
@@ -292,31 +292,31 @@ class TestCoreModulesNoPlatformCode:
 
 # ===========================================================================
 # 3. TestWorkbenchRemovedFromWheel
-#    Confirm pragma_encoder.workbench is gone; tools.openshift_ai.workbench works
+#    Confirm pragma_encoder.workbench is gone; tools.workbench works
 # ===========================================================================
 
 
 class TestWorkbenchRemovedFromWheel:
     """Verify pragma_encoder.workbench has been removed from the installed wheel.
 
-    TD-009 resolved: workbench helpers live in tools/openshift_ai/workbench/
+    TD-009 resolved: workbench helpers live in tools/workbench/
     which is NOT packaged into the wheel (setuptools only finds src/).
 
     Tests confirm:
     - import pragma_encoder.workbench raises ModuleNotFoundError
     - pragma_encoder has no .workbench attribute
     - The built wheel zip (if present in dist/) contains no workbench directory
-    - tools.openshift_ai.workbench is importable from the repo root
+    - tools.workbench is importable from the repo root
     - kfp is not in core [project.dependencies]
     """
 
     def test_import_pragma_encoder_workbench_raises_module_not_found(self) -> None:
         """import pragma_encoder.workbench must raise ModuleNotFoundError.
 
-        The workbench subpackage has been moved to tools/openshift_ai/workbench/
+        The workbench subpackage has been moved to tools/workbench/
         and is no longer part of the installed pragma_encoder distribution.
         Any code that still uses 'import pragma_encoder.workbench' is broken
-        and must be updated to 'import tools.openshift_ai.workbench'.
+        and must be updated to 'import tools.workbench'.
         """
         with pytest.raises(ModuleNotFoundError):
             import pragma_encoder.workbench  # noqa: F401,PLC0415
@@ -331,7 +331,7 @@ class TestWorkbenchRemovedFromWheel:
 
         assert not hasattr(pragma_encoder, "workbench"), (
             "pragma_encoder must not have a 'workbench' attribute. "
-            "The workbench subpackage has been moved to tools/openshift_ai/workbench/ "
+            "The workbench subpackage has been moved to tools/workbench/ "
             "and is no longer part of the installed distribution."
         )
 
@@ -363,17 +363,17 @@ class TestWorkbenchRemovedFromWheel:
         )
 
     def test_tools_openshift_ai_workbench_is_importable(self) -> None:
-        """tools.openshift_ai.workbench must be importable from the repo root.
+        """tools.workbench must be importable from the repo root.
 
         When PYTHONPATH=. (the standard test invocation), tools/ is on sys.path
-        and tools.openshift_ai.workbench must import successfully. This confirms
+        and tools.workbench must import successfully. This confirms
         the workbench code is still available — just not from the core wheel.
         """
         try:
-            import tools.openshift_ai.workbench as wb  # noqa: PLC0415
+            import tools.workbench as wb  # noqa: PLC0415
         except ImportError as exc:
             pytest.fail(
-                f"import tools.openshift_ai.workbench raised ImportError: {exc}. "
+                f"import tools.workbench raised ImportError: {exc}. "
                 "The workbench helpers must be importable from the repo root "
                 "when PYTHONPATH=. is set. Check that tools/__init__.py and "
                 "tools/openshift_ai/__init__.py exist."
