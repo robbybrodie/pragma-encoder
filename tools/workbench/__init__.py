@@ -10,7 +10,7 @@ for use inside OpenShift AI Workbench pods.  It is platform-aware by design:
 
 **This package is NOT part of the pragma_encoder wheel.**
 
-It lives under tools/openshift_ai/workbench/ in the repository, outside the
+It lives under tools/workbench/ in the repository, outside the
 src/pragma_encoder/ package tree.  It depends on the pragma_encoder wheel but
 pragma_encoder does not import or depend on this tooling.
 
@@ -24,7 +24,7 @@ Usage (from a workbench notebook)::
     import sys
     sys.path.insert(0, "/path/to/pragma-encoder")   # repo root on sys.path
 
-    from tools.openshift_ai.workbench import train_pragma
+    from tools.workbench import train_pragma
 
 Public surface:
     train_pragma    — launch PRAGMA pretraining; mode="dry_run" for preview,
@@ -49,16 +49,16 @@ ADR: docs/decisions/003-workbench-training-api.md
 ADR: docs/decisions/004-workbench-decorated-pipelines.md
 """
 
-from tools.openshift_ai.workbench._api import train_pragma
-from tools.openshift_ai.workbench._decorators import PragmaPipeline, pragma_pipeline
-from tools.openshift_ai.workbench._intent import dataset, train
-from tools.openshift_ai.workbench._run import (
+from ._api import train_pragma
+from ._decorators import PragmaPipeline, pragma_pipeline
+from ._intent import dataset, train
+from ._run import (
     PIPELINE_STEP_NAMES,
     PipelineStep,
     PragmaRun,
     PragmaRunProtocol,
 )
-from tools.openshift_ai.workbench._submit import (
+from ._submit import (
     DSPAConfig,
     get_dspa_endpoint,
     get_run_status,

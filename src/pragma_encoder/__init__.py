@@ -22,6 +22,6 @@ Top-level package structure:
     pragma_encoder.data          — Dataset adapters and manifest (Section 2.4)
 
 Workbench / OpenShift AI tooling is NOT part of this package.
-It lives in tools/openshift_ai/workbench/ in the repository root
-(importable as tools.openshift_ai.workbench when PYTHONPATH=. is set).
+It lives in tools/workbench/ in the repository root
+(importable as tools.workbench when PYTHONPATH=. is set).
 """

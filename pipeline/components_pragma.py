@@ -49,7 +49,7 @@ def _component(**kwargs):
 # ---------------------------------------------------------------------------
 # The five sec.2.4 pipeline stage names
 # Must mirror PIPELINE_STEP_NAMES in
-# tools/openshift_ai/workbench/_run.py (ADR 003).
+# tools/workbench/_run.py (ADR 003).
 # ---------------------------------------------------------------------------
 
 PIPELINE_STAGE_NAMES: tuple[str, ...] = (
@@ -248,7 +248,7 @@ def run_pretraining(
     then returns the S3 URI of the final checkpoint.
 
     Uses the same model_size -> PRAGMAConfig mapping as train_pragma() in
-    tools/openshift_ai/workbench/_api.py so configuration is defined in
+    tools/workbench/_api.py so configuration is defined in
     exactly one place.  Specifically, the same
     _config_map {"S": PRAGMAConfig.pragma_s, ...} is used to ensure
     consistency.
@@ -266,7 +266,7 @@ def run_pretraining(
     from pragma_encoder.model.config import PRAGMAConfig
 
     # Same model_size -> PRAGMAConfig mapping as train_pragma()
-    # (tools/openshift_ai/workbench/_api.py::_MODEL_SIZE_MAP) - no second
+    # (tools/workbench/_api.py::_MODEL_SIZE_MAP) - no second
     # implementation.
     _config_map = {
         "S": PRAGMAConfig.pragma_s,

@@ -408,30 +408,30 @@ architecturally impure: a platform-aware subpackage in an otherwise platform-neu
 
 ### Resolution applied (2026-05-21)
 
-Workbench helpers moved from `src/pragma_encoder/workbench/` to `tools/openshift_ai/workbench/`.
+Workbench helpers moved from `src/pragma_encoder/workbench/` to `tools/workbench/`.
 
 Key changes:
 - `src/pragma_encoder/workbench/` deleted. `import pragma_encoder.workbench` now raises
   `ModuleNotFoundError`.
-- New location: `tools/openshift_ai/workbench/` — NOT part of the installed wheel.
+- New location: `tools/workbench/` — NOT part of the installed wheel.
   `tools/` is not under `src/` so `[tool.setuptools.packages.find]` never discovers it.
-- Importable as `tools.openshift_ai.workbench` when `PYTHONPATH=.` is set (the standard
+- Importable as `tools.workbench` when `PYTHONPATH=.` is set (the standard
   test invocation), or when the repo root is on `sys.path`.
-- Internal cross-module imports within `tools/openshift_ai/workbench/` use relative imports
+- Internal cross-module imports within `tools/workbench/` use relative imports
   (`from ._run import`, `from ._intent import`).
 - The `[workbench]` optional-dependencies entry in `pyproject.toml` removed (it referenced
   kfp/kfp-kubernetes; these remain optional for the pipeline/ directory which uses them).
 - All tests and examples updated from `pragma_encoder.workbench.*` to
-  `tools.openshift_ai.workbench.*`.
+  `tools.workbench.*`.
 - `tests/test_platform_neutral_wheel.py::TestWorkbenchRemovedFromWheel` mechanically verifies:
   - `import pragma_encoder.workbench` raises `ModuleNotFoundError`
   - `pragma_encoder` has no `.workbench` attribute
   - Built wheel zip contains no `pragma_encoder/workbench/` entries
-  - `tools.openshift_ai.workbench` is importable from the repo root
+  - `tools.workbench` is importable from the repo root
   - `kfp` is not in core `[project.dependencies]`
 
 ### References
-- Code: `tools/openshift_ai/workbench/` — new workbench location (not in wheel)
+- Code: `tools/workbench/` — new workbench location (not in wheel)
 - Tests: `tests/test_platform_neutral_wheel.py::TestWorkbenchRemovedFromWheel`
 - Docs: `docs/openshift-ai-3.3-alignment.md` — Platform Neutrality section
 - ADR 003: `docs/decisions/003-workbench-training-api.md`

@@ -22,7 +22,7 @@ semantics. It can be run:
 - on OpenShift AI as a Kubeflow Training Operator (KFTO) PyTorchJob
 
 The wheel does not contain any OpenShift AI, Kubernetes, or KFP code. Platform
-integration lives in `tools/openshift_ai/workbench/` and `pipeline/`, which are
+integration lives in `tools/workbench/` and `pipeline/`, which are
 not packaged into the wheel. The wheel is portable; the platform layer is
 environment-specific.
 
@@ -33,7 +33,7 @@ environment-specific.
 ```
   ┌─────────────────────────────────────────────────────────────┐
   │  Workbench authoring                                         │
-  │  (OpenShift AI Jupyter — tools/openshift_ai/workbench/)     │
+  │  (OpenShift AI Jupyter — tools/workbench/)     │
   └────────────────────────────┬────────────────────────────────┘
                                │ notebook → pipeline code → PR
   ┌────────────────────────────▼────────────────────────────────┐
@@ -85,7 +85,7 @@ Key properties of each layer:
 |---|---|---|
 | `src/pragma_encoder` | Model code; training loop; checkpoint/resume semantics; storage adapter interface and S3/local adapters; installed CLI entrypoint (`pragma-encoder-train`) | OpenShift AI Workbench lifecycle; Kubernetes Secrets or Connections; HardwareProfiles; PyTorchJob / TrainJob YAML; ArgoCD resources; namespace / RBAC / SA lifecycle; KFP registration |
 | Training image | Runtime dependencies; PyTorch/CUDA stack; installed `pragma_encoder` wheel; executable environment for `pragma-encoder-train` | Customer credentials; OpenShift AI resources; GitOps state; source checkout |
-| `tools/openshift_ai/workbench/` | Convenience helpers for Workbench, KFP, and DSPA use; platform-aware UX (`train_pragma`, `pragma_pipeline` DSL) | Being imported by or packaged into `pragma_encoder`; core training logic |
+| `tools/workbench/` | Convenience helpers for Workbench, KFP, and DSPA use; platform-aware UX (`train_pragma`, `pragma_pipeline` DSL) | Being imported by or packaged into `pragma_encoder`; core training logic |
 | `pipeline/` | KFP SDK v2 pipeline and component definitions; compiled IR YAML; smoke pipeline | Model implementation; training loop; checkpoint semantics |
 | `openshift/` | Platform examples, aligned manifests, and runtime/test resources; Dockerfile for training image | GitOps desired-state management (belongs in `openshift/gitops/`) |
 | `openshift/gitops/` | Declared platform desired state suitable for ArgoCD sync (namespace, RBAC, secrets, DSPA, workbench, image builds) | Ad hoc runtime jobs (PyTorchJob runs, pipeline runs) |
@@ -174,7 +174,7 @@ Where code belongs after promotion:
 | Repeatable workflow / pipeline stages | `pipeline/` |
 | Platform configuration / manifests | `openshift/` or `openshift/gitops/` |
 | Official wheel | Built by CI — not manually from a notebook |
-| Workbench convenience helpers | `tools/openshift_ai/workbench/` |
+| Workbench convenience helpers | `tools/workbench/` |
 
 ---
 
@@ -388,7 +388,7 @@ Opt-in tests are gated by environment variables (`RUN_OPENSHIFT_TESTS=1`,
 |---|---|
 | `pragma_encoder` wheel | Built and installed by training image |
 | `pragma_encoder.workbench` | Removed from wheel (TD-009 resolved) |
-| Workbench helper code | `tools/openshift_ai/workbench/` |
+| Workbench helper code | `tools/workbench/` |
 | Training CLI entrypoint | `pragma-encoder-train` / `python -m pragma_encoder.training.train` |
 | Training image | Installs wheel; verified by image contract tests |
 | S3 checkpoint/resume | Proven end-to-end (Level 5 test) |

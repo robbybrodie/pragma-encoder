@@ -265,7 +265,7 @@ class TestPipelineStageNames:
         stage names so show_pipeline() and the pipeline run stay in sync.
         """
         _require_importable()
-        from tools.openshift_ai.workbench._run import PIPELINE_STEP_NAMES
+        from tools.workbench._run import PIPELINE_STEP_NAMES
         assert tuple(_comp.PIPELINE_STAGE_NAMES) == PIPELINE_STEP_NAMES, (
             f"PIPELINE_STAGE_NAMES {tuple(_comp.PIPELINE_STAGE_NAMES)} "
             f"must match PIPELINE_STEP_NAMES {PIPELINE_STEP_NAMES}"
@@ -1096,7 +1096,7 @@ class TestWheelBasedLanguage:
       - "source code (src/)" (old "must contain PRAGMA source code" phrasing)
       - "src/ baked in" (old Dockerfile description)
       - "scripts/train_pragma.py" as a runtime entrypoint reference
-      - "src/workbench/" path references (moved to tools/openshift_ai/workbench/)
+      - "src/workbench/" path references (moved to tools/workbench/)
       - "src/data/adapters/" as a module path (installed as pragma_encoder.data.adapters)
 
     And enforce positive wheel-based language:
@@ -1156,13 +1156,13 @@ class TestWheelBasedLanguage:
         """components_pragma.py must not reference 'src/workbench/' paths.
 
         Workbench helpers have moved from src/workbench/ to
-        tools/openshift_ai/workbench/.  Any reference to 'src/workbench/'
+        tools/workbench/.  Any reference to 'src/workbench/'
         is a stale path from before the TD-009 restructuring.
         """
         src = _src_text(_COMPONENTS_PATH)
         assert "src/workbench/" not in src, (
             "pipeline/components_pragma.py must not reference 'src/workbench/'. "
-            "Workbench helpers are at tools/openshift_ai/workbench/. "
+            "Workbench helpers are at tools/workbench/. "
             "Update any cross-references to the current path."
         )
 
@@ -1273,7 +1273,7 @@ class TestNoCircularDependency:
         to module level — violating the lazy-import boundary.
         """
         pipeline_mods_before = {k for k in sys.modules if k.startswith("pipeline")}
-        importlib.import_module("tools.openshift_ai.workbench._decorators")
+        importlib.import_module("tools.workbench._decorators")
         pipeline_mods_after = {k for k in sys.modules if k.startswith("pipeline")}
         new_pipeline_mods = pipeline_mods_after - pipeline_mods_before
         assert not new_pipeline_mods, (

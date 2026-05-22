@@ -179,7 +179,7 @@ class TestTrainingImageRuntimeContract:
 
         The job must exit 0.
         Note: pragma_encoder.workbench is NOT checked — it lives in
-        tools/openshift_ai/workbench/ and is not part of the installed wheel.
+        tools/workbench/ and is not part of the installed wheel.
         """
         image = os.environ.get("PRAGMA_TRAINING_IMAGE", "").strip()
         if not image:
