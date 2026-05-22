@@ -52,7 +52,7 @@ spec:
               else
                 echo "Cloning repository..."
                 git clone \
-                  --branch pragma-implementation \
+                  --branch main \
                   --single-branch \
                   https://github.com/robbybrodie/pragma-encoder.git \
                   "${REPO}"
