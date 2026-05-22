@@ -49,8 +49,8 @@
 #
 # S3 credentials:
 #   All S3 access uses pragma-workbench-env (sealed via gitops/secrets/).
-#   Keys: MODEL_REGISTRY_ACCESS_KEY, MODEL_REGISTRY_SECRET_KEY,
-#         MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT.
+#   Keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#         AWS_S3_BUCKET, AWS_S3_ENDPOINT (native RHOAI S3 Connection schema).
 #   Do not hardcode credentials here.
 #
 # Python scripts in env vars:
@@ -129,10 +129,10 @@ spec:
                 - name: S3_STAGE_SCRIPT
                   value: |
                     import boto3, os, pathlib
-                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
-                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
-                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
-                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    bucket   = os.environ['AWS_S3_BUCKET']
+                    endpoint = os.environ['AWS_S3_ENDPOINT']
+                    access   = os.environ['AWS_ACCESS_KEY_ID']
+                    secret   = os.environ['AWS_SECRET_ACCESS_KEY']
                     dest = pathlib.Path('/workspace/data/tabformer')
                     dest.mkdir(parents=True, exist_ok=True)
                     s3 = boto3.client(
@@ -190,10 +190,10 @@ spec:
                 - name: S3_UPLOAD_SCRIPT
                   value: |
                     import boto3, os, pathlib
-                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
-                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
-                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
-                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    bucket   = os.environ['AWS_S3_BUCKET']
+                    endpoint = os.environ['AWS_S3_ENDPOINT']
+                    access   = os.environ['AWS_ACCESS_KEY_ID']
+                    secret   = os.environ['AWS_SECRET_ACCESS_KEY']
                     s3 = boto3.client(
                         's3',
                         endpoint_url=endpoint,
@@ -310,10 +310,10 @@ spec:
                 - name: S3_STAGE_SCRIPT
                   value: |
                     import boto3, os, pathlib
-                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
-                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
-                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
-                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    bucket   = os.environ['AWS_S3_BUCKET']
+                    endpoint = os.environ['AWS_S3_ENDPOINT']
+                    access   = os.environ['AWS_ACCESS_KEY_ID']
+                    secret   = os.environ['AWS_SECRET_ACCESS_KEY']
                     dest = pathlib.Path('/workspace/data/tabformer')
                     dest.mkdir(parents=True, exist_ok=True)
                     s3 = boto3.client(
@@ -363,10 +363,10 @@ spec:
                 - name: S3_UPLOAD_SCRIPT
                   value: |
                     import boto3, os, pathlib
-                    bucket   = os.environ['MODEL_REGISTRY_BUCKET']
-                    endpoint = 'https://' + os.environ['MODEL_REGISTRY_ENDPOINT']
-                    access   = os.environ['MODEL_REGISTRY_ACCESS_KEY']
-                    secret   = os.environ['MODEL_REGISTRY_SECRET_KEY']
+                    bucket   = os.environ['AWS_S3_BUCKET']
+                    endpoint = os.environ['AWS_S3_ENDPOINT']
+                    access   = os.environ['AWS_ACCESS_KEY_ID']
+                    secret   = os.environ['AWS_SECRET_ACCESS_KEY']
                     s3 = boto3.client(
                         's3',
                         endpoint_url=endpoint,

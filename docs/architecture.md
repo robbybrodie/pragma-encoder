@@ -232,25 +232,52 @@ use CPU regardless of available hardware.
 ## Storage and checkpointing
 
 Checkpoint and resume semantics live in `pragma_encoder.training.checkpoints`.
-S3 is a platform-neutral storage adapter — not an OpenShift platform abstraction.
-The wheel reads standard environment variables for S3 configuration:
+The module implements a `CheckpointStore` Protocol with two concrete adapters:
+
+| Mode | Adapter | When active |
+|---|---|---|
+| **Local** (default) | `LocalCheckpointStore` | `AWS_S3_BUCKET`/`AWS_S3_ENDPOINT` absent, **or** `--s3-checkpoint-prefix` is empty |
+| **S3** (platform/durable) | `S3CheckpointStore` | Both `AWS_*` env vars set **and** `--s3-checkpoint-prefix` non-empty |
+
+**Local mode is the default.** The wheel works fully on a laptop with only
+`--output-dir`. No S3 credentials, no OpenShift Secret, no Connection required.
+`LocalCheckpointStore.put()` is a documented no-op — the training loop writes
+the file to `output_dir` directly; `latest_key()` discovers it via lexicographic
+sort of `checkpoint_epoch<NNNN>.pt` files.
+
+**S3 mode is the platform/durable adapter.** On OpenShift AI, a Connection
+(annotated Kubernetes Secret) injects the native `AWS_*` env vars into pods.
+Combined with `--s3-checkpoint-prefix`, checkpoints are uploaded after each
+epoch and can be resumed across pod restarts.
 
 ```
-MODEL_REGISTRY_ENDPOINT_URL
-MODEL_REGISTRY_BUCKET
-MODEL_REGISTRY_ACCESS_KEY
-MODEL_REGISTRY_SECRET_KEY
+build_checkpoint_store(output_dir, s3_prefix)
+  ├─ AWS_S3_BUCKET + AWS_S3_ENDPOINT set AND s3_prefix non-empty
+  │    └─► S3CheckpointStore   (boto3 — durable, fault-tolerant)
+  └─ Otherwise
+       └─► LocalCheckpointStore  (filesystem — laptop/dev default)
 ```
 
-These are supplied by an OpenShift AI Connection. The wheel must not create
-Connections, Secrets, or S3 buckets. The `pragma-workbench-env` Secret is the
-test fixture/default representing that connection in this deployment — it is not
-the product abstraction.
+The wheel reads native OpenShift AI S3 Connection environment variables when
+S3 mode is active:
+
+```
+AWS_S3_BUCKET          (required)
+AWS_S3_ENDPOINT        (required — full URL including scheme)
+AWS_ACCESS_KEY_ID      (optional)
+AWS_SECRET_ACCESS_KEY  (optional)
+```
+
+Schema source of truth: `oc get cm s3 -n redhat-ods-applications -o yaml`.
+The wheel must not create Connections, Secrets, or S3 buckets. The
+`pragma-workbench-env` Secret is the test fixture/default representing that
+connection in this deployment — it is not the product abstraction.
 
 | Concern | Owner |
 |---|---|
 | Checkpoint / resume logic | `pragma_encoder.training.checkpoints` |
-| S3 read/write operations | `pragma_encoder.training.checkpoints` (via storage adapter) |
+| Local filesystem read/write | `LocalCheckpointStore` — default, no credentials needed |
+| S3 read/write operations | `S3CheckpointStore` — platform/durable adapter |
 | S3 credentials supply | OpenShift AI Connection → pod env vars |
 | `pragma-workbench-env` Secret | Test fixture / platform default — not package code |
 | Bucket creation | Platform operator (not the wheel) |
@@ -276,7 +303,7 @@ RHOAI 3.3 primitives mapped to this repo:
 |---|---|---|
 | Data Science Project | GA | `pragma-encoder` namespace |
 | Workbench | GA | `openshift/gitops/workbench/notebook.yaml` |
-| Connection (object storage) | GA | Supplies `MODEL_REGISTRY_*` env vars |
+| Connection (object storage) | GA | Supplies native `AWS_*` env vars (`AWS_S3_BUCKET`, `AWS_S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) |
 | HardwareProfile | GA | Schedules GPU nodes for training |
 | Data Science Pipeline (DSPA) | GA | KFP v2; `openshift/gitops/pipeline/dspa.yaml` |
 | PyTorchJob (`kubeflow.org/v1`) | GA | Current runtime proof for training |

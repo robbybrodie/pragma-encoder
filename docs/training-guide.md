@@ -68,11 +68,11 @@ For any cluster job (both PRAGMA-S and PRAGMA-M), upload the data to S3 first.
 This only needs to be done once — the operation is idempotent.
 
 ```bash
-# Export credentials (same keys as pragma-workbench-env secret):
-export MODEL_REGISTRY_BUCKET=<bucket>
-export MODEL_REGISTRY_ENDPOINT=<host-without-scheme>
-export MODEL_REGISTRY_ACCESS_KEY=<access-key>
-export MODEL_REGISTRY_SECRET_KEY=<secret-key>
+# Export credentials (same keys as pragma-workbench-env secret — native RHOAI S3 Connection schema):
+export AWS_S3_BUCKET=<bucket>
+export AWS_S3_ENDPOINT=https://<host>   # full URL including scheme
+export AWS_ACCESS_KEY_ID=<access-key>
+export AWS_SECRET_ACCESS_KEY=<secret-key>
 
 # Dry run first to verify paths:
 python scripts/upload_training_data.py --dry-run
@@ -88,6 +88,31 @@ S3 destination paths (relative to bucket root):
 pragma-encoder/data/tabformer/card_transaction.v1.csv
 pragma-encoder/data/tabformer/vocab.pkl
 ```
+
+---
+
+## Checkpoint modes
+
+`pragma_encoder` supports two checkpoint/resume modes. The mode is selected
+automatically based on environment:
+
+| Mode | When active | What it requires |
+|---|---|---|
+| **Local** (default) | No `AWS_S3_BUCKET`/`AWS_S3_ENDPOINT`, or no `--s3-checkpoint-prefix` | Only `--output-dir` |
+| **S3** (platform/durable) | Both `AWS_*` env vars set and `--s3-checkpoint-prefix` non-empty | S3 credentials in env |
+
+**Local mode is the default.** The wheel works fully without S3, OpenShift,
+or any platform credentials. This is the correct mode for laptop development.
+
+**S3 mode is for cluster/durable storage.** On OpenShift AI, an S3 Connection
+injects `AWS_*` env vars into pods. Combined with `--s3-checkpoint-prefix`,
+checkpoints are uploaded to S3 after each epoch and can be resumed across pod
+restarts.
+
+`build_checkpoint_store(output_dir, s3_prefix)` in
+`pragma_encoder.training.checkpoints` selects the correct adapter:
+- Returns `LocalCheckpointStore` when S3 config is absent or `s3_prefix` is empty.
+- Returns `S3CheckpointStore` when both S3 env vars and a non-empty prefix are present.
 
 ---
 
@@ -115,8 +140,9 @@ python -m pragma_encoder.training.train \
     --batch-size 32
 ```
 
-`--resume` checks `--output-dir` for the latest `checkpoint_epoch*.pt` and
-loads it automatically. No epoch argument changes are needed.
+`--resume` scans `--output-dir` for `checkpoint_epoch*.pt` files and loads the
+lexicographically latest one. If no checkpoint exists, training starts fresh.
+No S3 credentials are required for local resume.
 
 ---
 
@@ -193,19 +219,43 @@ pragma-encoder/outputs/pragma-m/<all output files>              ← post-trainin
 
 ## Checkpoint behaviour
 
+### Checkpoint naming
+
+Files are named `checkpoint_epoch<NNNN>.pt` (zero-padded epoch number).
+Lexicographic order equals epoch order, so the latest checkpoint is always
+the last file alphabetically in `--output-dir`.
+
+### Local mode (default — no S3)
+
 | Event | What happens |
 |-------|-------------|
-| End of each epoch (rank 0) | Checkpoint saved locally to `--output-dir` |
-| After local save (if `--s3-checkpoint-prefix` set) | Checkpoint uploaded to S3 |
-| Pod restart | Init container runs fresh; `--resume` downloads latest S3 checkpoint |
+| End of each epoch (rank 0) | `checkpoint_epoch<NNNN>.pt` written to `--output-dir` |
+| `--resume` on next run | Latest `.pt` in `--output-dir` is loaded; training continues from that epoch |
+| No checkpoint in `--output-dir` | Training starts from epoch 0 |
+
+No S3 credentials required.  No `--s3-checkpoint-prefix` needed.
+
+### S3 mode (platform/durable — OpenShift AI or explicit S3 config)
+
+| Event | What happens |
+|-------|-------------|
+| End of each epoch (rank 0) | Checkpoint saved locally, then uploaded to S3 under `--s3-checkpoint-prefix` |
+| Pod restart | Init container runs fresh; `--resume` selects latest S3 key and ALL ranks download independently |
 | Training complete (rank 0 / master pod) | All outputs uploaded to S3 |
 
-Checkpoint files follow the naming convention: `checkpoint_epoch<NNNN>.pt`
+Requires `AWS_S3_BUCKET`, `AWS_S3_ENDPOINT`, and `--s3-checkpoint-prefix`.
 
-Resume logic:
-1. Check `--output-dir` for the latest local `checkpoint_epoch*.pt`
-2. If not found and `--s3-checkpoint-prefix` is set, download latest from S3
-3. If found (local or S3), load weights, optimizer state, and resume from that epoch
+### Resume logic
+
+```
+resolve_resume_checkpoint(output_dir, s3_prefix, rank, distributed, device)
+  │
+  ├─ S3 config present AND s3_prefix non-empty
+  │    └─ Download latest S3 checkpoint (all ranks download independently — TD-006 fix)
+  │
+  └─ Otherwise (local mode)
+       └─ Scan output_dir for checkpoint_epoch*.pt → return lexicographically latest
+```
 
 ---
 

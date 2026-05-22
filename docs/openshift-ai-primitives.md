@@ -34,7 +34,7 @@ dashboard (GUI), Workbench, `oc`, and tests interact with those same resources.
 |---|---|---|---|---|---|
 | **Data Science Project** | `Namespace` with `opendatahub.io/dashboard: "true"` | `openshift/gitops/namespace.yaml` | Yes — wave −1 | GA | RHOAI dashboard lists this namespace as a Data Science Project |
 | **Workbench / Notebook** | `notebooks.kubeflow.org/v1 Notebook` | `openshift/gitops/workbench/notebook.yaml` | Yes — wave 4 | GA | Runs custom workbench image; clones repo into PVC on first start |
-| **Object storage** | `Connection` (annotated `Secret` with `opendatahub.io/connection-type: s3`) | `tests/openshift/fixtures/object-storage-connection.yaml.template` | ArgoCD owns template / SealedSecret; not raw credentials | GA | Current naming gap: code reads `MODEL_REGISTRY_*`, standard AWS Connection injects `AWS_*` |
+| **Object storage** | `Connection` (annotated `Secret` with `opendatahub.io/connection-type: s3`) | `tests/openshift/fixtures/object-storage-connection.yaml.template` | ArgoCD owns template / SealedSecret; not raw credentials | GA | Canonical `AWS_*` key names — aligned with native RHOAI S3 Connection schema (TD-010 resolved) |
 | **Object storage credentials** | SealedSecret → Secret (via Sealed Secrets operator) | `openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml` | Yes — wave 0 | GA | Production credentials sealed with kubeseal; never committed as plaintext |
 | **Registry pull secret** | `kubernetes.io/dockerconfigjson` Secret (SealedSecret) | `openshift/gitops/secrets/registry-pull-secret.sealed.yaml` | Yes — wave 0 | GA | NGC registry credentials for nvcr.io base images |
 | **RBAC / ServiceAccounts** | `ServiceAccount`, `ClusterRole`, `RoleBinding` | `openshift/gitops/rbac/` | Yes — wave 0 | GA | Includes anyuid SCC grant for training pods, ArgoCD admin binding |
@@ -104,16 +104,13 @@ opendatahub.io/connection-type: s3
 RHOAI injects the Secret into workbench pods and training pods as environment
 variables.
 
-### Current naming gap
+### Naming alignment (TD-010 resolved 2026-05-22)
 
-Standard RHOAI Connections inject `AWS_*` env vars. The current training code
-reads `MODEL_REGISTRY_*` env vars. Both are equivalent in function; the naming
-reflects a pre-RHOAI-alignment convention.
+The training code reads native RHOAI S3 Connection env var names:
+`AWS_S3_BUCKET`, `AWS_S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`.
 
-**Resolution path (future):** update `checkpoints.py` to read `AWS_S3_BUCKET`,
-`AWS_S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — or create the
-Connection with custom `MODEL_REGISTRY_*` key names using RHOAI's custom key
-feature.
+The SealedSecret was re-sealed with these canonical keys. The legacy
+`MODEL_REGISTRY_*` fallback code has been removed from the codebase.
 
 ### `pragma_encoder` boundary rule
 

@@ -171,13 +171,13 @@ def upload_artifacts(
     nothing durable to upload; returns manifest_uri unchanged.  Full S3 upload
     (reading shards from manifest, uploading via boto3) is a future milestone.
 
-    S3 credentials come from MODEL_REGISTRY_* env vars supplied by the
+    S3 credentials come from AWS_* env vars supplied by the
     OpenShift AI Connection (test fixture/default: pragma-workbench-env Secret).
 
     Args:
         manifest_uri: Prefix URI returned by prepare_dataset (S3 or local).
         bucket:       Override S3 bucket name.  Defaults to the value of
-                      MODEL_REGISTRY_BUCKET environment variable.
+                      AWS_S3_BUCKET environment variable.
 
     Returns:
         manifest_uri: The same manifest_uri (passed to downstream stages).

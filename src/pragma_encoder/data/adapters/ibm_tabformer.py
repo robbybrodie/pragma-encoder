@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import os
 import pickle
-import warnings
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -215,45 +214,30 @@ class IBMTabFormerAdapter:
     def _upload_to_s3(self) -> None:
         """Upload CSV and vocab to S3 using native OpenShift AI S3 Connection env vars.
 
-        Reads credentials from native env var names first:
-            AWS_S3_BUCKET, AWS_S3_ENDPOINT, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+        Reads credentials from native OpenShift AI S3 Connection env var names:
+            AWS_S3_BUCKET      (required)
+            AWS_S3_ENDPOINT    (required)
+            AWS_ACCESS_KEY_ID  (optional)
+            AWS_SECRET_ACCESS_KEY (optional)
 
-        Deprecated fallback (emits DeprecationWarning):
-            MODEL_REGISTRY_BUCKET, MODEL_REGISTRY_ENDPOINT,
-            MODEL_REGISTRY_ACCESS_KEY, MODEL_REGISTRY_SECRET_KEY
+        Schema source of truth: ``oc get cm s3 -n redhat-ods-applications -o yaml``
 
         Raises:
-            EnvironmentError: If neither native AWS_* nor legacy MODEL_REGISTRY_*
-                              bucket and endpoint env vars are set.
+            EnvironmentError: If AWS_S3_BUCKET or AWS_S3_ENDPOINT is not set.
             Exception: boto3 raises on S3 connection or upload failure.
         """
         import boto3  # optional import — not required when upload=False
 
-        # --- Primary path: native OpenShift AI S3 Connection keys ---
         bucket = os.environ.get("AWS_S3_BUCKET", "").strip()
         endpoint = os.environ.get("AWS_S3_ENDPOINT", "").strip()
         access_key = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
         secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "").strip()
 
         if not bucket or not endpoint:
-            # --- Deprecated fallback: MODEL_REGISTRY_* keys ---
-            bucket = os.environ.get("MODEL_REGISTRY_BUCKET", "").strip()
-            endpoint = os.environ.get("MODEL_REGISTRY_ENDPOINT", "").strip()
-            access_key = os.environ.get("MODEL_REGISTRY_ACCESS_KEY", "").strip()
-            secret_key = os.environ.get("MODEL_REGISTRY_SECRET_KEY", "").strip()
-            if not bucket or not endpoint:
-                raise EnvironmentError(
-                    "S3 upload requires AWS_S3_BUCKET and AWS_S3_ENDPOINT env vars "
-                    "(native OpenShift AI S3 Connection schema). "
-                    "See docs/openshift-storage-pattern.md §Credentials."
-                )
-            warnings.warn(
-                "S3 upload using deprecated MODEL_REGISTRY_* env vars. "
-                "Re-seal the workbench runtime secret with native AWS_S3_BUCKET / "
-                "AWS_S3_ENDPOINT / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY key names. "
-                "See TD-010 in docs/tech-debt.md.",
-                DeprecationWarning,
-                stacklevel=2,
+            raise EnvironmentError(
+                "S3 upload requires AWS_S3_BUCKET and AWS_S3_ENDPOINT env vars "
+                "(native OpenShift AI S3 Connection schema). "
+                "See docs/openshift-storage-pattern.md §Credentials."
             )
 
         endpoint_url = endpoint if endpoint.startswith("http") else f"https://{endpoint}"

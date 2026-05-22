@@ -178,24 +178,21 @@ class TestCheckpointKeySelection:
 
 
 class TestS3ConfigFromEnv:
-    """Validate S3 config parsing from native AWS_* env vars (primary path).
+    """Validate S3 config parsing from native AWS_* env vars.
 
-    The primary path reads the native OpenShift AI S3 Connection env var names:
+    Reads the native OpenShift AI S3 Connection env var names:
         AWS_S3_BUCKET          required
         AWS_S3_ENDPOINT        required
         AWS_ACCESS_KEY_ID      optional
         AWS_SECRET_ACCESS_KEY  optional
 
-    A deprecated fallback reads MODEL_REGISTRY_* keys and emits DeprecationWarning.
-    See TD-010 in docs/tech-debt.md.
+    Schema source of truth: ``oc get cm s3 -n redhat-ods-applications -o yaml``
     """
 
     def test_returns_none_when_bucket_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """parse_s3_config_from_env returns None when both AWS_S3_BUCKET and MODEL_REGISTRY_BUCKET are unset."""
+        """parse_s3_config_from_env returns None when AWS_S3_BUCKET is unset."""
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         assert result is None, (
             "parse_s3_config_from_env must return None when BUCKET is missing. "
@@ -203,11 +200,9 @@ class TestS3ConfigFromEnv:
         )
 
     def test_returns_none_when_endpoint_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """parse_s3_config_from_env returns None when both AWS_S3_ENDPOINT and MODEL_REGISTRY_ENDPOINT are unset."""
+        """parse_s3_config_from_env returns None when AWS_S3_ENDPOINT is unset."""
         monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
         monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         assert result is None, (
             "parse_s3_config_from_env must return None when ENDPOINT is missing. "
@@ -222,8 +217,6 @@ class TestS3ConfigFromEnv:
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "access-key")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret-key")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         assert result is not None, (
             "parse_s3_config_from_env must return a config dict when AWS_* vars are set."
@@ -244,8 +237,6 @@ class TestS3ConfigFromEnv:
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "access-key")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "very-secret-key-12345")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         result = parse_s3_config_from_env()
         if result is None:
             return  # Covered by other tests
@@ -255,42 +246,6 @@ class TestS3ConfigFromEnv:
             "Config repr must not expose the raw AWS_SECRET_ACCESS_KEY value. "
             "Use a redacted placeholder or exclude from repr. "
             f"Got: {result_repr!r}"
-        )
-
-    def test_deprecated_model_registry_fallback_emits_warning(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """MODEL_REGISTRY_* fallback returns config but emits DeprecationWarning.
-
-        TD-010: The live SealedSecret uses legacy MODEL_REGISTRY_* key names.
-        The fallback keeps the cluster deployment working while re-sealing is pending.
-        """
-        import warnings  # noqa: PLC0415
-
-        monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
-        monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
-        monkeypatch.setenv("MODEL_REGISTRY_BUCKET", "legacy-bucket")
-        monkeypatch.setenv("MODEL_REGISTRY_ENDPOINT", "legacy.s3.example.com")
-        monkeypatch.setenv("MODEL_REGISTRY_ACCESS_KEY", "legacy-key")
-        monkeypatch.setenv("MODEL_REGISTRY_SECRET_KEY", "legacy-secret")
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = parse_s3_config_from_env()
-
-        assert result is not None, (
-            "MODEL_REGISTRY_* fallback must still return a config dict (TD-010 compatibility)."
-        )
-        assert result["bucket"] == "legacy-bucket", (
-            f"Fallback config must read MODEL_REGISTRY_BUCKET. Got: {result['bucket']!r}"
-        )
-        deprecation_warnings = [
-            w for w in caught if issubclass(w.category, DeprecationWarning)
-        ]
-        assert deprecation_warnings, (
-            "parse_s3_config_from_env must emit DeprecationWarning when reading "
-            "MODEL_REGISTRY_* fallback env vars. "
-            "Re-seal the workbench runtime secret with native AWS_* key names (TD-010)."
         )
 
 
@@ -1112,8 +1067,6 @@ class TestCheckpointStoreBoundary:
         """build_checkpoint_store returns LocalCheckpointStore when S3 config absent."""
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
         monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="some/prefix")
         assert isinstance(store, LocalCheckpointStore), (
             "build_checkpoint_store must return LocalCheckpointStore when "
@@ -1127,8 +1080,6 @@ class TestCheckpointStoreBoundary:
         """build_checkpoint_store returns LocalCheckpointStore when s3_prefix is empty."""
         monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="")
         assert isinstance(store, LocalCheckpointStore), (
             "build_checkpoint_store must return LocalCheckpointStore when s3_prefix is empty, "
@@ -1144,8 +1095,6 @@ class TestCheckpointStoreBoundary:
         monkeypatch.setenv("AWS_S3_ENDPOINT", "s3.example.com")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
         store = build_checkpoint_store(
             output_dir=tmp_path, s3_prefix="pragma-encoder/ckpts"
         )
@@ -1249,3 +1198,333 @@ class TestPlatformNameBoundary:
                 "LocalCheckpointStore must be recognised as a CheckpointStore instance. "
                 "All three Protocol methods (latest_key, fetch, put) must be present."
             )
+
+
+# ---------------------------------------------------------------------------
+# 12. TestLocalCheckpointModeFirstClass
+#     Local filesystem checkpoint/resume — first-class, no S3 required
+# ---------------------------------------------------------------------------
+
+
+class TestLocalCheckpointModeFirstClass:
+    """Local filesystem checkpoint/resume is the default (laptop/dev) mode.
+
+    These tests prove local mode works with NO S3 env vars present.
+    ``parse_s3_config_from_env`` is NOT mocked — real env vars are cleared
+    via monkeypatch. This exercises the true code path.
+
+    Requirements:
+    - Only output_dir is required.
+    - No AWS_* env vars.
+    - No OpenShift Secret or Connection.
+    - No bucket, no endpoint, no S3 prefix.
+
+    This is the story: ``pragma-encoder-train --output-dir ./runs/smoke`` can
+    train, checkpoint, and resume using only local filesystem storage.
+    """
+
+    _AWS_VARS = (
+        "AWS_S3_BUCKET",
+        "AWS_S3_ENDPOINT",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    )
+
+    def _clear_aws_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for var in self._AWS_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    # ---- build_checkpoint_store -----------------------------------------
+
+    def test_build_store_returns_local_when_no_aws_env_vars(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """build_checkpoint_store returns LocalCheckpointStore when AWS_* vars absent.
+
+        Even when s3_prefix is non-empty, absence of AWS_S3_BUCKET/AWS_S3_ENDPOINT
+        must trigger the local fallback.  Local mode must not require S3 config.
+        """
+        self._clear_aws_vars(monkeypatch)
+        store = build_checkpoint_store(
+            output_dir=tmp_path, s3_prefix="pragma-encoder/ckpts"
+        )
+        assert isinstance(store, LocalCheckpointStore), (
+            "build_checkpoint_store must return LocalCheckpointStore when "
+            "AWS_S3_BUCKET and AWS_S3_ENDPOINT are absent. "
+            "Local mode must work without any S3 configuration. "
+            f"Got: {type(store).__name__}"
+        )
+
+    def test_build_store_returns_local_when_prefix_empty_even_if_aws_set(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """build_checkpoint_store returns LocalCheckpointStore when s3_prefix=''.
+
+        An empty s3_prefix disables S3 even when AWS_* vars are present.
+        This is intentional: local development mode when env vars happen to be set.
+        """
+        monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("AWS_S3_ENDPOINT", "https://s3.example.com")
+        store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="")
+        assert isinstance(store, LocalCheckpointStore), (
+            "build_checkpoint_store must return LocalCheckpointStore when s3_prefix=''. "
+            "Empty prefix explicitly disables S3 for local runs. "
+            f"Got: {type(store).__name__}"
+        )
+
+    # ---- LocalCheckpointStore behaviour ---------------------------------
+
+    def test_local_store_latest_key_ignores_non_pt_files(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """LocalCheckpointStore.latest_key() ignores non-.pt files."""
+        (tmp_path / "checkpoint_epoch0001.pt").write_bytes(b"ckpt1")
+        (tmp_path / "config.json").write_bytes(b"{}")
+        (tmp_path / "vocab.pkl").write_bytes(b"vocab")
+        (tmp_path / "README.txt").write_bytes(b"notes")
+        store = LocalCheckpointStore(tmp_path)
+        key = store.latest_key()
+        assert key == "checkpoint_epoch0001.pt", (
+            "latest_key() must return only the .pt checkpoint filename. "
+            "Non-.pt files (config.json, vocab.pkl, README.txt) must be ignored. "
+            f"Got: {key!r}"
+        )
+
+    def test_local_store_latest_key_returns_lexicographically_latest(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """LocalCheckpointStore.latest_key() returns the lexicographically latest .pt."""
+        (tmp_path / "checkpoint_epoch0001.pt").write_bytes(b"ckpt1")
+        (tmp_path / "checkpoint_epoch0010.pt").write_bytes(b"ckpt10")
+        (tmp_path / "checkpoint_epoch0002.pt").write_bytes(b"ckpt2")
+        store = LocalCheckpointStore(tmp_path)
+        key = store.latest_key()
+        assert key == "checkpoint_epoch0010.pt", (
+            "latest_key() must return the lexicographically latest filename. "
+            "Checkpoint filenames are zero-padded so lexicographic order = epoch order. "
+            f"Got: {key!r}"
+        )
+
+    def test_local_store_fetch_preserves_file_content(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """LocalCheckpointStore.fetch() returns a path to the original file unchanged."""
+        original_content = b"fake-checkpoint-content-12345"
+        (tmp_path / "checkpoint_epoch0001.pt").write_bytes(original_content)
+        store = LocalCheckpointStore(tmp_path)
+        result = store.fetch("checkpoint_epoch0001.pt", tmp_path)
+        assert result.exists(), "fetch() must return a path to an existing file."
+        assert result.read_bytes() == original_content, (
+            "fetch() must return the file unchanged. "
+            "LocalCheckpointStore.fetch() does not copy or modify the file."
+        )
+
+    def test_local_store_put_is_noop_file_preserved(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """LocalCheckpointStore.put() is a no-op: file is unchanged after put()."""
+        original_content = b"checkpoint-bytes-xyz"
+        ckpt_path = tmp_path / "checkpoint_epoch0001.pt"
+        ckpt_path.write_bytes(original_content)
+        store = LocalCheckpointStore(tmp_path)
+        store.put(ckpt_path)
+        assert ckpt_path.exists(), (
+            "put() must not delete the checkpoint file. "
+            "LocalCheckpointStore.put() is a no-op."
+        )
+        assert ckpt_path.read_bytes() == original_content, (
+            "put() must not modify the checkpoint file. "
+            "LocalCheckpointStore.put() is a no-op."
+        )
+
+    # ---- resolve_resume_checkpoint with real env vars -------------------
+
+    def test_resolve_resume_uses_local_path_without_any_aws_vars(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """resolve_resume_checkpoint returns local path when no AWS_* env vars are set.
+
+        No mocking of parse_s3_config_from_env — real env vars are cleared.
+        This is the laptop / local development path.
+        """
+        self._clear_aws_vars(monkeypatch)
+        (tmp_path / "checkpoint_epoch0001.pt").write_bytes(b"ckpt1")
+        (tmp_path / "checkpoint_epoch0002.pt").write_bytes(b"ckpt2")
+
+        result = resolve_resume_checkpoint(
+            output_dir=tmp_path,
+            s3_prefix="",
+            rank=0,
+            distributed=False,
+            device=torch.device("cpu"),
+        )
+
+        assert result is not None, (
+            "resolve_resume_checkpoint must find the local checkpoint when "
+            "checkpoint files are present and S3 is not configured. "
+            "Local mode must not require AWS_* env vars."
+        )
+        assert result.name == "checkpoint_epoch0002.pt", (
+            f"Expected latest checkpoint 'checkpoint_epoch0002.pt'. Got: {result.name!r}"
+        )
+
+    def test_resolve_resume_returns_none_for_empty_dir_no_aws_vars(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """resolve_resume_checkpoint returns None when dir is empty and no S3 config.
+
+        This is the first-run case: no prior checkpoint exists locally.
+        Training starts from scratch — None signals no checkpoint to resume from.
+        """
+        self._clear_aws_vars(monkeypatch)
+        result = resolve_resume_checkpoint(
+            output_dir=tmp_path,
+            s3_prefix="",
+            rank=0,
+            distributed=False,
+            device=torch.device("cpu"),
+        )
+        assert result is None, (
+            "resolve_resume_checkpoint must return None when no checkpoints exist "
+            "locally and S3 is not configured. "
+            "None signals 'no checkpoint — start fresh'. "
+            f"Got: {result!r}"
+        )
+
+    def test_local_mode_does_not_contact_s3_when_vars_absent(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Local checkpoint mode must not create an S3 client when AWS_* are absent.
+
+        boto3 must not be called in local mode.  No S3 credentials are required.
+        """
+        self._clear_aws_vars(monkeypatch)
+        (tmp_path / "checkpoint_epoch0001.pt").write_bytes(b"ckpt1")
+
+        with mock.patch(
+            "pragma_encoder.training.checkpoints._make_s3_client"
+        ) as mock_make_client:
+            resolve_resume_checkpoint(
+                output_dir=tmp_path,
+                s3_prefix="",
+                rank=0,
+                distributed=False,
+                device=torch.device("cpu"),
+            )
+
+        mock_make_client.assert_not_called(), (
+            "_make_s3_client must not be called when AWS_* vars are absent. "
+            "Local checkpoint mode must require only a local output directory. "
+            "No S3 credentials, no boto3, no OpenShift Secret."
+        )
+
+
+# ---------------------------------------------------------------------------
+# 13. TestLocalCheckpointRoundTrip
+#     Full local checkpoint lifecycle: write (torch.save) → discover → load
+# ---------------------------------------------------------------------------
+
+
+class TestLocalCheckpointRoundTrip:
+    """Full local checkpoint round-trip: write → discover via store → load.
+
+    Simulates what train.py does:
+      1. torch.save() writes the checkpoint to output_dir (the training loop).
+      2. build_checkpoint_store() returns LocalCheckpointStore (no S3 config).
+      3. store.latest_key() discovers the written file.
+      4. store.fetch() returns the local path.
+      5. torch.load() reads the checkpoint back and state matches.
+      6. store.put() is a no-op and does not corrupt the file.
+
+    No S3, no OpenShift, no GPU required.
+    This is the laptop/dev story end-to-end.
+    """
+
+    def test_checkpoint_round_trip_with_torch_save_and_load(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Full local checkpoint lifecycle using torch.save / torch.load."""
+        # Clear S3 env vars so build_checkpoint_store selects LocalCheckpointStore
+        for var in ("AWS_S3_BUCKET", "AWS_S3_ENDPOINT", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+            monkeypatch.delenv(var, raising=False)
+
+        # Step 1: Simulate what train.py does — write a checkpoint
+        checkpoint_payload = {
+            "epoch": 3,
+            "global_step": 150,
+            "model_state_dict": {"weight": torch.tensor([1.0, 2.0, 3.0])},
+            "optimizer_state_dict": {"lr": 1e-4},
+        }
+        ckpt_path = tmp_path / "checkpoint_epoch0003.pt"
+        torch.save(checkpoint_payload, ckpt_path)
+        assert ckpt_path.exists(), "Pre-condition: torch.save must create the file."
+
+        # Step 2: Build store — must be LocalCheckpointStore (no S3 config)
+        store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="")
+        assert isinstance(store, LocalCheckpointStore), (
+            f"Expected LocalCheckpointStore (no S3 config). Got: {type(store).__name__}"
+        )
+
+        # Step 3: Discover the latest checkpoint key
+        key = store.latest_key()
+        assert key == "checkpoint_epoch0003.pt", (
+            f"latest_key() must discover the written checkpoint. Got: {key!r}"
+        )
+
+        # Step 4: Fetch (local — no download, just path resolution)
+        local_path = store.fetch(key, tmp_path)
+        assert local_path.exists(), (
+            "fetch() must return a path to an existing file. "
+            f"Path: {local_path}"
+        )
+
+        # Step 5: Load and verify checkpoint contents match
+        loaded = torch.load(local_path, map_location="cpu", weights_only=False)
+        assert loaded["epoch"] == 3, (
+            f"Loaded epoch must be 3. Got: {loaded['epoch']!r}"
+        )
+        assert loaded["global_step"] == 150, (
+            f"Loaded global_step must be 150. Got: {loaded['global_step']!r}"
+        )
+        assert torch.equal(
+            loaded["model_state_dict"]["weight"],
+            torch.tensor([1.0, 2.0, 3.0]),
+        ), "Loaded model weight must match saved value."
+
+        # Step 6: put() is a no-op — file must be intact after put
+        store.put(ckpt_path)
+        assert ckpt_path.exists(), "put() must not delete the checkpoint file."
+        loaded_after_put = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert loaded_after_put["epoch"] == 3, (
+            "put() must not corrupt the checkpoint file."
+        )
+
+    def test_second_checkpoint_supersedes_first_in_local_mode(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """latest_key() returns the most recent checkpoint after multiple saves.
+
+        Simulates two training epochs writing checkpoints:
+          epoch 1 → checkpoint_epoch0001.pt
+          epoch 2 → checkpoint_epoch0002.pt
+        latest_key() must return epoch0002 so resume picks up the correct epoch.
+        """
+        for var in ("AWS_S3_BUCKET", "AWS_S3_ENDPOINT", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+            monkeypatch.delenv(var, raising=False)
+
+        torch.save({"epoch": 1, "global_step": 50}, tmp_path / "checkpoint_epoch0001.pt")
+        torch.save({"epoch": 2, "global_step": 100}, tmp_path / "checkpoint_epoch0002.pt")
+
+        store = build_checkpoint_store(output_dir=tmp_path, s3_prefix="")
+        key = store.latest_key()
+
+        assert key == "checkpoint_epoch0002.pt", (
+            "latest_key() must return the latest checkpoint after multiple saves. "
+            "A second training epoch must supersede the first for resume purposes. "
+            f"Got: {key!r}"
+        )
+
+        loaded = torch.load(store.fetch(key, tmp_path), map_location="cpu", weights_only=False)
+        assert loaded["epoch"] == 2, (
+            f"Resume must load epoch 2 (the latest). Got epoch: {loaded['epoch']!r}"
+        )

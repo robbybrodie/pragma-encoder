@@ -169,7 +169,7 @@ class TestProperties:
     ) -> None:
         """ADR 003: upload=False must not attempt S3 access.
 
-        Unset all S3 env vars (native AWS_* and legacy MODEL_REGISTRY_*).
+        Unset all S3 env vars (native AWS_* schema).
         If prepare(upload=False) tries to connect to S3, it will fail with a
         missing-credentials error. With upload=False, it must succeed silently.
         """
@@ -177,10 +177,6 @@ class TestProperties:
         monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
         monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_BUCKET", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ENDPOINT", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_ACCESS_KEY", raising=False)
-        monkeypatch.delenv("MODEL_REGISTRY_SECRET_KEY", raising=False)
         # Must not raise — no S3 credentials needed when upload=False
         manifest = adapter_with_csv.prepare(PRAGMAConfig.pragma_s(), upload=False)
         assert manifest is not None

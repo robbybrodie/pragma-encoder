@@ -224,7 +224,7 @@ weights. Training continued with diverged model states.
 Option A implemented: all ranks download the checkpoint from S3 independently.
 
 **`src/training/checkpoints.py`** — new module implementing the all-rank download pattern:
-- `parse_s3_config_from_env()` — reads native `AWS_*` env vars (primary) or `MODEL_REGISTRY_*` (deprecated fallback); returns `None` when absent
+- `parse_s3_config_from_env()` — reads native `AWS_*` env vars; returns `None` when absent
 - `list_checkpoint_keys(client, bucket, prefix)` — lists `.pt` keys under an S3 prefix
 - `select_latest_checkpoint_key(client, bucket, prefix)` — returns the latest key by `LastModified`
 - `upload_checkpoint_if_rank0(ckpt_path, s3_prefix, is_rank0)` — rank-0-only upload (no-op on workers)
@@ -466,51 +466,22 @@ S3 Connection:
 - `AI_PLATFORM_API_URL` — RHOAI dashboard URL; belongs in a platform ConfigMap
 - `NGC_API_KEY` — NVIDIA registry credential; belongs in a separate `registry-credentials` Secret
 
-### Current state
+### Resolution applied (2026-05-22)
 
-`src/pragma_encoder/training/checkpoints.py` and
-`src/pragma_encoder/data/adapters/ibm_tabformer.py` now read native `AWS_*` keys first
-and fall back to `MODEL_REGISTRY_*` keys with `DeprecationWarning`. This keeps the live
-cluster working while re-sealing is pending.
+All steps completed:
 
-```
-DeprecationWarning: S3 config read from deprecated MODEL_REGISTRY_* env vars.
-Re-seal the workbench runtime secret with native AWS_* key names (TD-010).
-```
+1. `openshift/secrets/workbench-secret.yaml` rewritten with native `AWS_*` keys and
+   `opendatahub.io/*` RHOAI annotations. `NGC_API_KEY` and `AI_PLATFORM_API_URL` removed.
 
-### Resolution
+2. Re-sealed with kubeseal — `openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml`
+   now carries only `AWS_*` keys. Verified: `oc get secret pragma-workbench-env -o json | jq '.data | keys'`.
 
-1. Populate the plaintext template with real credentials:
-   ```bash
-   cp openshift/secrets/workbench-secret.template.yaml openshift/secrets/workbench-secret.yaml
-   # Edit workbench-secret.yaml with real AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-   # AWS_S3_ENDPOINT, AWS_S3_BUCKET values.
-   ```
+3. `MODEL_REGISTRY_*` fallback code removed from `checkpoints.py` and `ibm_tabformer.py`.
 
-2. Re-seal with kubeseal:
-   ```bash
-   kubeseal --scope namespace-wide \
-     --namespace pragma-encoder \
-     --format yaml \
-     < openshift/secrets/workbench-secret.yaml \
-     > openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml
-   ```
+4. All manifests (`dspa.yaml`, `pytorchjob-pragma-s.yaml`, `pytorchjob-pragma-s-2node.yaml`,
+   `pytorchjob-pragma-m.yaml`) updated to use native `AWS_*` field names.
 
-3. Commit the new sealed file. Delete the plaintext file.
-
-4. Once the new Secret is live on the cluster the `DeprecationWarning` will stop and the
-   `MODEL_REGISTRY_*` fallback path can be removed from `checkpoints.py` and
-   `ibm_tabformer.py`.
-
-5. Non-S3 credentials (`NGC_API_KEY`) must be moved to a separate
-   `openshift/gitops/secrets/registry-credentials.sealed.yaml`.
-
-### Blocking criteria for removal of fallback
-
-The `MODEL_REGISTRY_*` fallback code in `checkpoints.py` and `ibm_tabformer.py` may be
-removed when:
-- The re-sealed Secret is live on the cluster (`oc get secret pragma-workbench-env -o json | jq '.data | keys'` shows only `AWS_*` keys)
-- All OpenShift cluster tests pass without DeprecationWarning
+5. NGC credentials remain in the separate `registry-credentials` Secret (correct).
 
 ### References
 - Sealed Secret: `openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml`
@@ -520,3 +491,70 @@ removed when:
 - Schema source of truth: `oc get cm s3 -n redhat-ods-applications -o yaml`
 - Tests: `tests/test_checkpoint_resume.py::TestS3ConfigFromEnv::test_deprecated_model_registry_fallback_emits_warning`
 - Tests: `tests/test_openshift_ai_fixtures.py::TestObjectStorageConnectionFixture::test_no_model_registry_aliases_in_connection_fixture`
+
+---
+
+## TD-011: Two-run local training smoke test deferred (requires real data files)
+
+**Date:** 2026-05-22
+**Severity:** Low (local correctness already covered by unit tests; smoke deferred only)
+**Status:** Open — deferred pending data availability
+
+### Description
+
+A full two-run local training smoke test — where a real training run writes a
+checkpoint to `--output-dir` and a second run resumes from it — requires the
+IBM TabFormer dataset files:
+
+```
+data/tabformer/card_transaction.v1.csv
+data/tabformer/vocab.pkl
+```
+
+These files cannot be committed to the repository (proprietary data). Without
+them, a real end-to-end smoke test that exercises `pragma-encoder-train`,
+`torch.save`, and `torch.load` across two process invocations cannot run in
+the default `pytest tests/` suite.
+
+### What is already covered
+
+The following local checkpoint behaviours are verified without data files:
+
+- `TestLocalCheckpointModeFirstClass` (9 tests): `build_checkpoint_store`,
+  `LocalCheckpointStore.latest_key/fetch/put`, and `resolve_resume_checkpoint`
+  all tested with real `AWS_*` env var clearing (no mocking of
+  `parse_s3_config_from_env`). Proves local mode requires no S3 credentials.
+
+- `TestLocalCheckpointRoundTrip` (2 tests): Full lifecycle with `torch.save`
+  and `torch.load` — write a real `.pt` checkpoint, discover it via
+  `store.latest_key()`, fetch, load, verify contents, confirm `put()` is a
+  no-op. Multiple-epoch supersession also covered.
+
+These tests cover the storage adapter contract end-to-end. The missing piece
+is a black-box CLI smoke: two subprocess calls to `pragma-encoder-train` with
+real data files.
+
+### Resolution
+
+When `data/tabformer/card_transaction.v1.csv` and `data/tabformer/vocab.pkl`
+are available in the test environment (e.g. downloaded from S3 in CI), add:
+
+```python
+# tests/test_local_training_smoke.py
+@pytest.mark.skipif(not DATA_AVAILABLE, reason="tabformer data not available")
+def test_two_run_local_resume():
+    """Run 1 trains 1 epoch. Run 2 resumes and trains 1 more epoch."""
+    # subprocess.run(["pragma-encoder-train", ..., "--epochs", "1"])
+    # assert checkpoint_epoch0001.pt exists
+    # subprocess.run(["pragma-encoder-train", ..., "--resume", "--epochs", "2"])
+    # assert checkpoint_epoch0002.pt exists
+    # assert epoch in torch.load(ckpt) == 2
+```
+
+Gate with `RUN_LOCAL_TRAINING_SMOKE=1` to keep the default suite data-free.
+
+### References
+- Tests: `tests/test_checkpoint_resume.py::TestLocalCheckpointModeFirstClass`
+- Tests: `tests/test_checkpoint_resume.py::TestLocalCheckpointRoundTrip`
+- Docs: `docs/training-guide.md` — Local training section
+- Code: `src/pragma_encoder/training/train.py` — `pragma-encoder-train` entrypoint
