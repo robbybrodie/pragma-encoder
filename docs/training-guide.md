@@ -16,7 +16,9 @@ Training can run:
 - **Locally** — single process, any GPU/MPS/CPU
 - **On OpenShift AI** — KFTO PyTorchJob, single-node (PRAGMA-S) or multi-node DDP (PRAGMA-M)
 
-The training script (`scripts/train_pragma.py`) handles both modes automatically.
+The canonical training entrypoint is `python -m pragma_encoder.training.train`
+(equivalently `pragma-encoder-train`). The compatibility wrapper
+`scripts/train_pragma.py` is also available in the training image.
 No code change is needed between local and cluster runs.
 
 ---
@@ -53,7 +55,7 @@ Start with PRAGMA-S. It trains on a single GPU and validates the pipeline end-to
 The tokeniser pipeline must be fitted on the training data before training:
 
 ```bash
-python src/data/fit_tokenizer.py \
+python -m pragma_encoder.data.fit_tokenizer \
     --csv-path data/tabformer/card_transaction.v1.csv \
     --output   data/tabformer/vocab.pkl
 ```
@@ -92,7 +94,7 @@ pragma-encoder/data/tabformer/vocab.pkl
 ## Local training (single process)
 
 ```bash
-python scripts/train_pragma.py \
+python -m pragma_encoder.training.train \
     --model-variant pragma-s \
     --csv-path  data/tabformer/card_transaction.v1.csv \
     --vocab-path data/tabformer/vocab.pkl \
@@ -103,7 +105,7 @@ python scripts/train_pragma.py \
 
 To resume from a previous run:
 ```bash
-python scripts/train_pragma.py \
+python -m pragma_encoder.training.train \
     --model-variant pragma-s \
     --csv-path  data/tabformer/card_transaction.v1.csv \
     --vocab-path data/tabformer/vocab.pkl \

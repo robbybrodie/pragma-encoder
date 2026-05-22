@@ -41,7 +41,7 @@ Smoke manifest design:
     - Master (rank 0) + Worker (rank 1..nnodes-1) replicas
     - torchrun --nnodes=<nnodes> --nproc_per_node=1 --node_rank=$RANK
     - KFTO injects: MASTER_ADDR, MASTER_PORT, RANK, WORLD_SIZE
-    - Image: PRAGMA_TRAINING_IMAGE (source + deps baked in, no git clone)
+    - Image: PRAGMA_TRAINING_IMAGE (pragma_encoder wheel installed, no git clone)
     - Data: inline 30-row TabFormer CSV (no S3, no init container)
     - CPU only (--device cpu, no GPU resource request)
     - --max-steps 1 for fast exit
@@ -209,10 +209,10 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str, nnodes: int
     """Render the smoke PyTorchJob YAML manifest with test-specific values.
 
     Both Master and each Worker replica run an identical shell script that:
-      1. Locates the PRAGMA project root in the training image.
-      2. Writes the inline 30-row TabFormer CSV to /tmp/pragma-smoke/.
-      3. Runs fit_tokenizer.py (cwd=/tmp/pragma-smoke/) to build vocab.pkl.
-      4. Runs torchrun with KFTO-injected RANK / MASTER_ADDR / MASTER_PORT.
+      1. Writes the inline 30-row TabFormer CSV to /tmp/pragma-smoke/.
+      2. Runs python -m pragma_encoder.data.fit_tokenizer (cwd=/tmp/pragma-smoke/).
+      3. Runs torchrun -m pragma_encoder.training.train with KFTO-injected
+         RANK / MASTER_ADDR / MASTER_PORT.
 
     The manifest is structurally equivalent to the production two-node
     manifest but uses:
@@ -226,7 +226,7 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str, nnodes: int
     Args:
         test_id:   Unique test-run identifier (used in resource name and labels).
         namespace: Kubernetes namespace to deploy the PyTorchJob into.
-        image:     Training image URI (must have PRAGMA source baked in).
+        image:     Training image URI (pragma_encoder wheel installed).
         nnodes:    Total node count. Default 2 (minimal distributed smoke).
                    Worker replicas = nnodes - 1.
 
@@ -239,29 +239,16 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str, nnodes: int
     script_lines = [
         "set -e",
         "",
-        "# Locate PRAGMA project root baked into the training image.",
-        "PRAGMA_ROOT=''",
-        "for CANDIDATE in /opt/app-root/src/pragma-encoder /opt/app-root/src /pragma-encoder .; do",
-        "  if [ -f $CANDIDATE/src/pragma_encoder/data/fit_tokenizer.py ]; then",
-        "    PRAGMA_ROOT=$CANDIDATE",
-        "    break",
-        "  fi",
-        "done",
-        "if [ -z $PRAGMA_ROOT ]; then",
-        "  echo 'ERROR: Cannot find PRAGMA project root in training image' >&2; exit 1",
-        "fi",
-        "echo \"[Level 4 smoke] PRAGMA root: $PRAGMA_ROOT\"",
-        "",
         "# Write inline 30-row TabFormer CSV — base64 avoids heredoc/YAML indent issues.",
         "mkdir -p /tmp/pragma-smoke/data/tabformer",
         f"echo '{_SMOKE_CSV_B64}' | base64 -d > /tmp/pragma-smoke/data/tabformer/card_transaction.v1.csv",
         "echo \"[Level 4 smoke] CSV written ($(wc -l < /tmp/pragma-smoke/data/tabformer/card_transaction.v1.csv) lines)\"",
         "",
-        "# Fit tokenizer — must run from /tmp/pragma-smoke/ (hardcoded relative paths).",
+        "# Fit tokenizer — wheel-installed module invocation (no src/ tree required).",
         "cd /tmp/pragma-smoke",
-        "PYTHONPATH=$PRAGMA_ROOT/src python $PRAGMA_ROOT/src/pragma_encoder/data/fit_tokenizer.py",
+        "python -m pragma_encoder.data.fit_tokenizer",
         "if [ ! -f /tmp/pragma-smoke/data/tabformer/vocab.pkl ]; then",
-        "  echo 'ERROR: fit_tokenizer.py did not create vocab.pkl' >&2; exit 1",
+        "  echo 'ERROR: fit_tokenizer did not create vocab.pkl' >&2; exit 1",
         "fi",
         "echo '[Level 4 smoke] vocab.pkl created'",
         "",
@@ -269,13 +256,13 @@ def _render_smoke_manifest(test_id: str, namespace: str, image: str, nnodes: int
         "# KFTO injects: RANK, WORLD_SIZE, MASTER_ADDR, MASTER_PORT.",
         "echo \"[Level 4 smoke] torchrun RANK=$RANK WORLD_SIZE=$WORLD_SIZE MASTER_ADDR=$MASTER_ADDR\"",
         "mkdir -p /tmp/pragma-smoke-output",
-        "PYTHONPATH=$PRAGMA_ROOT/src torchrun \\",
+        "torchrun \\",
         f"  --nnodes={nnodes} \\",
         "  --nproc_per_node=1 \\",
         "  --node_rank=$RANK \\",
         "  --master_addr=$MASTER_ADDR \\",
         "  --master_port=$MASTER_PORT \\",
-        "  $PRAGMA_ROOT/scripts/train_pragma.py \\",
+        "  -m pragma_encoder.training.train \\",
         "  --csv-path /tmp/pragma-smoke/data/tabformer/card_transaction.v1.csv \\",
         "  --vocab-path /tmp/pragma-smoke/data/tabformer/vocab.pkl \\",
         "  --output-dir /tmp/pragma-smoke-output \\",
@@ -698,7 +685,7 @@ class TestPyTorchJobSmoke:
 
     The smoke manifest is rendered by _render_smoke_manifest().
     It follows the same KFTO topology as the production manifest but uses:
-      - PRAGMA_TRAINING_IMAGE (no git clone, source baked in)
+      - PRAGMA_TRAINING_IMAGE (pragma_encoder wheel installed, no git clone)
       - Inline 30-row CSV (no S3 credentials)
       - CPU only (no GPU resource request)
       - --max-steps 1 (fast exit, no checkpoint)

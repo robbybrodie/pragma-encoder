@@ -161,15 +161,6 @@ spec:
                 - |
                   set -euo pipefail
 
-                  # ---- Clone repository ---------------------------------
-                  echo "==> Cloning pragma-encoder (pragma-implementation) ..."
-                  git clone \
-                    https://github.com/robbybrodie/pragma-encoder.git \
-                    /workspace/repo \
-                    --branch pragma-implementation \
-                    --depth 1
-                  echo "==> Repo cloned: $(ls /workspace/repo)"
-
                   # ---- Stage training data from S3 ----------------------
                   echo "==> Staging training data from S3 ..."
                   python3 -c "$S3_STAGE_SCRIPT"
@@ -192,7 +183,7 @@ spec:
           # ----------------------------------------------------------------
           containers:
             - name: pytorch
-              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
               imagePullPolicy: IfNotPresent
               env:
                 # Post-training S3 upload script — rank 0 only.
@@ -232,14 +223,13 @@ spec:
 
                   # ---- Distributed PRAGMA-S pretraining ------------------
                   echo "==> Starting PRAGMA-S 2-node pretraining (rank=${RANK:-0}) ..."
-                  cd /workspace/repo
                   torchrun \
                     --nnodes=2 \
                     --nproc_per_node=1 \
                     --node_rank=${RANK:-0} \
                     --master_addr=${MASTER_ADDR:-localhost} \
                     --master_port=${MASTER_PORT:-23456} \
-                    scripts/train_pragma.py \
+                    -m pragma_encoder.training.train \
                       --model-variant pragma-s \
                       --csv-path   /workspace/data/tabformer/card_transaction.v1.csv \
                       --vocab-path /workspace/data/tabformer/vocab.pkl \
@@ -352,14 +342,6 @@ spec:
                 - |
                   set -euo pipefail
 
-                  echo "==> Cloning pragma-encoder (pragma-implementation) ..."
-                  git clone \
-                    https://github.com/robbybrodie/pragma-encoder.git \
-                    /workspace/repo \
-                    --branch pragma-implementation \
-                    --depth 1
-                  echo "==> Repo cloned: $(ls /workspace/repo)"
-
                   echo "==> Staging training data from S3 ..."
                   python3 -c "$S3_STAGE_SCRIPT"
                   echo "==> Init complete."
@@ -374,7 +356,7 @@ spec:
           # ----------------------------------------------------------------
           containers:
             - name: pytorch
-              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-training:latest
               imagePullPolicy: IfNotPresent
               env:
                 # S3_UPLOAD_SCRIPT is defined on all replicas; only rank 0 executes it.
@@ -413,14 +395,13 @@ spec:
                   set -euo pipefail
 
                   echo "==> Starting PRAGMA-S 2-node pretraining (rank=${RANK:-1}) ..."
-                  cd /workspace/repo
                   torchrun \
                     --nnodes=2 \
                     --nproc_per_node=1 \
                     --node_rank=${RANK:-1} \
                     --master_addr=${MASTER_ADDR} \
                     --master_port=${MASTER_PORT:-23456} \
-                    scripts/train_pragma.py \
+                    -m pragma_encoder.training.train \
                       --model-variant pragma-s \
                       --csv-path   /workspace/data/tabformer/card_transaction.v1.csv \
                       --vocab-path /workspace/data/tabformer/vocab.pkl \

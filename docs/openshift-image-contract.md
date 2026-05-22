@@ -19,7 +19,7 @@ on OpenShift AI and the responsibilities of each image.
 │    openshift/notebook-image/Dockerfile  │
 │  Base: RHOAI S2I generic data-science   │
 │                                         │
-│  Must include:                          │
+│  Includes:                              │
 │    Python runtime + PyTorch             │
 │    pandas, numpy, scikit-learn          │
 │    kfp >= 2                             │
@@ -27,9 +27,8 @@ on OpenShift AI and the responsibilities of each image.
 │    tokenizers, transformers, peft       │
 │    JupyterLab                           │
 │                                         │
-│  Must NOT include:                      │
-│    PRAGMA source code (src/)            │  ← cloned at pod startup via initContainer
-│    pipeline/ directory                  │  ← cloned at pod startup via initContainer
+│  Does NOT include:                      │
+│    pragma_encoder wheel                 │  ← installed in training image only
 └─────────────────────────────────────────┘
               ↑ FROM (base)
 ┌─────────────────────────────────────────┐
@@ -44,17 +43,16 @@ on OpenShift AI and the responsibilities of each image.
 │    openshift/training/Dockerfile.training│
 │  Base: pragma-encoder-workbench         │
 │                                         │
-│  Adds (baked in at build time):         │
-│    src/   → PRAGMA model source         │
-│    scripts/ → train_pragma.py etc.      │
-│    pyproject.toml                       │
+│  Adds (installed at build time):        │
+│    pragma_encoder wheel (pip install)   │
+│    scripts/ → train_pragma.py wrapper   │
 │                                         │
 │  Inherits from workbench:               │
 │    All Python deps (kfp, kfp-kubernetes,│
 │    PyTorch, pandas, tokenizers, …)      │
 │                                         │
 │  Must NOT include:                      │
-│    Runtime git clone                    │  ← source is baked in at build time
+│    Runtime git clone                    │  ← wheel is installed at build time
 └─────────────────────────────────────────┘
 ```
 
@@ -62,24 +60,27 @@ on OpenShift AI and the responsibilities of each image.
 
 ## Why two images?
 
-### Workbench image: authoring only, no source code
+### Workbench image: authoring environment, no pragma_encoder wheel
 
 The workbench image provides the Python runtime environment for authoring
-pipelines in JupyterLab. PRAGMA source code (`src/`) is **not** baked into the
-workbench image because it changes frequently during development.
+pipelines in JupyterLab. The `pragma_encoder` wheel is **not** installed in
+the workbench image. Workbench users access the library via `PYTHONPATH=.`
+(source tree on `sys.path`) during development.
 
-Instead, the PRAGMA source is cloned at pod startup via an `initContainer`
-(`git-clone`) defined in the Notebook CR. This means the workbench always runs
-the latest committed source without a full image rebuild.
-
-### Training image: source baked in, no runtime clone
+### Training image: wheel installed, no runtime clone
 
 KFP component pods run in their own image — they do **not** inherit the
-workbench pod's git checkout or filesystem. The training image has `src/`
-baked in at build time (via `COPY src/ src/`), so component pods can
-`import src.model`, `import src.data`, etc. without any network access.
+workbench pod's source tree or filesystem. The training image installs the
+`pragma_encoder` wheel via `pip install --no-deps dist/pragma_encoder-*.whl`
+at image build time, so component pods can `import pragma_encoder` without
+any network access.
 
-**Runtime git clone is not the default for component pods** because:
+Training entrypoints available in the image:
+- `pragma-encoder-train` (console script, installed by wheel)
+- `python -m pragma_encoder.training.train` (module invocation)
+- `scripts/train_pragma.py` (compatibility wrapper, copied at build time)
+
+**Runtime git clone is not used** because:
 
 1. It requires network egress from the component pod to GitHub.
 2. It couples the component pod's execution to GitHub availability.
@@ -130,8 +131,8 @@ themselves do not import kfp-kubernetes.
 # Workbench image — already included in openshift/notebook-image/requirements.txt
 pip install kfp-kubernetes>=1.2
 
-# Or via pyproject.toml extras:
-pip install 'pragma-encoder[workbench]'
+# kfp is also an optional dependency:
+pip install kfp
 ```
 
 **Guard behaviour:**
@@ -160,7 +161,7 @@ oc get istag pragma-encoder-workbench:latest -n pragma-encoder
 ### Training / component image
 
 ```bash
-# Run from repo root:
+# Run from repo root — Dockerfile.training installs the wheel from dist/:
 oc start-build pragma-encoder-training --from-dir=. --follow -n pragma-encoder
 
 # Verify:
@@ -177,9 +178,9 @@ pipeline YAML at compile time. Each component pod receives:
 1. A self-contained `ephemeral_component.py` (from the YAML).
 2. The training image as the execution environment.
 
-The component bodies import from `src.*` — which is baked into the training
-image. The `pipeline/` directory is **not** in the training image; it is only
-used in the workbench environment at compile time.
+The component bodies import from `pragma_encoder.*` — the wheel installed in
+the training image. The `pipeline/` directory is **not** in the training
+image; it is only used in the workbench environment at compile time.
 
 ---
 

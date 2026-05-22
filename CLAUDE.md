@@ -205,13 +205,13 @@ Reference: §2.3.4, Equation 6, `docs/paper/02-03-architecture.md` §2.3.4,
 | Component | Tool |
 |---|---|
 | Model implementation | PyTorch (pure) |
-| Training orchestration | Custom PyTorch loop (`scripts/train_pragma.py`) |
+| Training orchestration | Custom PyTorch loop (`python -m pragma_encoder.training.train`) |
 | Distributed training | torchrun / DDP via KFTO PyTorchJob (`kubeflow.org/v1`) |
 | Pipeline orchestration | KFP SDK v2 |
 | LoRA fine-tuning | Hugging Face PEFT library |
 | Embedding extraction | Custom script + numpy/parquet |
 
-**The training loop is pure PyTorch** (`scripts/train_pragma.py`). The model itself is pure PyTorch.
+**The training loop is pure PyTorch** (`python -m pragma_encoder.training.train`). The model itself is pure PyTorch.
 NeMo AutoModel is not currently used. See ADR 005 (`docs/decisions/005-training-orchestration.md`).
 
 ---
