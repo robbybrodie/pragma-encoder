@@ -161,6 +161,63 @@ print(f'PRAGMA-S: {n:,} parameters')
 
 ---
 
+## Training
+
+The `pragma-encoder-train` console script (installed with the wheel) handles
+both local and cluster training. No code changes are needed between the two modes.
+
+### Local training (laptop / default)
+
+Local filesystem checkpoint/resume requires only `--output-dir`. No S3 config,
+no OpenShift Secret, no Connection.
+
+```bash
+# 1. Fit the tokeniser (once)
+python -m pragma_encoder.data.fit_tokenizer \
+    --csv-path data/tabformer/card_transaction.v1.csv \
+    --output   data/tabformer/vocab.pkl
+
+# 2. Train (checkpoints written to --output-dir)
+pragma-encoder-train \
+    --csv-path   data/tabformer/card_transaction.v1.csv \
+    --vocab-path data/tabformer/vocab.pkl \
+    --output-dir runs/pragma-s \
+    --epochs 10
+
+# 3. Resume from the latest local checkpoint
+pragma-encoder-train \
+    --csv-path   data/tabformer/card_transaction.v1.csv \
+    --vocab-path data/tabformer/vocab.pkl \
+    --output-dir runs/pragma-s \
+    --resume \
+    --epochs 10
+```
+
+`--resume` scans `--output-dir` for `checkpoint_epoch*.pt` files and loads
+the lexicographically latest one. If no checkpoint exists it starts fresh.
+
+### Platform training (OpenShift AI)
+
+OpenShift AI supplies S3 object storage credentials through a Connection
+(annotated Kubernetes Secret). When `--s3-checkpoint-prefix` is set and
+`AWS_S3_BUCKET` / `AWS_S3_ENDPOINT` are present in the pod environment,
+checkpoints are uploaded to S3 after each epoch for fault-tolerant resume.
+
+```bash
+pragma-encoder-train \
+    --csv-path   /workspace/data/tabformer/card_transaction.v1.csv \
+    --vocab-path /workspace/data/tabformer/vocab.pkl \
+    --output-dir /workspace/outputs/pragma-s \
+    --s3-checkpoint-prefix pragma-encoder/checkpoints/pragma-s \
+    --resume \
+    --epochs 10
+```
+
+See `docs/training-guide.md` for full pretraining instructions and
+`docs/openshift-ai-3.3-alignment.md` for the platform primitive alignment.
+
+---
+
 ## Paper Reference
 
 ```bibtex
