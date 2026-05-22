@@ -25,7 +25,7 @@ spec:
     type: Git
     git:
       uri: https://github.com/robbybrodie/pragma-encoder
-      ref: pragma-implementation
+      ref: main
     # contextDir is relative to the repo root.
     # Only files under this directory are sent to the build daemon.
     contextDir: openshift/notebook-image
