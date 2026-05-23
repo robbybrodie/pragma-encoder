@@ -282,14 +282,19 @@ connection in this deployment — it is not the product abstraction.
 | `pragma-workbench-env` Secret | Test fixture / platform default — not package code |
 | Bucket creation | Platform operator (not the wheel) |
 
-**RHOAI 3.3 path:** PyTorchJob with application-managed checkpoint/resume over S3.
-Each pod downloads data from S3 at startup into `emptyDir`; the master pod (rank 0)
-uploads checkpoints to S3 after each epoch. Training can resume from a checkpoint
-if the pod restarts.
+**RHOAI 3.4 path (current):** PyTorchJob with application-managed checkpoint/resume
+over S3. Each pod downloads data from S3 at startup into `emptyDir`; the master pod
+(rank 0) uploads checkpoints to S3 after each epoch. Training can resume from a
+checkpoint if the pod restarts.
 
-**RHOAI 3.4 / Kubeflow Trainer v2:** TrainJob API should be evaluated separately
-before expanding custom checkpoint orchestration. It is not the current production
-path.
+**KFP component staging (`run_pretraining`):** S3 data is downloaded to a configurable
+`scratch_dir` (default `/tmp/pragma-run`, passed as `--scratch-dir` if overriding).
+This is pod-local ephemeral storage — not a shared PVC. `--dataset-name` records the
+original S3 URI in `metadata.json` separately from the local staging path
+(`csv_staging_path`).  `metadata.json` is uploaded to S3 alongside the checkpoint.
+
+**Kubeflow Trainer v2 / TrainJob:** Tech Preview in RHOAI 3.4. Evaluate separately
+before adopting — not the current production path.
 
 See `docs/openshift-storage-pattern.md` for the full storage decision record.
 
@@ -297,23 +302,28 @@ See `docs/openshift-storage-pattern.md` for the full storage decision record.
 
 ## OpenShift AI alignment
 
-RHOAI 3.3 primitives mapped to this repo:
+> **Platform version:** RHOAI 3.4.0 is the currently installed version
+> (upgraded from 2.25.6 via controlled re-installation on 2026-05-23).
+> The primitive map below reflects 3.4 semantics.
+
+RHOAI 3.4 primitives mapped to this repo:
 
 | RHOAI primitive | Status | Notes |
 |---|---|---|
 | Data Science Project | GA | `pragma-encoder` namespace |
 | Workbench | GA | `openshift/gitops/workbench/notebook.yaml` |
 | Connection (object storage) | GA | Supplies native `AWS_*` env vars (`AWS_S3_BUCKET`, `AWS_S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) |
-| HardwareProfile | GA | Schedules GPU nodes for training |
+| HardwareProfile | GA | `infrastructure.opendatahub.io` API group in 3.4 (was `dashboard.opendatahub.io`) |
 | Data Science Pipeline (DSPA) | GA | KFP v2; `openshift/gitops/pipeline/dspa.yaml` |
-| PyTorchJob (`kubeflow.org/v1`) | GA | Current runtime proof for training |
-| TrainJob / Kubeflow Trainer v2 | Tech Preview in 3.3 | Forward path to evaluate for 3.4 |
+| PyTorchJob (`kubeflow.org/v1`) | GA | Current production training runtime |
+| TrainJob / Kubeflow Trainer v2 | Tech Preview in 3.4 | Forward path — evaluate separately before adopting |
 | Model serving | GA | KServe `InferenceService`; not yet wired for PRAGMA |
 
 **GA APIs only** — the production training path uses `kubeflow.org/v1` PyTorchJob.
-TrainJob is Tech Preview in RHOAI 3.3 and must not be the current production path.
+TrainJob is Tech Preview in RHOAI 3.4 and must not be the current production path.
 
 Full primitive map: `docs/openshift-ai-3.3-alignment.md`
+(Note: document describes 3.3 primitives; 3.4 is the installed version — primitives are compatible)
 
 ---
 
@@ -393,12 +403,16 @@ Opt-in tests are gated by environment variables (`RUN_OPENSHIFT_TESTS=1`,
 | Training image | Installs wheel; verified by image contract tests |
 | S3 checkpoint/resume | Proven end-to-end (Level 5 test) |
 | KFP pipeline code | Does not assume source-tree paths |
+| Metadata contract | Hardened: `csv_staging_path`, `dataset_name`, `_safe_args_for_metadata` allowlist |
+| `run_pretraining` scratch dir | Configurable `scratch_dir` parameter (not hardcoded `/tmp/pragma-run`) |
+| metadata.json S3 upload | Uploaded alongside checkpoint in S3 |
+| Platform | RHOAI 3.4.0 (upgraded from 2.25.6 on 2026-05-23) |
 | TD-009 | Resolved 2026-05-21 |
-| Test suite | 715 passed, 119 skipped (as of 2026-05-21) |
+| Test suite | 835+ passed (as of 2026-05-23) |
 
 Next major milestone: Workbench-to-pipeline user flow end-to-end — compiled
 pipeline registration in RHOAI GUI and evaluation of Kubeflow Trainer v2
-for RHOAI 3.4.
+for RHOAI 3.4 (TrainJob is Tech Preview; evaluate before adopting).
 
 ---
 

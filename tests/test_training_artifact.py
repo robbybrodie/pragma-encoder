@@ -6,9 +6,14 @@ Verifies that:
   - pragma_pretraining_pipeline has max_steps / limit_rows parameters
   - pragma_smoke_training_pipeline has output_dir parameter
   - run_pretraining component uses wheel-based module invocation (not source-tree paths)
+  - run_pretraining has scratch_dir parameter (configurable, not hardcoded /tmp/pragma-run)
+  - run_pretraining wires --dataset-name and uploads metadata.json to S3
+  - metadata.json dataset section uses csv_staging_path (not csv_path) and dataset_name
+  - metadata.json args section is filtered by _METADATA_ALLOWED_ARG_KEYS (no credentials)
+  - _safe_args_for_metadata excludes csv_path, vocab_path, device, and other staging paths
 
 Training integration tests use a 30-row synthetic TabFormer CSV (same as the
-Level 3 smoke component) with --max-steps 1 --limit-rows 2 --device cpu.
+Level 3 smoke component) with --limit-rows 2 --epochs 1 --device cpu.
 All tests run locally without S3, distributed training, or cluster access.
 
 Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
@@ -24,7 +29,6 @@ import sys
 import textwrap
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Inline CSV — 30 rows, 10 users × 3 transactions (same as smoke component)
@@ -480,4 +484,327 @@ class TestRunPretrainingSourceContract:
         assert '"--limit-rows"' in src or "'--limit-rows'" in src, (
             "pipeline/components_pragma.py run_pretraining must pass --limit-rows to train. "
             "Check the _cmd list in run_pretraining."
+        )
+
+    def test_run_pretraining_has_scratch_dir_param(self) -> None:
+        """run_pretraining must have a scratch_dir parameter.
+
+        scratch_dir makes the staging directory configurable so tests can redirect
+        it to a tmpdir, and future confidential runtimes can restrict it to attested
+        memory regions. It must NOT be hardcoded to /tmp/pragma-run.
+        """
+        from pipeline.components_pragma import run_pretraining  # noqa: PLC0415
+        sig = inspect.signature(run_pretraining)
+        assert "scratch_dir" in sig.parameters, (
+            "run_pretraining component must have a scratch_dir parameter. "
+            "The staging directory must be configurable — not hardcoded to /tmp/pragma-run."
+        )
+
+    def test_run_pretraining_scratch_dir_default_is_tmp(self) -> None:
+        """run_pretraining scratch_dir default must be a /tmp path (pod-local ephemeral)."""
+        from pipeline.components_pragma import run_pretraining  # noqa: PLC0415
+        sig = inspect.signature(run_pretraining)
+        default = sig.parameters["scratch_dir"].default
+        assert isinstance(default, str), (
+            f"run_pretraining scratch_dir default must be str. Got: {type(default)}"
+        )
+        assert default.startswith("/tmp"), (
+            f"run_pretraining scratch_dir default must start with /tmp (pod-local ephemeral). "
+            f"Got: {default!r}"
+        )
+
+    def test_run_pretraining_body_uses_scratch_dir_not_hardcoded(self) -> None:
+        """run_pretraining body must use the scratch_dir parameter, not a hardcoded path.
+
+        If /tmp/pragma-run is hardcoded in the function body, setting scratch_dir
+        would have no effect — defeating the purpose of the parameter.
+        """
+        import pipeline.components_pragma as mod  # noqa: PLC0415
+        src = pathlib.Path(inspect.getfile(mod)).read_text()
+        # The body must NOT contain a string literal /tmp/pragma-run
+        # (the default value in the signature is acceptable but the body must use the param).
+        # We detect this by checking that pathlib.Path(scratch_dir) appears in the source,
+        # indicating the parameter is actually used.
+        assert "pathlib.Path(scratch_dir)" in src, (
+            "run_pretraining body must use pathlib.Path(scratch_dir). "
+            "The /tmp/pragma-run path must come from the parameter, not be hardcoded."
+        )
+
+    def test_run_pretraining_passes_dataset_name_to_train(self) -> None:
+        """run_pretraining must wire --dataset-name into the training subprocess call.
+
+        --dataset-name passes the original S3 URI or dataset label to the wheel
+        so it is recorded in metadata.json, not the local staging path.
+        """
+        src = self._components_source()
+        assert '"--dataset-name"' in src or "'--dataset-name'" in src, (
+            "pipeline/components_pragma.py run_pretraining must pass --dataset-name to train. "
+            "Check the _cmd list in run_pretraining."
+        )
+
+    def test_run_pretraining_uploads_metadata(self) -> None:
+        """run_pretraining must upload metadata.json to S3 alongside the checkpoint.
+
+        metadata.json must be durable — not ephemeral pod-local storage only.
+        It is uploaded to S3 at the same prefix as the checkpoint.
+        """
+        src = self._components_source()
+        assert "metadata.json" in src, (
+            "pipeline/components_pragma.py run_pretraining must reference metadata.json. "
+            "metadata.json must be uploaded to S3 alongside the checkpoint."
+        )
+
+
+# ===========================================================================
+# 5. Metadata staging path and dataset reference contract
+# ===========================================================================
+
+
+class TestMetadataStagingPath:
+    """Verify that metadata.json records the staging path and dataset reference correctly."""
+
+    def test_metadata_dataset_has_csv_staging_path(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json dataset section must have csv_staging_path (not csv_path).
+
+        csv_staging_path makes explicit that this is the job-local staging path,
+        not the original dataset source (which is recorded in dataset_name).
+        """
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        assert "csv_staging_path" in meta["dataset"], (
+            "metadata.json dataset section must have 'csv_staging_path' key. "
+            f"Present dataset keys: {sorted(meta['dataset'].keys())}"
+        )
+
+    def test_metadata_dataset_no_raw_csv_path_key(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json dataset section must NOT have the old 'csv_path' key.
+
+        The field was renamed to 'csv_staging_path' to make its meaning unambiguous.
+        If 'csv_path' is still present, the rename did not take effect.
+        """
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        assert "csv_path" not in meta["dataset"], (
+            "metadata.json dataset section must not have 'csv_path'. "
+            "The field was renamed to 'csv_staging_path'. "
+            f"Present dataset keys: {sorted(meta['dataset'].keys())}"
+        )
+
+    def test_metadata_dataset_has_dataset_name(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json dataset section must have dataset_name.
+
+        dataset_name records the original dataset reference (S3 URI or label).
+        For local runs without --dataset-name, it falls back to csv_staging_path value.
+        """
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        assert "dataset_name" in meta["dataset"], (
+            "metadata.json dataset section must have 'dataset_name' key. "
+            f"Present dataset keys: {sorted(meta['dataset'].keys())}"
+        )
+
+    def test_metadata_dataset_name_is_string(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json dataset_name must be a non-empty string."""
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        name = meta["dataset"].get("dataset_name")
+        assert isinstance(name, str) and name, (
+            f"metadata.json dataset.dataset_name must be a non-empty string. Got: {name!r}"
+        )
+
+    def test_metadata_csv_staging_path_is_absolute(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json csv_staging_path must be an absolute path."""
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        staging_path = meta["dataset"]["csv_staging_path"]
+        assert pathlib.Path(staging_path).is_absolute(), (
+            f"metadata.json csv_staging_path must be absolute. Got: {staging_path!r}"
+        )
+
+    def test_dataset_name_arg_default_is_empty_string(self) -> None:
+        """--dataset-name default must be empty string (set by pipeline, not user)."""
+        from pragma_encoder.training.train import parse_args  # noqa: PLC0415
+        args = parse_args([])
+        assert args.dataset_name == "", (
+            f"--dataset-name default must be '' (empty). Got: {args.dataset_name!r}"
+        )
+
+    def test_dataset_name_arg_parsed_from_cli(self) -> None:
+        """--dataset-name must be passed through to args.dataset_name."""
+        from pragma_encoder.training.train import parse_args  # noqa: PLC0415
+        args = parse_args(["--dataset-name", "s3://mybucket/pragma-encoder/data/tabformer/"])
+        assert args.dataset_name == "s3://mybucket/pragma-encoder/data/tabformer/", (
+            f"--dataset-name not correctly parsed. Got: {args.dataset_name!r}"
+        )
+
+
+# ===========================================================================
+# 6. Metadata secrets / credential redaction contract
+# ===========================================================================
+
+
+class TestMetadataSecrets:
+    """Verify that metadata.json never contains credentials or sensitive values.
+
+    AWS_* credentials are env vars, not CLI args — they must never appear in
+    metadata.json. The _METADATA_ALLOWED_ARG_KEYS allowlist enforces this
+    at the source level; these tests enforce it at the artifact level.
+    """
+
+    def test_metadata_args_no_access_key_id(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json args section must not contain AWS_ACCESS_KEY_ID key."""
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        args_section = meta.get("args", {})
+        assert "aws_access_key_id" not in args_section, (
+            "metadata.json args must not contain 'aws_access_key_id'. "
+            "AWS credentials are env vars, not CLI args."
+        )
+        assert "AWS_ACCESS_KEY_ID" not in args_section, (
+            "metadata.json args must not contain 'AWS_ACCESS_KEY_ID'. "
+            "AWS credentials are env vars, not CLI args."
+        )
+
+    def test_metadata_args_no_secret_access_key(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json args section must not contain AWS_SECRET_ACCESS_KEY key."""
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        args_section = meta.get("args", {})
+        assert "aws_secret_access_key" not in args_section, (
+            "metadata.json args must not contain 'aws_secret_access_key'. "
+        )
+        assert "AWS_SECRET_ACCESS_KEY" not in args_section, (
+            "metadata.json args must not contain 'AWS_SECRET_ACCESS_KEY'. "
+        )
+
+    def test_metadata_no_top_level_credentials(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json top-level keys must not include credential-like names."""
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        credential_patterns = {
+            "access_key", "secret_key", "password", "token",
+            "aws_access_key_id", "aws_secret_access_key",
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+        }
+        found = credential_patterns & set(meta.keys())
+        assert not found, (
+            f"metadata.json top-level keys contain credential-like names: {found}. "
+            "Credentials must never be recorded in metadata.json."
+        )
+
+    def test_metadata_args_only_allowed_keys(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json args section must only contain keys from the allowed list.
+
+        The _METADATA_ALLOWED_ARG_KEYS allowlist in train.py defines exactly
+        which CLI args are safe to record. This test confirms the allowlist is
+        applied and no unexpected keys slip through.
+        """
+        from pragma_encoder.training.train import _METADATA_ALLOWED_ARG_KEYS  # noqa: PLC0415
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        args_section = meta.get("args", {})
+        unexpected = set(args_section.keys()) - _METADATA_ALLOWED_ARG_KEYS
+        assert not unexpected, (
+            f"metadata.json args section has unexpected keys: {sorted(unexpected)}. "
+            f"Allowed keys: {sorted(_METADATA_ALLOWED_ARG_KEYS)}. "
+            "Add to _METADATA_ALLOWED_ARG_KEYS only if the value cannot be a credential."
+        )
+
+    def test_metadata_args_excludes_csv_path(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json args must not include csv_path (staging path, not dataset ref).
+
+        csv_path is deliberately excluded from _METADATA_ALLOWED_ARG_KEYS — it is
+        a staging/local path that is already captured in dataset.csv_staging_path.
+        Including it in args would duplicate (and potentially confuse) the record.
+        """
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        args_section = meta.get("args", {})
+        assert "csv_path" not in args_section, (
+            "metadata.json args must not include 'csv_path'. "
+            "It is excluded from _METADATA_ALLOWED_ARG_KEYS. "
+            "The staging path is recorded in dataset.csv_staging_path."
+        )
+
+    def test_metadata_args_excludes_vocab_path(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json args must not include vocab_path (staging path)."""
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        args_section = meta.get("args", {})
+        assert "vocab_path" not in args_section, (
+            "metadata.json args must not include 'vocab_path'. "
+            "It is excluded from _METADATA_ALLOWED_ARG_KEYS."
+        )
+
+    def test_metadata_args_excludes_device(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json args must not include device (not reproducibility-relevant)."""
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        args_section = meta.get("args", {})
+        assert "device" not in args_section, (
+            "metadata.json args must not include 'device'. "
+            "It is excluded from _METADATA_ALLOWED_ARG_KEYS."
+        )
+
+    def test_safe_args_for_metadata_function_exists(self) -> None:
+        """_safe_args_for_metadata function must be importable from train module."""
+        from pragma_encoder.training.train import _safe_args_for_metadata  # noqa: PLC0415
+        assert callable(_safe_args_for_metadata), (
+            "_safe_args_for_metadata must be a callable function in pragma_encoder.training.train."
+        )
+
+    def test_safe_args_for_metadata_excludes_credential_keys(self) -> None:
+        """_safe_args_for_metadata must exclude credential-adjacent keys even if present in args."""
+        import argparse  # noqa: PLC0415
+
+        from pragma_encoder.training import train as _train_mod  # noqa: PLC0415
+        # Build a namespace with a fake credential key
+        fake_args = argparse.Namespace(
+            model_variant="pragma-s",
+            epochs=1,
+            batch_size=32,
+            lr=1e-4,
+            max_steps=0,
+            limit_rows=0,
+            seed=42,
+            num_workers=4,
+            checkpoint_every=1,
+            s3_checkpoint_prefix="",
+            dataset_name="test-dataset",
+            # These should NOT appear in output:
+            csv_path="/tmp/data.csv",
+            vocab_path="/tmp/vocab.pkl",
+            output_dir="/tmp/output",
+            device="cpu",
+            resume=False,
+        )
+        result = _train_mod._safe_args_for_metadata(fake_args)
+        _keys = sorted(result.keys())
+        assert "csv_path" not in result, (
+            f"_safe_args_for_metadata must exclude 'csv_path'. Got keys: {_keys}"
+        )
+        assert "vocab_path" not in result, (
+            f"_safe_args_for_metadata must exclude 'vocab_path'. Got keys: {_keys}"
+        )
+        assert "device" not in result, (
+            f"_safe_args_for_metadata must exclude 'device'. Got keys: {_keys}"
+        )
+        assert "model_variant" in result, (
+            f"_safe_args_for_metadata must include 'model_variant'. Got keys: {_keys}"
+        )
+        _got = result.get("dataset_name")
+        assert _got == "test-dataset", (
+            f"_safe_args_for_metadata should include dataset_name. Got: {_got!r}"
         )

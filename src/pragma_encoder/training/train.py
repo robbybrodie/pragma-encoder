@@ -205,6 +205,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "Use for smoke/tiny runs that must produce a real artifact quickly "
              "without the full dataset. Validation set size is not affected.",
     )
+    parser.add_argument(
+        "--dataset-name",
+        type=str,
+        default="",
+        help="Dataset reference to record in metadata.json (e.g. S3 URI or dataset name). "
+             "Purely for metadata — does not affect training logic. "
+             "Set by the pipeline component to record the original dataset source; "
+             "leave empty for local runs (csv-path is recorded instead).",
+    )
     return parser.parse_args(argv)
 
 
@@ -224,6 +233,48 @@ def get_device(device_arg: str, local_rank: int, distributed: bool) -> torch.dev
             return torch.device("mps")
         return torch.device("cpu")
     return torch.device(device_arg)
+
+
+# ---------------------------------------------------------------------------
+# Metadata helpers
+# ---------------------------------------------------------------------------
+
+# Keys whose values must never appear in metadata.json.
+# Training CLI args do not currently include credentials (AWS_* are env vars,
+# not CLI args), but this explicit allowlist documents the contract and guards
+# against future regressions if credential-adjacent args are added.
+_METADATA_ALLOWED_ARG_KEYS: frozenset[str] = frozenset({
+    "model_variant",
+    "epochs",
+    "batch_size",
+    "lr",
+    "max_steps",
+    "limit_rows",
+    "seed",
+    "num_workers",
+    "checkpoint_every",
+    "s3_checkpoint_prefix",   # S3 prefix path — not a credential
+    "dataset_name",            # dataset reference label — not a credential
+    # Deliberately excluded: csv_path, vocab_path, output_dir, device, resume
+    # (staging paths already recorded in dataset/output_dir sections)
+})
+
+
+def _safe_args_for_metadata(args: argparse.Namespace) -> dict:
+    """Return a sanitised subset of training args safe to record in metadata.json.
+
+    Only keys in ``_METADATA_ALLOWED_ARG_KEYS`` are included.  Any future arg
+    whose value could contain a credential (access key, secret, token, password)
+    is absent from the allowlist and therefore absent from metadata.
+
+    This is not a security boundary — credentials should never be CLI args.
+    It is a defence-in-depth documentation contract.
+    """
+    return {
+        k: getattr(args, k)
+        for k in _METADATA_ALLOWED_ARG_KEYS
+        if hasattr(args, k)
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -534,27 +585,26 @@ def main(argv: list[str] | None = None) -> int:
     if is_rank0:
         ckpt_files = sorted(output_dir.glob("checkpoint_epoch*.pt"))
         final_checkpoint = str(ckpt_files[-1]) if ckpt_files else None
+
+        # dataset section: record original reference (dataset_name) and staging path.
+        # csv_staging_path is the local path used for this run — for local runs it is
+        # the user-provided path; for pipeline runs it is the ephemeral scratch path.
+        # dataset_name records the original source reference (S3 URI, dataset label)
+        # set by the caller via --dataset-name; empty string for direct local runs.
+        _dataset_ref = args.dataset_name if args.dataset_name else str(csv_path)
         metadata: dict = {
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
             "model_variant": args.model_variant,
             "epochs_completed": epoch + 1,
             "global_step": global_step,
             "dataset": {
-                "csv_path": str(csv_path),
+                "dataset_name": _dataset_ref,
+                "csv_staging_path": str(csv_path),
                 "limit_rows": args.limit_rows,
             },
             "output_dir": str(output_dir),
             "final_checkpoint": final_checkpoint,
-            "args": {
-                "model_variant": args.model_variant,
-                "epochs": args.epochs,
-                "batch_size": args.batch_size,
-                "lr": args.lr,
-                "max_steps": args.max_steps,
-                "limit_rows": args.limit_rows,
-                "seed": args.seed,
-                "s3_checkpoint_prefix": args.s3_checkpoint_prefix,
-            },
+            "args": _safe_args_for_metadata(args),
         }
         metadata_path = output_dir / "metadata.json"
         with open(metadata_path, "w") as f:

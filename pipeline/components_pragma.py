@@ -246,13 +246,15 @@ def run_pretraining(
     csv_uri: str = "",
     vocab_uri: str = "",
     output_prefix: str = "pragma-encoder/checkpoints/",
+    scratch_dir: str = "/tmp/pragma-run",
 ) -> str:
     """Execute PRAGMA pretraining via the wheel-based training entrypoint.
 
     Downloads dataset and vocab from S3 (when S3 env vars are present and URIs
     are S3 keys) or uses local paths, then runs ``pragma-encoder-train``.
-    Writes checkpoint(s) and metadata.json to a local output directory, then
-    uploads the final checkpoint to S3 under ``output_prefix``.
+    Writes checkpoint(s) and metadata.json to a job-local scratch directory,
+    then uploads the final checkpoint and metadata.json to S3 under
+    ``output_prefix``.
 
     Data injection contract:
       - ``csv_uri`` / ``vocab_uri`` are S3 keys when they do not start with
@@ -266,12 +268,23 @@ def run_pretraining(
         S3 path conventions: ``{manifest_uri}card_transaction.v1.csv`` and
         ``{manifest_uri}vocab.pkl``.
 
-    No HardwareProfile or Connection names are referenced here. The wheel
-    reads native AWS_* env vars from the process environment — it does not
-    know which Kubernetes Secret or OpenShift AI Connection provided them.
-    This preserves the future confidential-computing seam: the same env vars
-    can be injected via attestation-based secret release (Trustee / CoCo)
-    without changing this component.
+    Scratch/staging contract:
+      - All downloaded input files land under ``scratch_dir`` (default:
+        ``/tmp/pragma-run``). This is a KFP component pod-local emptyDir
+        equivalent — ephemeral, not shared, not a PVC.
+      - ``scratch_dir`` is configurable so tests can redirect staging to
+        a tmpdir and so future confidential runtimes can restrict staging
+        to attested memory regions.
+      - Training output (checkpoints, metadata.json) also lands under
+        ``scratch_dir/output`` and is uploaded to S3 before the component exits.
+      - Raw data is not baked into the image, wheel, or Git.
+
+    Confidential-computing seam:
+      No HardwareProfile or Connection names are referenced here. The wheel
+      reads native AWS_* env vars from the process environment — it does not
+      know which Kubernetes Secret or OpenShift AI Connection provided them.
+      The same env vars can be injected via attestation-based secret release
+      (Trustee / CoCo) without changing this component.
 
     Args:
         manifest_uri:   DatasetManifest prefix URI from prepare_dataset.
@@ -288,6 +301,9 @@ def run_pretraining(
                         vocab.pkl.
         output_prefix:  S3 key prefix for checkpoint export.
                         Default: "pragma-encoder/checkpoints/".
+        scratch_dir:    Job-local directory for staging downloaded inputs and
+                        training outputs. Must be pod-local/ephemeral (not a
+                        shared PVC). Default: "/tmp/pragma-run".
 
     Returns:
         checkpoint_uri: Local path or S3 key of the final model checkpoint.
@@ -308,15 +324,16 @@ def run_pretraining(
     def _is_local(uri: str) -> bool:
         return uri.startswith("/") or uri.startswith("./") or uri.startswith("../")
 
-    # ---- Download from S3 if needed ----------------------------------------
-    _work_dir = pathlib.Path("/tmp/pragma-run")
+    # ---- Job-local scratch directory (configurable, ephemeral) ------------
+    _work_dir = pathlib.Path(scratch_dir)
     _work_dir.mkdir(parents=True, exist_ok=True)
 
     if _is_local(_csv_uri):
         local_csv  = pathlib.Path(_csv_uri)
         local_vocab = pathlib.Path(_vocab_uri)
     else:
-        # S3 download using native AWS_* env vars (OpenShift AI Connection)
+        # S3 download using native AWS_* env vars (OpenShift AI Connection).
+        # Staging lands in the job-local scratch_dir — not a shared PVC.
         _bucket   = _os.environ.get("AWS_S3_BUCKET", "").strip()
         _endpoint = _os.environ.get("AWS_S3_ENDPOINT", "").strip()
         if not _bucket or not _endpoint:
@@ -362,6 +379,10 @@ def run_pretraining(
         raise ValueError(f"model_size must be 'S', 'M', or 'L', got {model_size!r}")
     _model_variant = _model_variant_map[model_size]
 
+    # --dataset-name records the original dataset reference in metadata.json.
+    # For S3 runs: the S3 key is the reference. For local runs: empty (csv-path is used).
+    _dataset_name = _csv_uri if not _is_local(_csv_uri) else ""
+
     _cmd = [
         sys.executable, "-m", "pragma_encoder.training.train",
         "--csv-path",      str(local_csv),
@@ -376,11 +397,13 @@ def run_pretraining(
         _cmd.extend(["--max-steps", str(max_steps)])
     if limit_rows > 0:
         _cmd.extend(["--limit-rows", str(limit_rows)])
+    if _dataset_name:
+        _cmd.extend(["--dataset-name", _dataset_name])
 
     print(f"[run_pretraining] Running: {' '.join(_cmd)}")
     subprocess.run(_cmd, check=True)
 
-    # ---- Find final checkpoint ---------------------------------------------
+    # ---- Find final checkpoint and metadata --------------------------------
     _ckpt_files = sorted(_output_dir.glob("checkpoint_epoch*.pt"))
     if not _ckpt_files:
         raise RuntimeError(
@@ -388,9 +411,11 @@ def run_pretraining(
             f"{_output_dir}. Check training logs above."
         )
     _final_ckpt = _ckpt_files[-1]
+    _meta_path = _output_dir / "metadata.json"
     print(f"[run_pretraining] Checkpoint produced: {_final_ckpt}")
+    print(f"[run_pretraining] metadata.json present: {_meta_path.exists()}")
 
-    # ---- Upload checkpoint to S3 if configured -----------------------------
+    # ---- Upload checkpoint and metadata to S3 if configured ---------------
     _bucket = _os.environ.get("AWS_S3_BUCKET", "").strip()
     _endpoint = _os.environ.get("AWS_S3_ENDPOINT", "").strip()
     if _bucket and _endpoint and not _is_local(_csv_uri):
@@ -405,6 +430,11 @@ def run_pretraining(
         _s3_key = f"{output_prefix.rstrip('/')}/{_model_variant}/{_final_ckpt.name}"
         _s3.upload_file(str(_final_ckpt), _bucket, _s3_key)
         print(f"[run_pretraining] Checkpoint uploaded to s3://{_bucket}/{_s3_key}")
+        # Upload metadata.json alongside the checkpoint
+        if _meta_path.exists():
+            _meta_s3_key = f"{output_prefix.rstrip('/')}/{_model_variant}/metadata.json"
+            _s3.upload_file(str(_meta_path), _bucket, _meta_s3_key)
+            print(f"[run_pretraining] metadata.json uploaded to s3://{_bucket}/{_meta_s3_key}")
         return _s3_key
 
     return str(_final_ckpt)

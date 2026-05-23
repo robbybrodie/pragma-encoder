@@ -259,6 +259,64 @@ resolve_resume_checkpoint(output_dir, s3_prefix, rank, distributed, device)
 
 ---
 
+## Metadata and artifact traceability
+
+`pragma-encoder-train` writes `metadata.json` to `--output-dir` on completion.
+
+### metadata.json structure
+
+```json
+{
+  "timestamp": "<ISO-8601 UTC>",
+  "model_variant": "pragma-s",
+  "epochs_completed": 10,
+  "global_step": 12345,
+  "dataset": {
+    "dataset_name": "<original dataset reference — S3 URI or label>",
+    "csv_staging_path": "<local path used for this run — ephemeral>",
+    "limit_rows": 0
+  },
+  "output_dir": "<absolute path to output directory>",
+  "final_checkpoint": "<path or S3 key of final checkpoint>",
+  "args": { ... }
+}
+```
+
+### dataset_name vs csv_staging_path
+
+| Field | What it records | When to use it |
+|---|---|---|
+| `dataset.dataset_name` | Original dataset reference: S3 URI, dataset label, or csv_path for local runs | Trace back to the source of truth |
+| `dataset.csv_staging_path` | Local path where the CSV was staged for this run (may be ephemeral `/tmp/`) | Debug staging failures; not the dataset source |
+
+For local runs without `--dataset-name`, `dataset_name` falls back to the `--csv-path` value.
+
+For pipeline runs, `run_pretraining` passes the original S3 URI via `--dataset-name`
+so `dataset_name` always points to the original source — not the staging path in
+the component pod's `/tmp/` scratch directory.
+
+### Credential safety
+
+The `args` section in `metadata.json` is filtered by `_METADATA_ALLOWED_ARG_KEYS`
+(an explicit allowlist). AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+are env vars — they are never CLI args and therefore never appear in `metadata.json`.
+
+Excluded from `args`: `csv_path`, `vocab_path`, `output_dir`, `device`, `resume`.
+These are staging paths or runtime-specific values — not reproducibility-relevant
+configuration.
+
+### KFP component scratch / staging contract
+
+In the `run_pretraining` KFP component:
+- Input data (CSV, vocab) is downloaded to `scratch_dir` (default: `/tmp/pragma-run`).
+- `scratch_dir` is a configurable parameter — tests redirect it to a tmpdir;
+  future confidential runtimes can restrict it to attested memory regions.
+- It is pod-local ephemeral storage, not a shared PVC.
+- `metadata.json` is uploaded to S3 at `{output_prefix}/{variant}/metadata.json`
+  alongside the checkpoint — making it durable, not ephemeral.
+
+---
+
 ## Masking strategy
 
 PRAGMA uses three masking strategies applied per batch (Section 2.3.5):

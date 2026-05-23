@@ -4,6 +4,13 @@
 > has been superseded. All code, manifests, and secrets now use the native RHOAI S3
 > Connection schema (`AWS_*` keys). See `docs/tech-debt.md §TD-010` for the resolution.
 
+> **Note (2026-05-23):** RHOAI **3.4.0** is now the installed platform version.
+> Upgraded from 2.25.6 via controlled re-installation (no OLM upgrade graph from 2.x to 3.x).
+> The primitives described in this document remain valid for 3.4. The primary API group
+> change in 3.4 is `HardwareProfile` moving to `infrastructure.opendatahub.io`
+> (the old `dashboard.opendatahub.io` group still responds for backwards compatibility).
+> `docs/architecture.md` reflects the 3.4 primitive table.
+
 This document maps the `pragma-encoder` repository to Red Hat OpenShift AI (RHOAI) 3.3
 primitives. It is the authoritative statement of:
 
