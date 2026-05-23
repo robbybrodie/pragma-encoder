@@ -49,9 +49,11 @@ Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -195,6 +197,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "then downloads from --s3-checkpoint-prefix if no local checkpoint "
              "is found and S3 credentials are configured.",
     )
+    parser.add_argument(
+        "--limit-rows",
+        type=int,
+        default=0,
+        help="Cap the training dataset to this many customers (0 = use all). "
+             "Use for smoke/tiny runs that must produce a real artifact quickly "
+             "without the full dataset. Validation set size is not affected.",
+    )
     return parser.parse_args(argv)
 
 
@@ -291,6 +301,13 @@ def main(argv: list[str] | None = None) -> int:
         ni_max=config.max_event_tokens,
     )
 
+    # Apply --limit-rows: cap training dataset to N customers (0 = no cap)
+    if args.limit_rows > 0 and len(train_dataset) > args.limit_rows:
+        from torch.utils.data import Subset  # noqa: PLC0415
+        train_dataset = Subset(train_dataset, list(range(args.limit_rows)))
+        if is_rank0:
+            logger.info(f"--limit-rows {args.limit_rows}: training on {args.limit_rows} customers")
+
     if is_rank0:
         logger.info(f"Train customers: {len(train_dataset)}, val: {len(val_dataset)}")
         if len(train_dataset) == 0:
@@ -383,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     if is_rank0:
         logger.info("Starting training ...")
 
+    epoch = start_epoch - 1  # tracks last completed epoch index; -1 if none run
     for epoch in range(start_epoch, args.epochs):
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)  # ensures different shuffle each epoch
@@ -511,6 +529,39 @@ def main(argv: list[str] | None = None) -> int:
         # All ranks sync after checkpoint before next epoch
         if distributed:
             dist.barrier()
+
+    # ---- Write metadata.json (rank 0 only) -----------------------------------
+    if is_rank0:
+        ckpt_files = sorted(output_dir.glob("checkpoint_epoch*.pt"))
+        final_checkpoint = str(ckpt_files[-1]) if ckpt_files else None
+        metadata: dict = {
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "model_variant": args.model_variant,
+            "epochs_completed": epoch + 1,
+            "global_step": global_step,
+            "dataset": {
+                "csv_path": str(csv_path),
+                "limit_rows": args.limit_rows,
+            },
+            "output_dir": str(output_dir),
+            "final_checkpoint": final_checkpoint,
+            "args": {
+                "model_variant": args.model_variant,
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "lr": args.lr,
+                "max_steps": args.max_steps,
+                "limit_rows": args.limit_rows,
+                "seed": args.seed,
+                "s3_checkpoint_prefix": args.s3_checkpoint_prefix,
+            },
+        }
+        metadata_path = output_dir / "metadata.json"
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        logger.info(f"Metadata written -> {metadata_path}")
+        if final_checkpoint:
+            logger.info(f"Final checkpoint -> {final_checkpoint}")
 
     if is_rank0:
         logger.info("Training complete.")

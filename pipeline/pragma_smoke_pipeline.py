@@ -110,17 +110,25 @@ _SMOKE_IMAGE: str = (
 # ---------------------------------------------------------------------------
 
 @_component(base_image=_SMOKE_IMAGE)
-def pragma_smoke_training(max_steps: int = 1) -> None:
+def pragma_smoke_training(max_steps: int = 1, output_dir: str = "/tmp/pragma-smoke-output") -> None:
     """Run PRAGMA-S smoke training inside a single KFP component pod.
 
     Steps:
       1. Write a 30-row synthetic TabFormer CSV to /tmp/pragma-smoke/.
       2. Run python -m pragma_encoder.data.fit_tokenizer to build vocab.pkl.
       3. Run python -m pragma_encoder.training.train --max-steps N --model-variant pragma-s.
-      4. Print completion marker: 'PRAGMA smoke training completed'.
+      4. Print artifact location (checkpoint files, metadata.json presence).
+      5. Print completion marker: 'PRAGMA smoke training completed'.
 
-    No S3, no distributed training, no persistent volumes — all data is ephemeral (/tmp).
+    No S3, no distributed training, no persistent volumes required.
+    Input data is written to /tmp/pragma-smoke/ (ephemeral).
+    Training artifacts (checkpoint, metadata.json) are written to output_dir.
     The component pod exits 0 on success.
+
+    Args:
+        max_steps:  Number of training steps before early stop. Default: 1.
+        output_dir: Directory for checkpoint and metadata.json artifacts.
+                    Default: /tmp/pragma-smoke-output (ephemeral pod storage).
 
     Log markers asserted by test_03_pipeline_smoke_run.py:
       'PRAGMA-S'                        — printed by pragma_encoder.training.train
@@ -231,8 +239,8 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     #   'PRAGMA-S'             — model variant confirmation
     #   'Reached --max-steps'  — early-stop marker
     # ------------------------------------------------------------------
-    output_dir = pathlib.Path("/tmp/pragma-smoke-output")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _output_dir = pathlib.Path(output_dir)
+    _output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[smoke] Running pragma_encoder.training.train --max-steps {max_steps} --model-variant pragma-s ...")
     subprocess.run(
@@ -240,7 +248,7 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
             sys.executable, "-m", "pragma_encoder.training.train",
             "--csv-path", str(csv_path),
             "--vocab-path", str(vocab_path),
-            "--output-dir", str(output_dir),
+            "--output-dir", str(_output_dir),
             "--model-variant", "pragma-s",
             "--epochs", "1",
             "--num-workers", "0",
@@ -252,8 +260,13 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     )
 
     # ------------------------------------------------------------------
-    # Step 5 — Print completion marker (asserted by Level 3 smoke test).
+    # Step 5 — Print artifact location and completion marker.
     # ------------------------------------------------------------------
+    _ckpt_files = sorted(_output_dir.glob("checkpoint_epoch*.pt"))
+    _meta = _output_dir / "metadata.json"
+    print(f"[smoke] Training artifacts written to: {_output_dir}")
+    print(f"[smoke] Checkpoints found: {[f.name for f in _ckpt_files]}")
+    print(f"[smoke] metadata.json present: {_meta.exists()}")
     print("PRAGMA smoke training completed")
 
 
@@ -269,7 +282,10 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
         "No S3, no distributed training, no persistent volumes — all data is ephemeral (/tmp)."
     ),
 )
-def pragma_smoke_training_pipeline(max_steps: int = 1) -> None:
+def pragma_smoke_training_pipeline(
+    max_steps: int = 1,
+    output_dir: str = "/tmp/pragma-smoke-output",
+) -> None:
     """Single-component KFP v2 pipeline for Level 3 DSPA smoke testing.
 
     Compiles to a KFP v2 YAML suitable for upload to the DSPA KFP v2 API.
@@ -277,7 +293,10 @@ def pragma_smoke_training_pipeline(max_steps: int = 1) -> None:
     inside a single pod without external infrastructure dependencies.
 
     Args:
-        max_steps: Number of training steps before early stop. Default 1.
-                   The test uses max_steps=1 to minimise pod runtime.
+        max_steps:  Number of training steps before early stop. Default 1.
+                    The test uses max_steps=1 to minimise pod runtime.
+        output_dir: Directory inside the pod for checkpoint and metadata.json.
+                    Default: /tmp/pragma-smoke-output (ephemeral pod storage).
+                    Override to a mounted volume path to inspect artifacts after the run.
     """
-    pragma_smoke_training(max_steps=max_steps)
+    pragma_smoke_training(max_steps=max_steps, output_dir=output_dir)
