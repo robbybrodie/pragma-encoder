@@ -24,7 +24,7 @@
 #   Status: GA in RHOAI 3.4
 #   *** PyTorchJob is the ONLY production path. Do not use TrainJob yet. ***
 #
-# ── Forward approach (when TrainJob reaches GA) ────────────────────────────
+# ── Forward approach (when TrainJob is confirmed GA in the target deployment) ─
 #
 # TrainJob replaces PyTorchJob + per-framework CRDs with a unified API backed
 # by ClusterTrainingRuntime / TrainingRuntime blueprints.

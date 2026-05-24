@@ -54,6 +54,36 @@ the Level 5 cluster tests will fail.
 
 ---
 
+## 1b. Cluster Preflight — Verify Before Running Level 5 Tests
+
+Before running Level 5 (`test_05_s3_checkpoint_resume.py`) or any cluster test
+that submits a `PyTorchJob` or `TrainJob`, verify CRD availability on the target cluster:
+
+```bash
+# Verify PyTorchJob (kubeflow.org/v1) is still installed
+oc api-resources | grep -i pytorchjob
+
+# Verify TrainJob (trainer.kubeflow.org/v1alpha1) is available
+oc api-resources | grep -i trainjob
+
+# Verify TrainingRuntime / ClusterTrainingRuntime CRDs
+oc api-resources | grep -i trainingruntime
+
+# List available ClusterTrainingRuntimes (admin-configured blueprints)
+oc get clustertrainingruntime
+
+# Full CRD list filtered to Kubeflow/Trainer
+oc get crd | grep -i trainer
+oc get crd | grep -i pytorchjob
+```
+
+**Note:** CRD presence confirms the API is installed, not that it is GA or
+production-supported. TrainJob CRDs may be present as Technology Preview.
+PyTorchJob CRDs may be present for backwards compatibility even after upstream
+source removal. Always check the RHOAI release notes for the target version.
+
+---
+
 ## 2. How Kubeflow Trainer v2 Checkpointing Works
 
 Based on the Red Hat blog (Resilient model training on RHOAI with Kubeflow Trainer):
