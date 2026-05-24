@@ -404,6 +404,9 @@ Default tests must not require:
 Opt-in tests are gated by environment variables (`RUN_OPENSHIFT_TESTS=1`,
 `RUN_PYTORCHJOB_TESTS=1`, `RUN_OPENSHIFT_S3_RESUME_SMOKE=1`, etc.).
 
+Full test classification, recommended pytest commands, stale-phrase guard policy,
+and rules for adding new tests: **[docs/testing-strategy.md](testing-strategy.md)**
+
 ---
 
 ## Current status
