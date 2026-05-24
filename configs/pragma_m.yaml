@@ -2,7 +2,9 @@
 # Large-scale training variant. Requires significant GPU resources.
 #
 # Reference: Ostroukhov et al. (2026), Section 2.3.1
-# Usage: python scripts/train_pragma.py --config configs/pragma_m.yaml
+# Usage: pragma-encoder-train --config configs/pragma_m.yaml
+#   or:  python -m pragma_encoder.training.train --config configs/pragma_m.yaml
+#   (scripts/train_pragma.py is a compatibility wrapper — use the installed entrypoint)
 
 model_name: pragma-m
 description: "PRAGMA Medium — ~100M parameters, aspirational open implementation"

@@ -1,11 +1,21 @@
 # TD-009 Workbench Package Split — Catalogue
 
+> **Historical document.** This catalogue described the *planned* approach for TD-009:
+> moving `tools/openshift_ai/workbench/` into a second wheel at `src/pragma_workbench/`.
+> **The plan was superseded.** TD-009 was resolved by a simpler approach:
+> the workbench helpers were moved to `tools/workbench/` (not `src/pragma_workbench/`)
+> and excluded from the `pragma_encoder` wheel via `[tool.setuptools.packages.find] where = ["src"]`.
+> No second wheel was created. See `docs/tech-debt.md §TD-009` for the resolution record.
+
 **Branch:** `fix/td-009-workbench-package-split`
 **Date:** 2026-05-22
 
 This document catalogues every file involved in extracting
 `tools/openshift_ai/workbench/` into a proper second Python wheel
 (`pragma-workbench`) at `src/pragma_workbench/`.
+
+*Note: the destination path below (`src/pragma_workbench/`) was not used.
+Actual destination: `tools/workbench/`. The catalogue is preserved for historical reference.*
 
 It is committed first, before any file is moved, as a navigable record
 of intent.

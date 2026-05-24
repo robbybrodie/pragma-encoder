@@ -38,16 +38,16 @@ dashboard (GUI), Workbench, `oc`, and tests interact with those same resources.
 | **Object storage credentials** | SealedSecret → Secret (via Sealed Secrets operator) | `openshift/gitops/secrets/workbench-runtime-secret.sealed.yaml` | Yes — wave 0 | GA | Production credentials sealed with kubeseal; never committed as plaintext |
 | **Registry pull secret** | `kubernetes.io/dockerconfigjson` Secret (SealedSecret) | `openshift/gitops/secrets/registry-pull-secret.sealed.yaml` | Yes — wave 0 | GA | NGC registry credentials for nvcr.io base images |
 | **RBAC / ServiceAccounts** | `ServiceAccount`, `ClusterRole`, `RoleBinding` | `openshift/gitops/rbac/` | Yes — wave 0 | GA | Includes anyuid SCC grant for training pods, ArgoCD admin binding |
-| **CPU resource shape** | `HardwareProfile` (`infrastructure.opendatahub.io/v1`) | `tests/openshift/fixtures/hardware-profile-cpu-smoke.yaml` | RHOAI admin applies; example only in fixtures | GA (RHOAI 3.3) | Lightweight shape for smoke tests; no GPU |
-| **GPU resource shape** | `HardwareProfile` (`infrastructure.opendatahub.io/v1`) | `tests/openshift/fixtures/hardware-profile-gpu-pragma-s.yaml` | RHOAI admin applies; example only in fixtures | GA (RHOAI 3.3) | PRAGMA-S shape: 1 GPU, 8 CPU, 64Gi RAM per node |
+| **CPU resource shape** | `HardwareProfile` (`infrastructure.opendatahub.io/v1`) | `tests/openshift/fixtures/hardware-profile-cpu-smoke.yaml` | RHOAI admin applies; example only in fixtures | GA (RHOAI 3.4) | Lightweight shape for smoke tests; no GPU |
+| **GPU resource shape** | `HardwareProfile` (`infrastructure.opendatahub.io/v1`) | `tests/openshift/fixtures/hardware-profile-gpu-pragma-s.yaml` | RHOAI admin applies; example only in fixtures | GA (RHOAI 3.4) | PRAGMA-S shape: 1 GPU, 8 CPU, 64Gi RAM per node |
 | **Data Science Pipeline** | `DataSciencePipelinesApplication` | `openshift/gitops/pipeline/dspa.yaml` | Yes — wave 3 | GA | KFP v2 server; pipeline components defined in `pipeline/` |
 | **Pipeline source** | Python (KFP SDK v2 decorators) | `pipeline/components_pragma.py`, `pipeline/pragma_smoke_pipeline.py` | No — Python source, not cluster resource | GA | Compiled to YAML; registered with DSPA via API |
 | **Pipeline compiled artifact** | Pipeline definition/version IR YAML | `pipeline/dist/` (generated) | Optionally — when promoted to `openshift/gitops/pipelines/` | GA | Not committed by default; promoted via GitOps as team choice |
 | **Pipeline run** | KFP PipelineRun (dynamic) | — | **No** — dynamic runtime object | GA | Created by RHOAI GUI, KFP API, or workbench SDK; not ArgoCD-owned by default |
 | **Workbench image** | `BuildConfig` + `ImageStream` (OpenShift S2I) | `openshift/gitops/notebook-image/` | Yes — wave 2 | GA | Builds custom JupyterLab image from `openshift/notebook-image/Dockerfile` |
 | **Training image** | OCI image (built by `oc start-build`) | `openshift/training/Dockerfile.training` | No — built manually or by CI | GA | Installs `pragma_encoder` wheel; used by all training jobs |
-| **Distributed training (current GA)** | `PyTorchJob` (`kubeflow.org/v1`) | `openshift/training/pytorchjob-pragma-s.yaml`, `pytorchjob-pragma-s-2node.yaml`, `pytorchjob-pragma-m.yaml` | No — one-shot runtime job | GA (RHOAI 3.3) | All manifests use wheel-based entrypoint; no git clone |
-| **Distributed training (future/evaluation)** | `TrainJob` (`trainer.kubeflow.org/v1alpha1`) | `tests/openshift/fixtures/trainjob-example.yaml` | No — example only | **Tech Preview** (RHOAI 3.3) | Not for production use; evaluating for post-GA adoption |
+| **Distributed training (current GA)** | `PyTorchJob` (`kubeflow.org/v1`) | `openshift/training/pytorchjob-pragma-s.yaml`, `pytorchjob-pragma-s-2node.yaml`, `pytorchjob-pragma-m.yaml` | No — one-shot runtime job | GA (RHOAI 3.4) | All manifests use wheel-based entrypoint; no git clone |
+| **Distributed training (future/evaluation)** | `TrainJob` (`trainer.kubeflow.org/v1alpha1`) | `tests/openshift/fixtures/trainjob-example.yaml` | No — example only | **Tech Preview** (RHOAI 3.4) | Not for production use; evaluating for post-GA adoption |
 | **Model serving** | `InferenceService` (`serving.kserve.io/v1beta1`) + `ServingRuntime` | `openshift/serving/inference-service.yaml`, `openshift/serving/serving-runtime.yaml` | Yes, when serving is standardized | GA (KServe) | Future work; currently embedding extraction is batch-only |
 | **GitOps controller** | ArgoCD `Application` (`argoproj.io/v1alpha1`) | `openshift/argocd/application.yaml` | Bootstrapped manually once; then self-managed | GA | Syncs `openshift/gitops/` to `pragma-encoder` namespace |
 
@@ -125,7 +125,7 @@ The SealedSecret was re-sealed with these canonical keys. The legacy
 
 ## Compute / Hardware — HardwareProfile Contract
 
-**Primitive:** `HardwareProfile` (`infrastructure.opendatahub.io/v1`), GA in RHOAI 3.3.
+**Primitive:** `HardwareProfile` (`infrastructure.opendatahub.io/v1`), GA in RHOAI 3.4.
 
 HardwareProfile is the OpenShift AI primitive for CPU/GPU/resource shape selection.
 It replaces deprecated Accelerator Profiles and the Container Size selector.
@@ -152,12 +152,12 @@ HardwareProfile when the profile is applied to the cluster.
 
 ## Distributed Training — PyTorchJob vs TrainJob
 
-| Approach | API | RHOAI 3.3 status | Repo status |
+| Approach | API | RHOAI 3.4 status | Repo status |
 |---|---|---|---|
 | **PyTorchJob** | `kubeflow.org/v1` | **GA** | Current — all production manifests and tests |
 | **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Tech Preview** | Example only — `tests/openshift/fixtures/trainjob-example.yaml` |
 
-**PyTorchJob is the current, proven RHOAI 3.3 runtime path.**
+**PyTorchJob is the current, proven RHOAI 3.4 runtime path.**
 
 TrainJob is documented as the forward-looking direction. It must not appear in
 production manifests or CI tests until it is GA in a future RHOAI release.
@@ -223,8 +223,10 @@ surface is used.
 
 ---
 
-> Reference: `docs/openshift-ai-3.3-alignment.md` for full RHOAI 3.3 primitive
+> Reference: `docs/openshift-ai-3.3-alignment.md` for RHOAI 3.3/3.4 primitive
 > detail, responsibility boundaries, and env var contract.
+> Note: that document was written for RHOAI 3.3 and carries a historical banner;
+> the primitives it describes are compatible with the currently installed RHOAI 3.4.
 >
 > Reference: `docs/openshift-gitops-argocd.md` for ArgoCD ownership table and
 > pipeline authoring lifecycle.

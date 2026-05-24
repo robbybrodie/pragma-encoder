@@ -135,6 +135,20 @@ does not own them by default.
 
 ---
 
+## Workbench modes
+
+The "Workbench" in RHOAI can operate in two distinct modes in this project:
+
+| Mode | Description | What's available |
+|---|---|---|
+| **Authoring Workbench** | Full-featured notebook with git clone of this repo mounted at startup (via initContainer in `openshift/gitops/workbench/notebook.yaml`). Data scientists author pipeline code, run experiments, and submit training jobs from here. | `pragma_encoder` wheel (installed) + `tools/workbench/` (importable via `PYTHONPATH=.` from repo root) |
+| **Runtime / Demo Workbench** | Wheel-only image. No mandatory git clone. Uses the published `pragma_encoder` wheel only. Suitable for inference, demo, or evaluation contexts where the full source tree is not required. | `pragma_encoder` wheel only |
+
+The Authoring Workbench is the primary model. `tools/workbench/` helpers (`train_pragma()`,
+pipeline DSL) require the repo to be on `sys.path` — they are not part of the installed wheel.
+
+---
+
 ## Workbench-to-wheel promotion workflow
 
 Notebooks are the discovery and authoring surface. During exploration they

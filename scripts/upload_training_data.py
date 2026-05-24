@@ -5,11 +5,11 @@ expected by the PyTorchJob init container. Run this once before submitting
 any training job. The operation is idempotent.
 
 Usage:
-    # Export credentials (same keys as pragma-workbench-env secret):
-    export MODEL_REGISTRY_BUCKET=<bucket>
-    export MODEL_REGISTRY_ENDPOINT=<host-without-scheme>
-    export MODEL_REGISTRY_ACCESS_KEY=<access-key>
-    export MODEL_REGISTRY_SECRET_KEY=<secret-key>
+    # Export credentials (native OpenShift AI S3 Connection schema):
+    export AWS_S3_BUCKET=<bucket>
+    export AWS_S3_ENDPOINT=<full-url-including-scheme>   # e.g. https://s3.example.com
+    export AWS_ACCESS_KEY_ID=<access-key>
+    export AWS_SECRET_ACCESS_KEY=<secret-key>
 
     python scripts/upload_training_data.py \
         --csv-path   data/tabformer/card_transaction.v1.csv \
@@ -21,6 +21,8 @@ Usage:
 S3 destination paths (relative to bucket root):
     pragma-encoder/data/tabformer/card_transaction.v1.csv
     pragma-encoder/data/tabformer/vocab.pkl
+
+Env var schema source of truth: oc get cm s3 -n redhat-ods-applications -o yaml
 
 Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 """
@@ -49,7 +51,7 @@ def parse_args() -> argparse.Namespace:
         "--vocab-path",
         type=str,
         default="data/tabformer/vocab.pkl",
-        help="Local path to fitted tokeniser vocab (produced by src/data/fit_tokenizer.py)",
+        help="Local path to fitted tokeniser vocab (produced by: python -m pragma_encoder.data.fit_tokenizer)",
     )
     p.add_argument(
         "--region",
@@ -66,27 +68,33 @@ def parse_args() -> argparse.Namespace:
 
 
 def _require_env() -> tuple[str, str, str, str]:
-    """Read and validate MODEL_REGISTRY_* env vars. Exits on missing vars."""
+    """Read and validate native AWS_* env vars (OpenShift AI S3 Connection schema).
+
+    Exits on missing required vars. Schema source of truth:
+        oc get cm s3 -n redhat-ods-applications -o yaml
+    """
     required = (
-        "MODEL_REGISTRY_BUCKET",
-        "MODEL_REGISTRY_ENDPOINT",
-        "MODEL_REGISTRY_ACCESS_KEY",
-        "MODEL_REGISTRY_SECRET_KEY",
+        "AWS_S3_BUCKET",
+        "AWS_S3_ENDPOINT",
     )
     missing = [v for v in required if not os.environ.get(v)]
     if missing:
         print(
             "ERROR: the following environment variables are not set:\n"
             + "\n".join(f"  {v}" for v in missing)
-            + "\n\nExport MODEL_REGISTRY_* vars (same keys as pragma-workbench-env secret).",
+            + "\n\nExport native AWS_* vars (injected by an OpenShift AI S3 Connection):\n"
+            "  export AWS_S3_BUCKET=<bucket>\n"
+            "  export AWS_S3_ENDPOINT=<full-url>   # e.g. https://s3.example.com\n"
+            "  export AWS_ACCESS_KEY_ID=<key>       # optional\n"
+            "  export AWS_SECRET_ACCESS_KEY=<secret> # optional",
             file=sys.stderr,
         )
         sys.exit(1)
     return (
-        os.environ["MODEL_REGISTRY_BUCKET"],
-        os.environ["MODEL_REGISTRY_ENDPOINT"],
-        os.environ["MODEL_REGISTRY_ACCESS_KEY"],
-        os.environ["MODEL_REGISTRY_SECRET_KEY"],
+        os.environ["AWS_S3_BUCKET"],
+        os.environ["AWS_S3_ENDPOINT"],
+        os.environ.get("AWS_ACCESS_KEY_ID", ""),
+        os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
     )
 
 
@@ -98,9 +106,9 @@ def _s3_client(endpoint: str, access: str, secret: str, region: str):
         sys.exit(1)
     return boto3.client(
         "s3",
-        endpoint_url=f"https://{endpoint}",
-        aws_access_key_id=access,
-        aws_secret_access_key=secret,
+        endpoint_url=endpoint,  # AWS_S3_ENDPOINT already contains scheme (e.g. https://...)
+        aws_access_key_id=access or None,
+        aws_secret_access_key=secret or None,
         region_name=region,
     )
 
