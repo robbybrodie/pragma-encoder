@@ -440,11 +440,12 @@ class TestDryRunVisibility:
 # ---------------------------------------------------------------------------
 
 class TestLocalModeContract:
-    """train_pragma(mode='local') must invoke scripts/train_pragma.py via subprocess.
+    """train_pragma(mode='local') must invoke pragma_encoder.training.train via subprocess.
 
-    sec.2.4 local execution path: the same training script used for cluster runs
-    is invoked locally (subprocess, no KFTO) with --num-workers 0 for development
-    and smoke testing.
+    sec.2.4 local execution path: the wheel-based module entrypoint is used
+    (python -m pragma_encoder.training.train), not a source-tree script path.
+    This ensures compatibility with the PRAGMA training image where only the
+    wheel is installed (no src/ directory).
 
     Unit tests mock subprocess.run and DatasetAdapter.prepare() to avoid real
     CSV files and real training time. Integration is verified separately via
@@ -764,10 +765,10 @@ class TestLocalModeContract:
     # --- Behavior: subprocess command structure ---
 
     def test_local_mode_builds_expected_subprocess_command(self) -> None:
-        """ADR 003 / sec.2.4: local mode must invoke scripts/train_pragma.py correctly.
+        """ADR 003 / sec.2.4: local mode must invoke pragma_encoder.training.train correctly.
 
-        Expected command contains:
-            scripts/train_pragma.py
+        Expected command uses wheel-based module invocation:
+            python -m pragma_encoder.training.train
             --csv-path  <local_csv_path>
             --vocab-path <output_dir>/vocab.pkl
             --output-dir <output_dir>
@@ -775,6 +776,9 @@ class TestLocalModeContract:
             --epochs 1
             --num-workers 0             (single-process, no DataLoader workers)
             --max-steps 1               (from max_steps param)
+
+        TD-008 fix: scripts/train_pragma.py was removed in favour of
+        python -m pragma_encoder.training.train for training-image compatibility.
         """
         from unittest.mock import MagicMock, patch
         manifest = self._make_manifest()
@@ -803,8 +807,11 @@ class TestLocalModeContract:
         cmd = call_args.args[0] if call_args.args else call_args.kwargs.get("args", [])
         cmd_str = " ".join(str(c) for c in cmd)
 
-        assert "train_pragma.py" in cmd_str, (
-            f"subprocess command must invoke scripts/train_pragma.py, got: {cmd_str!r}"
+        assert "pragma_encoder.training.train" in cmd_str, (
+            f"subprocess command must invoke pragma_encoder.training.train "
+            f"(module invocation), got: {cmd_str!r}. "
+            "TD-008 fix: local mode uses 'python -m pragma_encoder.training.train', "
+            "not 'scripts/train_pragma.py'."
         )
         assert "--csv-path" in cmd_str and self._CSV in cmd_str, (
             f"command must include --csv-path {self._CSV!r}, got: {cmd_str!r}"

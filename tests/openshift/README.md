@@ -90,7 +90,7 @@ See `docs/openshift-ai-3.3-alignment.md` for the full primitive map and responsi
 | 4 | PyTorchJob N-node smoke (default: nnodes=2) | Implemented | `test_04_pytorchjob_smoke.py` |
 | 5 | S3-backed checkpoint/resume | Implemented | `test_05_s3_checkpoint_resume.py` |
 | 6 | GPU training smoke (single-node opt-in) | Scaffold implemented | `test_06_gpu_training_smoke.py` |
-| 7 | Bank-data adapter validation | Future | — |
+| 7 | Production pipeline runtime — IBM TabFormer | Implemented | `test_07_tabformer_pipeline_runtime.py` |
 
 ---
 
@@ -112,6 +112,14 @@ See `docs/openshift-ai-3.3-alignment.md` for the full primitive map and responsi
 | `PRAGMA_TRAINING_SERVICE_ACCOUNT` | `pragma-encoder-training` | Name of the training ServiceAccount to verify. |
 | `PRAGMA_IMAGE_PULL_SECRET_NAME` | (unset) | Name of the image pull Secret. Test verifies existence only; data is never read. |
 | `RUN_OPENSHIFT_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 3 KFP v2 DSPA pipeline run smoke tests. |
+| `RUN_OPENSHIFT_AI_PIPELINE_SMOKE=1` | (unset) | Opt-in for Level 7 production pipeline (TabFormer) runtime. Also requires `RUN_OPENSHIFT_TESTS=1` and `PRAGMA_TEST_NAMESPACE`. |
+| `PRAGMA_SMOKE_MAX_STEPS` | `2` | Max training steps for Level 7 smoke (bounds wall-clock time). |
+| `PRAGMA_SMOKE_LIMIT_ROWS` | `5` | Max TabFormer customers for Level 7 smoke (bounds data prep). |
+| `PRAGMA_SMOKE_BATCH_SIZE` | `1` | Training batch size for Level 7 smoke (CPU-safe). |
+| `PRAGMA_SMOKE_DEVICE` | `cpu` | Device for Level 7 smoke (`cpu`, `cuda`, `auto`). |
+| `PRAGMA_SMOKE_MODEL_SIZE` | `S` | Model size for Level 7 smoke (`S`, `M`, `L`). |
+| `PRAGMA_SMOKE_RUN_NAME` | `level7-tabformer-smoke` | Run name label applied to S3 artifacts. |
+| `PRAGMA_SMOKE_DATASET_NAME` | `ibm-tabformer` | Dataset adapter key for Level 7 smoke. |
 | `RUN_OPENSHIFT_TRAINING_JOB_SMOKE=1` | (unset) | Opt-in for Level 3b batch/v1 Job training container smoke. |
 | `RUN_PYTORCHJOB_TESTS=1` | (unset) | Opt-in for Level 4 PyTorchJob tests (static checks + CRD check). |
 | `RUN_PYTORCHJOB_SMOKE=1` | (unset) | Opt-in for Level 4 runtime smoke (creates a short-lived PyTorchJob). Also requires `RUN_PYTORCHJOB_TESTS=1`. |
@@ -439,6 +447,33 @@ Level 6 (future scale testing).
 selects the S3 key, broadcasts via `dist.broadcast_object_list`, all ranks download
 independently to their own `emptyDir`, then `dist.barrier()`. 34 unit tests in
 `tests/test_checkpoint_resume.py`. Cluster integration verified 2026-05-21 (4/4 PASSED, 70s).
+
+### Level 7 — Production pipeline runtime — IBM TabFormer
+
+**11 tests total.** 10 are local pre-flight checks (no cluster). 1 is the opt-in runtime test.
+
+Gated by both `RUN_OPENSHIFT_TESTS=1` AND `RUN_OPENSHIFT_AI_PIPELINE_SMOKE=1`.
+
+- `TestTabFormerPipelineLocalPrereqs` (10 local tests, no cluster needed):
+  - `test_production_pipeline_importable` — `pragma_pretraining_pipeline` imports without error
+  - `test_production_pipeline_has_max_steps` — pipeline signature exposes `max_steps`
+  - `test_production_pipeline_has_limit_rows` — pipeline signature exposes `limit_rows`
+  - `test_production_pipeline_has_batch_size` — pipeline signature exposes `batch_size`
+  - `test_production_pipeline_has_device` — pipeline signature exposes `device`
+  - `test_production_pipeline_has_run_name` — pipeline signature exposes `run_name`
+  - `test_production_pipeline_compiles_to_yaml` — KFP Compiler produces non-empty YAML (kfp optional)
+  - `test_ibm_tabformer_adapter_registered` — `get_adapter("ibm-tabformer")` resolves without KeyError
+  - `test_components_use_wheel_based_training_invocation` — `pragma_encoder.training.train` in components source; no `/src/pragma_encoder` path
+  - `test_export_checkpoint_writes_export_manifest` — `export_manifest.json` referenced in `export_checkpoint`
+- `TestTabFormerPipelineRuntime` (1 opt-in cluster test, requires both gates):
+  - `test_production_pipeline_reaches_succeeded` — compiles `pragma_pretraining_pipeline`, uploads
+    to DSPA, submits Run with `max_steps=2, limit_rows=5, batch_size=1, device=cpu`, waits for
+    `SUCCEEDED` state within timeout.
+
+**Purpose**: Verifies the Workbench-to-pipeline-to-model-publication path for IBM TabFormer data.
+Exercises all five §2.4 stages: prepare → upload → submit → train → export.
+
+See `docs/tabformer-workbench-pipeline.md` for the end-to-end workflow description.
 
 ---
 

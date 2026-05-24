@@ -808,3 +808,126 @@ class TestMetadataSecrets:
         assert _got == "test-dataset", (
             f"_safe_args_for_metadata should include dataset_name. Got: {_got!r}"
         )
+
+
+# ===========================================================================
+# 7. metrics.jsonl contract
+# ===========================================================================
+
+
+class TestMetricsJsonlContract:
+    """Verify that training produces a valid metrics.jsonl file.
+
+    metrics.jsonl is the structured training metrics artifact that enables:
+      - Loss curve plotting (pragma_encoder.evaluation.plot_loss)
+      - Pipeline artifact publication to object storage
+      - Downstream run comparison and reproducibility
+
+    Every step-level record must have: step, epoch, train_loss, learning_rate,
+    timestamp, checkpoint_path.  Epoch-end and checkpoint event records have
+    an 'event' key.  All records must be valid JSON objects.
+    """
+
+    def test_metrics_jsonl_produced(self, training_artifacts: dict) -> None:
+        """Training must produce metrics.jsonl in the output directory."""
+        output_dir = training_artifacts["output_dir"]
+        metrics_path = output_dir / "metrics.jsonl"
+        assert metrics_path.exists(), (
+            f"metrics.jsonl not found in {output_dir}. "
+            "pragma_encoder.training.train must write metrics.jsonl at each training step."
+        )
+
+    def test_metrics_jsonl_is_non_empty(self, training_artifacts: dict) -> None:
+        """metrics.jsonl must contain at least one record."""
+        metrics_path = training_artifacts["output_dir"] / "metrics.jsonl"
+        lines = [ln.strip() for ln in metrics_path.read_text().splitlines() if ln.strip()]
+        assert len(lines) >= 1, (
+            "metrics.jsonl must contain at least one record. "
+            "Training ran with limit_rows=2 — at least one gradient step must occur."
+        )
+
+    def test_metrics_jsonl_each_line_is_valid_json(
+        self, training_artifacts: dict
+    ) -> None:
+        """Every line in metrics.jsonl must be valid JSON."""
+        metrics_path = training_artifacts["output_dir"] / "metrics.jsonl"
+        for i, line in enumerate(metrics_path.read_text().splitlines(), start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                json.loads(line)
+            except json.JSONDecodeError as exc:
+                pytest.fail(
+                    f"metrics.jsonl line {i} is not valid JSON: {exc}\n"
+                    f"Content: {line[:200]}"
+                )
+
+    def test_metrics_jsonl_step_records_have_required_keys(
+        self, training_artifacts: dict
+    ) -> None:
+        """Step-level records must have step, epoch, train_loss, learning_rate, timestamp."""
+        metrics_path = training_artifacts["output_dir"] / "metrics.jsonl"
+        required = {"step", "epoch", "train_loss", "learning_rate", "timestamp"}
+        step_records = [
+            json.loads(ln)
+            for ln in metrics_path.read_text().splitlines()
+            if ln.strip() and "event" not in json.loads(ln)
+            and "train_loss" in json.loads(ln)
+        ]
+        assert step_records, (
+            "metrics.jsonl must contain at least one step-level record "
+            "(a record with 'train_loss' and without 'event')."
+        )
+        for record in step_records:
+            missing = required - set(record.keys())
+            assert not missing, (
+                f"Step-level record missing keys: {sorted(missing)}. "
+                f"Record: {record}"
+            )
+
+    def test_metrics_jsonl_train_loss_is_positive_float(
+        self, training_artifacts: dict
+    ) -> None:
+        """Step-level train_loss values must be positive floats."""
+        metrics_path = training_artifacts["output_dir"] / "metrics.jsonl"
+        for line in metrics_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if "train_loss" in record and "event" not in record:
+                loss = record["train_loss"]
+                assert isinstance(loss, (int, float)), (
+                    f"train_loss must be a number. Got: {type(loss)} ({loss!r})"
+                )
+                assert loss > 0, (
+                    f"train_loss must be positive (meaningful loss). Got: {loss}"
+                )
+
+    def test_metrics_jsonl_steps_are_monotonically_increasing(
+        self, training_artifacts: dict
+    ) -> None:
+        """Step values in step-level records must be strictly increasing."""
+        metrics_path = training_artifacts["output_dir"] / "metrics.jsonl"
+        steps = [
+            json.loads(ln)["step"]
+            for ln in metrics_path.read_text().splitlines()
+            if ln.strip() and "train_loss" in json.loads(ln) and "event" not in json.loads(ln)
+        ]
+        assert steps == sorted(steps), (
+            f"Step values in metrics.jsonl must be non-decreasing. Got: {steps}"
+        )
+
+    def test_metadata_json_records_metrics_jsonl_path(
+        self, training_artifacts: dict
+    ) -> None:
+        """metadata.json must record the path to metrics.jsonl."""
+        meta = json.loads((training_artifacts["output_dir"] / "metadata.json").read_text())
+        assert "metrics_jsonl" in meta, (
+            "metadata.json must have a 'metrics_jsonl' key pointing to the metrics file. "
+            f"Present keys: {sorted(meta.keys())}"
+        )
+        assert meta["metrics_jsonl"], (
+            "metadata.json 'metrics_jsonl' must be a non-empty string path."
+        )

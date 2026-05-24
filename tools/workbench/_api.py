@@ -13,7 +13,7 @@ Supported modes:
                  Call .compile(path) to produce a KFP v2 YAML.
     "auto"     — detect environment: OpenShift pod → "cluster"; else → "local".
     "cluster"  — submit a KFTO PyTorchJob via oc apply (not yet implemented).
-    "local"    — run scripts/train_pragma.py as a subprocess.
+    "local"    — run python -m pragma_encoder.training.train as a subprocess.
 
 Reference: Ostroukhov et al. (2026), arXiv:2604.08649v1, Section 2.4
 ADR: docs/decisions/003-workbench-training-api.md
@@ -47,7 +47,7 @@ _MODEL_SIZE_MAP: dict[str, Callable[[], PRAGMAConfig]] = {
     "L": PRAGMAConfig.pragma_l,
 }
 
-# Model size → scripts/train_pragma.py --model-variant value
+# Model size → pragma_encoder.training.train --model-variant value
 _MODEL_VARIANT_MAP: dict[str, str] = {
     "S": "pragma-s",
     "M": "pragma-m",
@@ -89,7 +89,8 @@ def train_pragma(
                             "auto"     — detect environment: OpenShift pod → "cluster";
                                          else → "local".
                             "cluster"  — submit a KFTO PyTorchJob via oc apply.
-                            "local"    — run scripts/train_pragma.py as a subprocess.
+                            "local"    — run python -m pragma_encoder.training.train
+                                         as a subprocess.
                             "dry_run"  — return a PragmaRun without doing any work;
                                          useful for previewing pipeline shape and config.
                             Default: "auto".
@@ -97,7 +98,7 @@ def train_pragma(
         output_dir:         Directory to write checkpoints and vocab. Used in
                             mode="local". Defaults to outputs/pragma-local/<timestamp>.
         max_steps:          Maximum training steps. Passed as --max-steps to
-                            scripts/train_pragma.py. Useful for smoke tests.
+                            pragma_encoder.training.train. Useful for smoke tests.
 
     Returns:
         PragmaRun: wraps the submitted job. Call show_pipeline(), metrics(),
@@ -247,7 +248,7 @@ def _build_local_run(
     nodes: int,
     max_steps: int | None,
 ) -> PragmaRun:
-    """Run scripts/train_pragma.py as a local subprocess and return PragmaRun.
+    """Run python -m pragma_encoder.training.train as a local subprocess and return PragmaRun.
 
     Stage statuses:
         prepare  — completed (adapter.prepare() is called with upload=False)
@@ -315,10 +316,10 @@ def _build_local_run(
         PipelineStep("export",  STEP_DESCRIPTIONS["export"],  "skipped"),
     ]
 
-    # --- Stage 4: train — invoke scripts/train_pragma.py as subprocess ---
+    # --- Stage 4: train — invoke wheel-based module (not source-tree script) ---
     model_variant = _MODEL_VARIANT_MAP[model_size]
     cmd = [
-        sys.executable, "scripts/train_pragma.py",
+        sys.executable, "-m", "pragma_encoder.training.train",
         "--csv-path",      str(local_csv_path),
         "--vocab-path",    str(vocab_path),
         "--output-dir",    str(output_dir_path),
