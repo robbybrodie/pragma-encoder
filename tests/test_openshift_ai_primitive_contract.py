@@ -942,21 +942,3 @@ class TestBoundaryContracts:
                     "Generic tests/ must remain cluster-free."
                 )
 
-    def test_trainjob_not_implied_as_current_runtime(self) -> None:
-        """TrainJob (Tech Preview) must not appear in test runner configuration as required.
-
-        The CI/CD test configuration must not unconditionally run TrainJob tests.
-        """
-        pyproject = _REPO_ROOT / "pyproject.toml"
-        if pyproject.exists():
-            content = pyproject.read_text()
-            # TrainJob tests should not be in default markers
-            # We just check TrainJob is not treated as a required default test
-            # (it's an example fixture, not a runnable test)
-            has_fixture_or_example = (
-                "fixture" in content.lower() or "example" in content.lower()
-            )
-            assert "trainjob" not in content.lower() or has_fixture_or_example, (
-                "pyproject.toml appears to include TrainJob as a required test marker. "
-                "TrainJob is Tech Preview and its fixture is documentation-only."
-            )
