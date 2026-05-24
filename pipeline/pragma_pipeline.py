@@ -45,9 +45,19 @@ except ImportError:
 
 
 def _pipeline(**kwargs):
-    """Return @dsl.pipeline decorator if KFP available; identity decorator otherwise."""
+    """Return @dsl.pipeline decorator if KFP available; identity decorator otherwise.
+
+    When KFP is available, sets ``__wrapped__`` on the decorated function so that
+    ``inspect.signature()`` follows through to the original function's declared
+    parameters instead of the kfp runtime wrapper's ``(*args, **kwargs)`` signature.
+    """
     if _KFP_AVAILABLE:
-        return _dsl.pipeline(**kwargs)
+        kfp_deco = _dsl.pipeline(**kwargs)
+        def _wrap(fn):  # type: ignore[no-untyped-def]
+            decorated = kfp_deco(fn)
+            decorated.__wrapped__ = fn  # preserve original signature for inspect
+            return decorated
+        return _wrap
     return lambda fn: fn
 
 
