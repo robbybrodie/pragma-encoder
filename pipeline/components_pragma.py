@@ -241,48 +241,203 @@ def run_pretraining(
     model_size: str = "S",
     nodes: int = 1,
     epochs: int = 10,
+    max_steps: int = 0,
+    limit_rows: int = 0,
+    csv_uri: str = "",
+    vocab_uri: str = "",
+    output_prefix: str = "pragma-encoder/checkpoints/",
+    scratch_dir: str = "/tmp/pragma-run",
 ) -> str:
-    """Execute PRAGMA pretraining and return the checkpoint URI.
+    """Execute PRAGMA pretraining via the wheel-based training entrypoint.
 
-    Monitors the PyTorchJob submitted in submit_pytorchjob until completion,
-    then returns the S3 URI of the final checkpoint.
+    Downloads dataset and vocab from S3 (when S3 env vars are present and URIs
+    are S3 keys) or uses local paths, then runs ``pragma-encoder-train``.
+    Writes checkpoint(s) and metadata.json to a job-local scratch directory,
+    then uploads the final checkpoint and metadata.json to S3 under
+    ``output_prefix``.
 
-    Uses the same model_size -> PRAGMAConfig mapping as train_pragma() in
-    tools/workbench/_api.py so configuration is defined in
-    exactly one place.  Specifically, the same
-    _config_map {"S": PRAGMAConfig.pragma_s, ...} is used to ensure
-    consistency.
+    Data injection contract:
+      - ``csv_uri`` / ``vocab_uri`` are S3 keys when they do not start with
+        ``/`` (i.e. not absolute local paths). S3 credentials come from
+        native OpenShift AI Connection env vars (AWS_S3_BUCKET, AWS_S3_ENDPOINT,
+        AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY).
+      - When ``csv_uri`` / ``vocab_uri`` start with ``/`` they are treated as
+        local paths (no S3 download). This supports the smoke adapter whose
+        ``manifest_uri`` is a local tmpdir path.
+      - Default URIs are derived from ``manifest_uri`` using IBM TabFormer
+        S3 path conventions: ``{manifest_uri}card_transaction.v1.csv`` and
+        ``{manifest_uri}vocab.pkl``.
+
+    Scratch/staging contract:
+      - All downloaded input files land under ``scratch_dir`` (default:
+        ``/tmp/pragma-run``). This is a KFP component pod-local emptyDir
+        equivalent — ephemeral, not shared, not a PVC.
+      - ``scratch_dir`` is configurable so tests can redirect staging to
+        a tmpdir and so future confidential runtimes can restrict staging
+        to attested memory regions.
+      - Training output (checkpoints, metadata.json) also lands under
+        ``scratch_dir/output`` and is uploaded to S3 before the component exits.
+      - Raw data is not baked into the image, wheel, or Git.
+
+    Confidential-computing seam:
+      No HardwareProfile or Connection names are referenced here. The wheel
+      reads native AWS_* env vars from the process environment — it does not
+      know which Kubernetes Secret or OpenShift AI Connection provided them.
+      The same env vars can be injected via attestation-based secret release
+      (Trustee / CoCo) without changing this component.
 
     Args:
-        manifest_uri: DatasetManifest URI for the prepared training dataset.
-                      Canonical sec.2.4 training contract - not a raw file path.
-        model_size:   Model variant "S", "M", or "L".  Maps to PRAGMAConfig.
-        nodes:        Number of training nodes (1 or 2).
-        epochs:       Number of pretraining epochs.
+        manifest_uri:   DatasetManifest prefix URI from prepare_dataset.
+                        Used to derive csv_uri/vocab_uri when not provided.
+        model_size:     Model variant "S", "M", or "L".  Maps to PRAGMAConfig.
+        nodes:          Number of training nodes (1 or 2).
+        epochs:         Number of pretraining epochs.
+        max_steps:      Stop after this many training steps (0 = train all epochs).
+        limit_rows:     Cap dataset to this many customers (0 = all rows).
+                        Use for smoke/tiny runs that must produce artifacts quickly.
+        csv_uri:        Explicit CSV path or S3 key. Defaults to manifest_uri +
+                        card_transaction.v1.csv (IBM TabFormer S3 convention).
+        vocab_uri:      Explicit vocab path or S3 key. Defaults to manifest_uri +
+                        vocab.pkl.
+        output_prefix:  S3 key prefix for checkpoint export.
+                        Default: "pragma-encoder/checkpoints/".
+        scratch_dir:    Job-local directory for staging downloaded inputs and
+                        training outputs. Must be pod-local/ephemeral (not a
+                        shared PVC). Default: "/tmp/pragma-run".
 
     Returns:
-        checkpoint_uri: S3 URI of the final model checkpoint.
+        checkpoint_uri: Local path or S3 key of the final model checkpoint.
     """
-    from pragma_encoder.model.config import PRAGMAConfig
+    import os as _os
+    import pathlib
+    import subprocess
+    import sys
 
-    # Same model_size -> PRAGMAConfig mapping as train_pragma()
-    # (tools/workbench/_api.py::_MODEL_SIZE_MAP) - no second
-    # implementation.
-    _config_map = {
-        "S": PRAGMAConfig.pragma_s,
-        "M": PRAGMAConfig.pragma_m,
-        "L": PRAGMAConfig.pragma_l,
-    }
-    if model_size not in _config_map:
-        raise ValueError(
-            f"model_size must be 'S', 'M', or 'L', got {model_size!r}"
+    # ---- Resolve CSV and vocab URIs from manifest_uri if not explicit -----
+    _prefix = manifest_uri.rstrip("/") + "/"
+    _csv_uri  = csv_uri  if csv_uri  else _prefix + "card_transaction.v1.csv"
+    _vocab_uri = vocab_uri if vocab_uri else _prefix + "vocab.pkl"
+
+    # ---- Determine whether URIs are local or S3 keys ----------------------
+    # Local path: starts with "/" (absolute) or "./" (relative).
+    # S3 key: everything else (e.g. "pragma-encoder/data/tabformer/...").
+    def _is_local(uri: str) -> bool:
+        return uri.startswith("/") or uri.startswith("./") or uri.startswith("../")
+
+    # ---- Job-local scratch directory (configurable, ephemeral) ------------
+    _work_dir = pathlib.Path(scratch_dir)
+    _work_dir.mkdir(parents=True, exist_ok=True)
+
+    if _is_local(_csv_uri):
+        local_csv  = pathlib.Path(_csv_uri)
+        local_vocab = pathlib.Path(_vocab_uri)
+    else:
+        # S3 download using native AWS_* env vars (OpenShift AI Connection).
+        # Staging lands in the job-local scratch_dir — not a shared PVC.
+        _bucket   = _os.environ.get("AWS_S3_BUCKET", "").strip()
+        _endpoint = _os.environ.get("AWS_S3_ENDPOINT", "").strip()
+        if not _bucket or not _endpoint:
+            raise EnvironmentError(
+                "run_pretraining: S3 URI provided but AWS_S3_BUCKET or "
+                "AWS_S3_ENDPOINT is not set. Supply an OpenShift AI S3 "
+                "Connection via the workbench environment secret, or pass "
+                "local csv_uri / vocab_uri paths."
+            )
+        import boto3 as _boto3  # noqa: PLC0415
+        _ep_url = _endpoint if _endpoint.startswith("http") else f"https://{_endpoint}"
+        _s3 = _boto3.client(
+            "s3",
+            endpoint_url=_ep_url,
+            aws_access_key_id=_os.environ.get("AWS_ACCESS_KEY_ID", "") or None,
+            aws_secret_access_key=_os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None,
         )
-    # Smoke stub: return a synthetic checkpoint URI.
-    # Real implementation: monitor PyTorchJob until completion, then return S3 URI.
-    # Training entrypoint (wheel-installed): pragma-encoder-train
-    #   or equivalently: python -m pragma_encoder.training.train
-    # PyTorchJob monitoring is a future milestone — do not implement here.
-    return f"{manifest_uri}/checkpoint_epoch0001.pt"
+        local_csv   = _work_dir / pathlib.Path(_csv_uri).name
+        local_vocab = _work_dir / "vocab.pkl"
+        print(f"[run_pretraining] Downloading CSV from s3://{_bucket}/{_csv_uri} ...")
+        _s3.download_file(_bucket, _csv_uri, str(local_csv))
+        print(f"[run_pretraining] Downloading vocab from s3://{_bucket}/{_vocab_uri} ...")
+        _s3.download_file(_bucket, _vocab_uri, str(local_vocab))
+
+    # ---- Validate downloaded / local paths ---------------------------------
+    if not local_csv.exists():
+        raise FileNotFoundError(
+            f"[run_pretraining] CSV not found: {local_csv}. "
+            "Check csv_uri or manifest_uri."
+        )
+    if not local_vocab.exists():
+        raise FileNotFoundError(
+            f"[run_pretraining] Vocab not found: {local_vocab}. "
+            "Fit the tokenizer first (prepare_dataset stage)."
+        )
+
+    # ---- Run training entrypoint -------------------------------------------
+    _output_dir = _work_dir / "output"
+    _output_dir.mkdir(parents=True, exist_ok=True)
+
+    _model_variant_map = {"S": "pragma-s", "M": "pragma-m", "L": "pragma-l"}
+    if model_size not in _model_variant_map:
+        raise ValueError(f"model_size must be 'S', 'M', or 'L', got {model_size!r}")
+    _model_variant = _model_variant_map[model_size]
+
+    # --dataset-name records the original dataset reference in metadata.json.
+    # For S3 runs: the S3 key is the reference. For local runs: empty (csv-path is used).
+    _dataset_name = _csv_uri if not _is_local(_csv_uri) else ""
+
+    _cmd = [
+        sys.executable, "-m", "pragma_encoder.training.train",
+        "--csv-path",      str(local_csv),
+        "--vocab-path",    str(local_vocab),
+        "--output-dir",    str(_output_dir),
+        "--model-variant", _model_variant,
+        "--epochs",        str(epochs),
+        "--num-workers",   "0",
+        "--batch-size",    "1",
+    ]
+    if max_steps > 0:
+        _cmd.extend(["--max-steps", str(max_steps)])
+    if limit_rows > 0:
+        _cmd.extend(["--limit-rows", str(limit_rows)])
+    if _dataset_name:
+        _cmd.extend(["--dataset-name", _dataset_name])
+
+    print(f"[run_pretraining] Running: {' '.join(_cmd)}")
+    subprocess.run(_cmd, check=True)
+
+    # ---- Find final checkpoint and metadata --------------------------------
+    _ckpt_files = sorted(_output_dir.glob("checkpoint_epoch*.pt"))
+    if not _ckpt_files:
+        raise RuntimeError(
+            "[run_pretraining] Training completed but no checkpoint found in "
+            f"{_output_dir}. Check training logs above."
+        )
+    _final_ckpt = _ckpt_files[-1]
+    _meta_path = _output_dir / "metadata.json"
+    print(f"[run_pretraining] Checkpoint produced: {_final_ckpt}")
+    print(f"[run_pretraining] metadata.json present: {_meta_path.exists()}")
+
+    # ---- Upload checkpoint and metadata to S3 if configured ---------------
+    _bucket = _os.environ.get("AWS_S3_BUCKET", "").strip()
+    _endpoint = _os.environ.get("AWS_S3_ENDPOINT", "").strip()
+    if _bucket and _endpoint and not _is_local(_csv_uri):
+        _ep_url = _endpoint if _endpoint.startswith("http") else f"https://{_endpoint}"
+        import boto3 as _boto3  # noqa: PLC0415  # already imported above if S3 used
+        _s3 = _boto3.client(
+            "s3",
+            endpoint_url=_ep_url,
+            aws_access_key_id=_os.environ.get("AWS_ACCESS_KEY_ID", "") or None,
+            aws_secret_access_key=_os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None,
+        )
+        _s3_key = f"{output_prefix.rstrip('/')}/{_model_variant}/{_final_ckpt.name}"
+        _s3.upload_file(str(_final_ckpt), _bucket, _s3_key)
+        print(f"[run_pretraining] Checkpoint uploaded to s3://{_bucket}/{_s3_key}")
+        # Upload metadata.json alongside the checkpoint
+        if _meta_path.exists():
+            _meta_s3_key = f"{output_prefix.rstrip('/')}/{_model_variant}/metadata.json"
+            _s3.upload_file(str(_meta_path), _bucket, _meta_s3_key)
+            print(f"[run_pretraining] metadata.json uploaded to s3://{_bucket}/{_meta_s3_key}")
+        return _s3_key
+
+    return str(_final_ckpt)
 
 
 # ---------------------------------------------------------------------------

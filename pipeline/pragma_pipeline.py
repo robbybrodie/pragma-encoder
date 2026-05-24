@@ -84,6 +84,8 @@ def pragma_pretraining_pipeline(
     model_size: str = "S",
     epochs: int = 10,
     nodes: int = 1,
+    max_steps: int = 0,
+    limit_rows: int = 0,
 ) -> None:
     """Full PRAGMA pretraining pipeline: all five sec.2.4 stages always run.
 
@@ -104,6 +106,10 @@ def pragma_pretraining_pipeline(
                       1 = single-node (pytorchjob-pragma-s.yaml),
                       2 = two-node DDP (pytorchjob-pragma-s-2node.yaml).
                       Default: 1.
+        max_steps:    Stop after this many training steps (0 = train all epochs).
+                      Use for smoke/tiny runs without changing epochs.
+        limit_rows:   Cap the training dataset to this many customers
+                      (0 = use all). Use for smoke/tiny runs.
     """
     # Stage 1: Prepare dataset via DatasetAdapter registry
     prepare_op = prepare_dataset(
@@ -131,6 +137,8 @@ def pragma_pretraining_pipeline(
         model_size=model_size,
         nodes=nodes,
         epochs=epochs,
+        max_steps=max_steps,
+        limit_rows=limit_rows,
     )
 
     # Stage 5: Export model checkpoints and outputs to S3

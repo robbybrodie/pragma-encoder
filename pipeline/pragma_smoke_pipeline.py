@@ -1,14 +1,14 @@
 """Minimal KFP v2 smoke pipeline for Level 3 DSPA integration tests.
 
 Implements a single self-contained KFP v2 component that runs:
-  1. python -m pragma_encoder.data.fit_tokenizer — fits tokenizer on inline synthetic CSV
-  2. python -m pragma_encoder.training.train — PRAGMA-S training with --max-steps 1
+  1. python -m pragma_encoder.data.fit_tokenizer -- fits tokenizer on inline synthetic CSV
+  2. python -m pragma_encoder.training.train -- PRAGMA-S training with --max-steps 1
 
 Purpose:
   Level 3 (DSPA/KFP v2 pipeline smoke) requires a component that can run
   inside a standard KFP component pod without S3, distributed training, or persistent volumes
   infrastructure. Production pipeline components (components_pragma.py)
-  require all three — they are not suitable for smoke testing.
+  require all three -- they are not suitable for smoke testing.
 
   This module fills that gap: one component, one pod, no external dependencies.
 
@@ -18,8 +18,8 @@ Architecture boundary:
   Do not add production pipeline logic here.
 
   Level 3 PASS is independent of Level 3b PASS:
-    Level 3b (batch/v1 Job) → image is pullable and training scripts run
-    Level 3  (KFP v2 Run)   → DSPA pipeline orchestration works end-to-end
+    Level 3b (batch/v1 Job) -> image is pullable and training scripts run
+    Level 3  (KFP v2 Run)   -> DSPA pipeline orchestration works end-to-end
 
 Image requirement:
   The component base_image must contain the pragma_encoder wheel and all
@@ -30,20 +30,20 @@ Image requirement:
     - python -m pragma_encoder.data.fit_tokenizer  works (wheel installed)
     - python -m pragma_encoder.training.train  works (wheel installed; replaces scripts/train_pragma.py)
 
-  The workbench image must NOT be used here — it does not install the
+  The workbench image must NOT be used here -- it does not install the
   pragma_encoder wheel. Component pods would fail with:
     ModuleNotFoundError: No module named 'pragma_encoder'
 
   Override at compile time via env var (read once at module import):
-    PRAGMA_TRAINING_IMAGE      — training image URI (highest priority)
-    PRAGMA_KFP_COMPONENT_IMAGE — explicit KFP component image override
+    PRAGMA_TRAINING_IMAGE      -- training image URI (highest priority)
+    PRAGMA_KFP_COMPONENT_IMAGE -- explicit KFP component image override
 
 KFP optional import guard:
   kfp is an optional dependency (pyproject.toml [workbench] extra).
   This module guards the kfp import exactly as components_pragma.py does:
   try/except at module level; identity decorator fallback.
 
-Reference: Level 3 — OpenShift AI KFP v2 pipeline smoke
+Reference: Level 3 -- OpenShift AI KFP v2 pipeline smoke
 Test: tests/openshift/test_03_pipeline_smoke_run.py
 Units: tests/test_smoke_pipeline.py
 """
@@ -51,7 +51,7 @@ Units: tests/test_smoke_pipeline.py
 import os
 
 # ---------------------------------------------------------------------------
-# KFP optional import guard — mirrors components_pragma.py pattern
+# KFP optional import guard -- mirrors components_pragma.py pattern
 # ---------------------------------------------------------------------------
 
 try:
@@ -79,7 +79,7 @@ def _pipeline(**kwargs):  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 # Component base image
 #
-# Read at import time — KFP @dsl.component captures base_image at decoration
+# Read at import time -- KFP @dsl.component captures base_image at decoration
 # time, so the env var must be set before this module is imported (i.e., at
 # compile time in the workbench).
 #
@@ -88,7 +88,7 @@ def _pipeline(**kwargs):  # type: ignore[no-untyped-def]
 #   2. PRAGMA_TRAINING_IMAGE       (training image, preferred)
 #   3. Cluster-internal default    (hardcoded fallback)
 #
-# The workbench image (pragma-encoder-workbench) must NOT be used here —
+# The workbench image (pragma-encoder-workbench) must NOT be used here --
 # it is a deps-only image without PRAGMA source code. Component pods would
 # fail with ModuleNotFoundError: No module named 'src'.
 # ---------------------------------------------------------------------------
@@ -110,24 +110,32 @@ _SMOKE_IMAGE: str = (
 # ---------------------------------------------------------------------------
 
 @_component(base_image=_SMOKE_IMAGE)
-def pragma_smoke_training(max_steps: int = 1) -> None:
+def pragma_smoke_training(max_steps: int = 1, output_dir: str = "/tmp/pragma-smoke-output") -> None:
     """Run PRAGMA-S smoke training inside a single KFP component pod.
 
     Steps:
       1. Write a 30-row synthetic TabFormer CSV to /tmp/pragma-smoke/.
       2. Run python -m pragma_encoder.data.fit_tokenizer to build vocab.pkl.
       3. Run python -m pragma_encoder.training.train --max-steps N --model-variant pragma-s.
-      4. Print completion marker: 'PRAGMA smoke training completed'.
+      4. Print artifact location (checkpoint files, metadata.json presence).
+      5. Print completion marker: 'PRAGMA smoke training completed'.
 
-    No S3, no distributed training, no persistent volumes — all data is ephemeral (/tmp).
+    No S3, no distributed training, no persistent volumes required.
+    Input data is written to /tmp/pragma-smoke/ (ephemeral).
+    Training artifacts (checkpoint, metadata.json) are written to output_dir.
     The component pod exits 0 on success.
 
+    Args:
+        max_steps:  Number of training steps before early stop. Default: 1.
+        output_dir: Directory for checkpoint and metadata.json artifacts.
+                    Default: /tmp/pragma-smoke-output (ephemeral pod storage).
+
     Log markers asserted by test_03_pipeline_smoke_run.py:
-      'PRAGMA-S'                        — printed by pragma_encoder.training.train
-      'Reached --max-steps'             — printed by pragma_encoder.training.train early-stop
-      'PRAGMA smoke training completed' — printed by this component
+      'PRAGMA-S'                        -- printed by pragma_encoder.training.train
+      'Reached --max-steps'             -- printed by pragma_encoder.training.train early-stop
+      'PRAGMA smoke training completed' -- printed by this component
     """
-    # All imports inside the function body — KFP serialises this function
+    # All imports inside the function body -- KFP serialises this function
     # and runs it in a fresh Python process inside the component pod.
     import pathlib
     import subprocess
@@ -135,25 +143,25 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     import textwrap
 
     # ------------------------------------------------------------------
-    # Step 1 — No script location needed.
+    # Step 1 -- No script location needed.
     #
     # Training is invoked as a module (python -m pragma_encoder.training.train)
-    # because the pragma_encoder wheel is installed in site-packages — no src/ tree
+    # because the pragma_encoder wheel is installed in site-packages -- no src/ tree
     # and no scripts/ directory search required.
     # fit_tokenizer is similarly invoked as a module.
     # ------------------------------------------------------------------
     print("[smoke] pragma_encoder.training.train invoked as a module (wheel-based image)")
 
     # ------------------------------------------------------------------
-    # Step 2 — Write inline TabFormer CSV.
+    # Step 2 -- Write inline TabFormer CSV.
     #
     # Same 30-row synthetic dataset as Level 3b (test_03b_training_job_smoke.py).
-    # 10 users × 3 transactions. fit_tokenizer.py splits 80/20 by User ID:
-    #   users 0-7 → train (8 users), users 8-9 → val (2 users).
+    # 10 users x 3 transactions. fit_tokenizer.py splits 80/20 by User ID:
+    #   users 0-7 -> train (8 users), users 8-9 -> val (2 users).
     #
     # fit_tokenizer.py reads: data/tabformer/card_transaction.v1.csv (relative)
     # fit_tokenizer.py writes: data/tabformer/vocab.pkl (relative)
-    # Both paths are relative to the CWD at runtime — we pass cwd=work_dir.
+    # Both paths are relative to the CWD at runtime -- we pass cwd=work_dir.
     # ------------------------------------------------------------------
     work_dir = pathlib.Path("/tmp/pragma-smoke")
     data_dir = work_dir / "data" / "tabformer"
@@ -201,7 +209,7 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     vocab_path = work_dir / "data" / "tabformer" / "vocab.pkl"
 
     # ------------------------------------------------------------------
-    # Step 3 — Fit tokenizer via module invocation.
+    # Step 3 -- Fit tokenizer via module invocation.
     #
     # pragma_encoder.data.fit_tokenizer is installed in site-packages by the
     # wheel. It uses hardcoded relative paths for read/write (CSV_PATH and
@@ -222,17 +230,17 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     print(f"[smoke] vocab.pkl created: {vocab_path}")
 
     # ------------------------------------------------------------------
-    # Step 4 — Run PRAGMA-S training with --max-steps.
+    # Step 4 -- Run PRAGMA-S training with --max-steps.
     #
-    # Invoked as a module (python -m pragma_encoder.training.train) — no
+    # Invoked as a module (python -m pragma_encoder.training.train) -- no
     # file-path search needed; the wheel installs the module into site-packages.
     # Uses the same argument set as the Level 3b smoke shell to ensure
     # training produces the expected log markers:
-    #   'PRAGMA-S'             — model variant confirmation
-    #   'Reached --max-steps'  — early-stop marker
+    #   'PRAGMA-S'             -- model variant confirmation
+    #   'Reached --max-steps'  -- early-stop marker
     # ------------------------------------------------------------------
-    output_dir = pathlib.Path("/tmp/pragma-smoke-output")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _output_dir = pathlib.Path(output_dir)
+    _output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[smoke] Running pragma_encoder.training.train --max-steps {max_steps} --model-variant pragma-s ...")
     subprocess.run(
@@ -240,7 +248,7 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
             sys.executable, "-m", "pragma_encoder.training.train",
             "--csv-path", str(csv_path),
             "--vocab-path", str(vocab_path),
-            "--output-dir", str(output_dir),
+            "--output-dir", str(_output_dir),
             "--model-variant", "pragma-s",
             "--epochs", "1",
             "--num-workers", "0",
@@ -252,8 +260,13 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     )
 
     # ------------------------------------------------------------------
-    # Step 5 — Print completion marker (asserted by Level 3 smoke test).
+    # Step 5 -- Print artifact location and completion marker.
     # ------------------------------------------------------------------
+    _ckpt_files = sorted(_output_dir.glob("checkpoint_epoch*.pt"))
+    _meta = _output_dir / "metadata.json"
+    print(f"[smoke] Training artifacts written to: {_output_dir}")
+    print(f"[smoke] Checkpoints found: {[f.name for f in _ckpt_files]}")
+    print(f"[smoke] metadata.json present: {_meta.exists()}")
     print("PRAGMA smoke training completed")
 
 
@@ -266,10 +279,13 @@ def pragma_smoke_training(max_steps: int = 1) -> None:
     description=(
         "Minimal PRAGMA-S smoke pipeline for Level 3 DSPA/KFP v2 integration testing. "
         "Runs fit_tokenizer + train_pragma --max-steps N in a single component pod. "
-        "No S3, no distributed training, no persistent volumes — all data is ephemeral (/tmp)."
+        "No S3, no distributed training, no persistent volumes -- all data is ephemeral (/tmp)."
     ),
 )
-def pragma_smoke_training_pipeline(max_steps: int = 1) -> None:
+def pragma_smoke_training_pipeline(
+    max_steps: int = 1,
+    output_dir: str = "/tmp/pragma-smoke-output",
+) -> None:
     """Single-component KFP v2 pipeline for Level 3 DSPA smoke testing.
 
     Compiles to a KFP v2 YAML suitable for upload to the DSPA KFP v2 API.
@@ -277,7 +293,10 @@ def pragma_smoke_training_pipeline(max_steps: int = 1) -> None:
     inside a single pod without external infrastructure dependencies.
 
     Args:
-        max_steps: Number of training steps before early stop. Default 1.
-                   The test uses max_steps=1 to minimise pod runtime.
+        max_steps:  Number of training steps before early stop. Default 1.
+                    The test uses max_steps=1 to minimise pod runtime.
+        output_dir: Directory inside the pod for checkpoint and metadata.json.
+                    Default: /tmp/pragma-smoke-output (ephemeral pod storage).
+                    Override to a mounted volume path to inspect artifacts after the run.
     """
-    pragma_smoke_training(max_steps=max_steps)
+    pragma_smoke_training(max_steps=max_steps, output_dir=output_dir)

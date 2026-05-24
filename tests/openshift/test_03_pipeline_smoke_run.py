@@ -47,6 +47,14 @@ Prerequisites (when enabled):
   - RUN_OPENSHIFT_PIPELINE_SMOKE=1
   - PRAGMA_TEST_NAMESPACE=<namespace>
   - DSPA pods running in namespace (verified by Level 1)
+
+Platform version:
+  Validated against OpenShift AI (RHOAI) 3.4.0.
+  RHOAI 3.4 uses datasciencepipelinesapplications.opendatahub.io/v1 (DSPA),
+  HardwareProfile in infrastructure.opendatahub.io API group, and
+  pytorchjobs.kubeflow.org/v1 (KFTO).
+  Upgraded from RHOAI 2.25.6 via controlled re-installation (no OLM upgrade
+  graph from 2.x to 3.x).
 """
 
 from __future__ import annotations
