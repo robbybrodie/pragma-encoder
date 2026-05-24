@@ -40,9 +40,18 @@ except ImportError:
 
 
 def _component(**kwargs):
-    """Return @dsl.component decorator if KFP available; identity decorator otherwise."""
+    """Return @dsl.component decorator if KFP available; identity decorator otherwise.
+
+    Sets ``__wrapped__`` on the decorated function so ``inspect.signature()``
+    follows the original declared parameters, not the kfp runtime wrapper.
+    """
     if _KFP_AVAILABLE:
-        return _dsl.component(**kwargs)
+        kfp_deco = _dsl.component(**kwargs)
+        def _wrap(fn):  # type: ignore[no-untyped-def]
+            decorated = kfp_deco(fn)
+            decorated.__wrapped__ = fn  # preserve original signature for inspect
+            return decorated
+        return _wrap
     return lambda fn: fn
 
 

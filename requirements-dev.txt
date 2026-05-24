@@ -4,6 +4,7 @@
 # Testing
 pytest>=7.0.0
 pytest-cov>=4.0.0
+build>=0.10.0                   # required by test_packaging.py::TestWheelMetadata (_get_or_build_wheel)
 
 # Code quality
 black>=23.0.0

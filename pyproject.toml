@@ -129,3 +129,6 @@ ignore = ["N806", "N812"]
 # The platform-neutral wheel tests have assertion messages and comments that
 # describe long module paths and platform boundary rules at necessary length.
 "tests/test_platform_neutral_wheel.py" = ["E501"]
+# The training artifact tests embed the same fixed-format IBM TabFormer CSV
+# header and have an assertion condition that cannot be wrapped cleanly.
+"tests/test_training_artifact.py" = ["E501"]

@@ -84,8 +84,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install pytest (minimal — clean-install test creates its own venv)
-        run: pip install "pytest>=7.0.0"
+      - name: Install pytest and build (build needed for TestWheelMetadata)
+        run: pip install "pytest>=7.0.0" "build>=0.10.0"
 
       - name: Run packaging config and clean-install tests
         # TestPackagingConfig: verifies pyproject.toml [build-system] is correct.
