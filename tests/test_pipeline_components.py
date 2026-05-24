@@ -603,21 +603,6 @@ class TestPragmaPretrainingPipelineHonestContract:
             "All five stages must always run in this pipeline."
         )
 
-    def test_full_pipeline_docstring_no_skip_claim(self) -> None:
-        """§2.4: pragma_pretraining_pipeline docstring must not claim stages are skipped."""
-        _require_importable()
-        fn = getattr(_pipe, "pragma_pretraining_pipeline", None)
-        assert fn is not None
-        doc = fn.__doc__ or ""
-        assert "skip" not in doc.lower(), (
-            "pragma_pretraining_pipeline docstring must not claim prepare/upload "
-            "are skipped. The skip path is not implemented. Use honest language."
-        )
-        assert "manifest_uri" not in doc, (
-            "pragma_pretraining_pipeline docstring must not mention manifest_uri — "
-            "that parameter no longer exists on this pipeline."
-        )
-
 
 # ---------------------------------------------------------------------------
 # TestTrainFromManifestPipeline  (category: interface)
@@ -1083,7 +1068,7 @@ class TestDatasetAdapterUsage:
 
 
 class TestWheelBasedLanguage:
-    """Verify pipeline/components_pragma.py uses wheel-based language throughout.
+    """Verify pipeline/components_pragma.py uses wheel-based runtime patterns.
 
     Category: structural / wheel
 
@@ -1091,108 +1076,46 @@ class TestWheelBasedLanguage:
     installs it via pip.  KFP component pods use the installed wheel — they do
     NOT have a source tree (no src/ directory).
 
-    These tests guard against regressing to source-tree language:
-      - "No module named 'src'" (old workbench-era error message)
-      - "source code (src/)" (old "must contain PRAGMA source code" phrasing)
-      - "src/ baked in" (old Dockerfile description)
-      - "scripts/train_pragma.py" as a runtime entrypoint reference
-      - "src/workbench/" path references (moved to tools/workbench/)
-      - "src/data/adapters/" as a module path (installed as pragma_encoder.data.adapters)
+    These tests guard against stale source-tree patterns in executable code.
+    Comment-level phrasing (docstrings, inline comments) is not policed here —
+    only non-comment lines matter for runtime correctness.
 
-    And enforce positive wheel-based language:
-      - References the installed entrypoint pragma-encoder-train
-        or the module invocation python -m pragma_encoder.training.train
+    Guards:
+      - No 'src/workbench/' path references in non-comment code
+      - No 'src/data/adapters/' module path references in non-comment code
+      - Entrypoint references use the wheel-installed form
     """
 
-    def test_no_src_module_not_found_message(self) -> None:
-        """components_pragma.py must not contain 'No module named \\'src\\'' error text.
-
-        'ModuleNotFoundError: No module named \\'src\\'' was the old error that
-        occurred when a component pod used the deps-only workbench image, which
-        lacked the src/ source tree.  The current architecture installs
-        pragma_encoder as a wheel — the correct error would be
-        'No module named \\'pragma_encoder\\'' if the wheel is missing.
-        """
-        src = _src_text(_COMPONENTS_PATH)
-        assert "No module named 'src'" not in src, (
-            "pipeline/components_pragma.py must not contain the old error message "
-            "'No module named \\'src\\''. "
-            "The pragma_encoder wheel is installed into site-packages. "
-            "Replace with: ModuleNotFoundError: No module named 'pragma_encoder'."
-        )
-
-    def test_no_source_code_src_phrasing(self) -> None:
-        """components_pragma.py must not describe the image as containing 'source code (src/)'.
-
-        'PRAGMA source code (src/)' was the old workbench-era description.
-        The current training image installs the pragma_encoder wheel via pip —
-        it is not a source-tree installation.  Wheel-based language:
-          'pragma_encoder wheel installed'
-        """
-        src = _src_text(_COMPONENTS_PATH)
-        assert "source code (src/)" not in src, (
-            "pipeline/components_pragma.py must not describe the component image as "
-            "containing 'source code (src/)'. "
-            "The image installs the pragma_encoder wheel. "
-            "Use: 'pragma_encoder wheel installed'."
-        )
-
-    def test_no_src_baked_in_phrasing(self) -> None:
-        """components_pragma.py must not describe Dockerfile as 'with src/ baked in'.
-
-        'Dockerfile.training with src/ baked in' was the old Dockerfile description.
-        The current Dockerfile installs the pragma_encoder wheel via pip.
-        Wheel-based language: 'with pragma_encoder wheel installed via pip'.
-        """
-        src = _src_text(_COMPONENTS_PATH)
-        assert "src/ baked in" not in src, (
-            "pipeline/components_pragma.py must not contain 'src/ baked in'. "
-            "Dockerfile.training installs the pragma_encoder wheel via pip, "
-            "not a source-tree bake. "
-            "Use: 'pragma_encoder wheel installed via pip'."
+    @staticmethod
+    def _noncomment_lines(path: pathlib.Path) -> str:
+        """Return non-blank, non-comment source lines joined by newline."""
+        return "\n".join(
+            line for line in path.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
         )
 
     def test_no_src_workbench_path_reference(self) -> None:
-        """components_pragma.py must not reference 'src/workbench/' paths.
+        """components_pragma.py must not reference 'src/workbench/' in executable code.
 
-        Workbench helpers have moved from src/workbench/ to
-        tools/workbench/.  Any reference to 'src/workbench/'
-        is a stale path from before the TD-009 restructuring.
+        Workbench helpers have moved from src/workbench/ to tools/workbench/.
+        A non-comment reference to 'src/workbench/' in executable code is a
+        stale path from before the TD-009 restructuring that would fail at runtime.
+        Comment-only historical mentions are permitted.
         """
-        src = _src_text(_COMPONENTS_PATH)
-        assert "src/workbench/" not in src, (
-            "pipeline/components_pragma.py must not reference 'src/workbench/'. "
+        code = self._noncomment_lines(_COMPONENTS_PATH)
+        assert "src/workbench/" not in code, (
+            "pipeline/components_pragma.py contains a non-comment reference to 'src/workbench/'. "
             "Workbench helpers are at tools/workbench/. "
             "Update any cross-references to the current path."
         )
 
-    def test_no_scripts_train_pragma_as_runtime_entrypoint(self) -> None:
-        """components_pragma.py must not name scripts/train_pragma.py as the entrypoint.
-
-        scripts/train_pragma.py was the old training entrypoint referenced in
-        component comments as 'Working training entrypoint: scripts/train_pragma.py'.
-        The current wheel-installed entrypoints are:
-          pragma-encoder-train
-          python -m pragma_encoder.training.train
-        A source-file reference would fail in the wheel image where scripts/ does
-        not exist.  Comments may mention scripts/train_pragma.py only for backward-
-        compatibility notes — not as the primary runtime path.
-        """
-        src = _src_text(_COMPONENTS_PATH)
-        assert "Working training entrypoint: scripts/train_pragma.py" not in src, (
-            "pipeline/components_pragma.py must not describe scripts/train_pragma.py "
-            "as the 'Working training entrypoint'. "
-            "The wheel-installed entrypoints are: pragma-encoder-train "
-            "or python -m pragma_encoder.training.train."
-        )
-
     def test_run_pretraining_references_wheel_entrypoint(self) -> None:
-        """run_pretraining comments must reference the wheel-installed entrypoint.
+        """run_pretraining must reference the wheel-installed entrypoint.
 
-        The comment describing the training entrypoint must point to the
-        wheel-installed entry point, not the source-file path.  Expected:
+        The component must invoke the wheel-installed training entrypoint:
           pragma-encoder-train
           or python -m pragma_encoder.training.train
+        Not a source-file path (scripts/train_pragma.py).
         """
         src = _src_text(_COMPONENTS_PATH)
         has_entrypoint_ref = (
@@ -1207,17 +1130,18 @@ class TestWheelBasedLanguage:
         )
 
     def test_prepare_dataset_references_wheel_module_path(self) -> None:
-        """prepare_dataset docstring must reference the wheel module path for adapters.
+        """prepare_dataset must not reference 'src/data/adapters' in non-comment code.
 
-        'pragma_encoder/data/adapters/__init__.py' is the installed package path.
-        The old source-tree path was 'src/data/adapters/__init__.py'.
-        Adapters are imported as: from pragma_encoder.data.adapters import get_adapter
+        The installed module path is pragma_encoder.data.adapters.
+        The old source-tree path 'src/data/adapters' does not exist in the wheel image.
+        Comment-only historical mentions are permitted.
         """
-        src = _src_text(_COMPONENTS_PATH)
-        assert "src/data/adapters" not in src, (
-            "pipeline/components_pragma.py must not reference 'src/data/adapters'. "
+        code = self._noncomment_lines(_COMPONENTS_PATH)
+        assert "src/data/adapters" not in code, (
+            "pipeline/components_pragma.py contains a non-comment reference "
+            "to 'src/data/adapters'. "
             "The installed module path is 'pragma_encoder/data/adapters' "
-            "(or imported as pragma_encoder.data.adapters)."
+            "(imported as pragma_encoder.data.adapters)."
         )
 
 

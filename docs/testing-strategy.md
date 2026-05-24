@@ -88,9 +88,9 @@ pytest tests/ --ignore=tests/openshift/ -x -q \
 | `test_image_contract.py` | 24 | Two-image model: workbench image vs training image; kfp boundary |
 | `test_stale_contract_references.py` | 7 | `MODEL_REGISTRY_*` absent from code (TD-010); `train_pragma.py` stays thin |
 | `test_gitops_secret_guard.py` | 10 | No plaintext creds in gitops/; only SealedSecrets; templates use `REPLACE_ME` |
-| `test_openshift_ai_primitive_contract.py` | 67 | RHOAI 3.3 primitive YAML contract (no cluster) |
+| `test_openshift_ai_primitive_contract.py` | 66 | RHOAI 3.3 primitive YAML contract (no cluster) |
 | `test_openshift_ai_fixtures.py` | 32 | Fixture YAML conforms to native AWS_* S3 Connection schema |
-| `test_pipeline_components.py` | 75 | KFP v2 pipeline component static structure: signatures, stage names, no PVC |
+| `test_pipeline_components.py` | 70 | KFP v2 pipeline component static structure: signatures, stage names, no PVC |
 | `test_smoke_pipeline.py` | 21 | Smoke pipeline static: no cluster needed, compiles cleanly |
 | `test_s3_manifest_render.py` | 11 | S3 manifest YAML renderer (extracted from openshift/ to always run in CI) |
 | `test_packaging.py` | 20 | pyproject.toml build config; wheel METADATA; editable + wheel install |
@@ -212,8 +212,58 @@ A phrase/wording guard test is acceptable if and only if:
 ### Current status
 
 All existing phrase/wording guards fall into the "acceptable" category above.
-There is no immediate cleanup required. The policy is: **do not add new phrase
-guards unless they meet the three criteria above**.
+The policy is: **do not add new phrase guards unless they meet the three criteria above**.
+
+---
+
+## Stale-wording guard consolidation (2026-05-24)
+
+The repo reached architectural stability after TD-009 (workbench out of wheel),
+TD-010 (AWS_* S3 Connection schema), and Level 3 pipeline milestone. At that
+point several phrase-scanning tests in `test_pipeline_components.py` were
+guarding old wording that no longer existed in executable code — they only
+risked failing on legitimate historical comments.
+
+### What was changed
+
+**Removed (6 tests total — comment/docstring phrase guards):**
+
+| Test | Reason |
+|---|---|
+| `TestWheelBasedLanguage.test_no_src_module_not_found_message` | Error phrase in old comment; no runtime risk |
+| `TestWheelBasedLanguage.test_no_source_code_src_phrasing` | Comment wording only |
+| `TestWheelBasedLanguage.test_no_src_baked_in_phrasing` | Comment wording only |
+| `TestWheelBasedLanguage.test_no_scripts_train_pragma_as_runtime_entrypoint` | Specific comment string; entrypoint contract tested structurally |
+| `TestPragmaPretrainingPipelineHonestContract.test_full_pipeline_docstring_no_skip_claim` | Docstring wording; no-`manifest_uri` contract tested by `test_full_pipeline_has_no_manifest_uri_param` |
+| `TestBoundaryContracts.test_trainjob_not_implied_as_current_runtime` | Fragile pyproject.toml text scan; redundant with `test_trainjob_not_in_production_manifests` and `test_trainjob_marked_tech_preview` |
+
+**Relaxed (2 tests — now check non-comment lines only):**
+
+| Test | Before | After |
+|---|---|---|
+| `TestWheelBasedLanguage.test_no_src_workbench_path_reference` | Any line in source | Non-comment lines only via `_noncomment_lines()` |
+| `TestWheelBasedLanguage.test_prepare_dataset_references_wheel_module_path` | Any line in source | Non-comment lines only via `_noncomment_lines()` |
+
+The `_noncomment_lines()` helper strips blank lines and lines whose first
+non-whitespace character is `#`, then joins the remainder. This means historical
+mentions of old paths in comments are permitted; only executable code is checked.
+
+### Before / after
+
+| File | Before | After |
+|---|---|---|
+| `test_pipeline_components.py` | 75 | 70 |
+| `test_openshift_ai_primitive_contract.py` | 67 | 66 |
+
+### Principle applied
+
+> **Test contracts, not vocabulary.**
+
+A phrase-scanning test is justified only when the phrase itself is the contract
+(e.g. `MODEL_REGISTRY_*` must not appear in any source file after TD-010 schema
+migration). When the same contract is enforced by a structural test (parameter
+absence, import check, YAML kind assertion), the phrase guard is redundant and
+should be removed.
 
 ---
 
@@ -283,9 +333,9 @@ ruff check src/ tests/ pipeline/
 | Category | Files | Tests |
 |---|---|---|
 | Core unit tests (model, tokenizer, training math) | 21 | ~345 |
-| Static platform contract (boundary, YAML, package) | 16 | ~540 |
+| Static platform contract (boundary, YAML, package) | 16 | ~534 |
 | Security guards | 1 | 10 |
 | Opt-in runtime (openshift/) | 11 | ~76 |
-| **Total** | **~50** | **~970** |
+| **Total** | **~50** | **~964** |
 
 Reference: `docs/development-process.md`, `CLAUDE.md §Development Process`
