@@ -169,30 +169,64 @@ def prepare_dataset(
 @_component(base_image=_BASE_IMAGE)
 def upload_artifacts(
     manifest_uri: str,
+    output_prefix: str = "pragma-encoder/runs",
     bucket: str = "",
 ) -> str:
-    """Upload prepared artifacts to S3 (idempotent).
+    """Upload prepared dataset artifacts to S3 (idempotent).
 
-    If manifest_uri is already an S3 URI (starts with 's3://'), the artifacts
-    are assumed to be in place — returns manifest_uri unchanged.
-
-    If manifest_uri is a local path (e.g. from ibm-tabformer-smoke), there is
-    nothing durable to upload; returns manifest_uri unchanged.  Full S3 upload
-    (reading shards from manifest, uploading via boto3) is a future milestone.
+    Uploads the prepared CSV and vocab.pkl from the local manifest prefix to
+    S3 under output_prefix/data/ using the native OpenShift AI Connection
+    AWS_* env vars.  If S3 credentials are absent or manifest_uri is already
+    an S3 URI, the manifest_uri is returned unchanged (idempotent).
 
     S3 credentials come from AWS_* env vars supplied by the
-    OpenShift AI Connection (test fixture/default: pragma-workbench-env Secret).
+    OpenShift AI Connection (default: pragma-workbench-env Secret).
 
     Args:
-        manifest_uri: Prefix URI returned by prepare_dataset (S3 or local).
-        bucket:       Override S3 bucket name.  Defaults to the value of
-                      AWS_S3_BUCKET environment variable.
+        manifest_uri:   Prefix URI returned by prepare_dataset (local path or S3).
+        output_prefix:  S3 key prefix for uploaded data artifacts.
+                        Default: "pragma-encoder/runs".
+        bucket:         Override S3 bucket name.  Defaults to AWS_S3_BUCKET env var.
 
     Returns:
-        manifest_uri: The same manifest_uri (passed to downstream stages).
+        manifest_uri: Unchanged (downstream stages use the same manifest_uri).
     """
-    # Pass-through: downstream stages receive the same manifest_uri.
-    # Full S3 upload implementation is a future milestone (see docs/tech-debt.md).
+    import os as _os
+    import pathlib as _pathlib
+
+    # If already an S3 URI, nothing to upload — data is already in place.
+    if manifest_uri.startswith("s3://"):
+        return manifest_uri
+
+    # Attempt S3 upload of CSV and vocab if S3 env vars are present.
+    _bucket = bucket or _os.environ.get("AWS_S3_BUCKET", "").strip()
+    _endpoint = _os.environ.get("AWS_S3_ENDPOINT", "").strip()
+    if not _bucket or not _endpoint:
+        # No S3 config — local run or smoke, pass through unchanged.
+        return manifest_uri
+
+    _prefix_dir = _pathlib.Path(manifest_uri.rstrip("/"))
+    _ep_url = _endpoint if _endpoint.startswith("http") else f"https://{_endpoint}"
+
+    try:
+        import boto3 as _boto3  # noqa: PLC0415
+        _s3 = _boto3.client(
+            "s3",
+            endpoint_url=_ep_url,
+            aws_access_key_id=_os.environ.get("AWS_ACCESS_KEY_ID", "") or None,
+            aws_secret_access_key=_os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None,
+        )
+        _data_prefix = output_prefix.rstrip("/") + "/data"
+        for _candidate in ["card_transaction.v1.csv", "vocab.pkl"]:
+            _local = _prefix_dir / _candidate
+            if _local.exists():
+                _s3_key = f"{_data_prefix}/{_candidate}"
+                _s3.upload_file(str(_local), _bucket, _s3_key)
+                print(f"[upload_artifacts] Uploaded {_candidate} -> s3://{_bucket}/{_s3_key}")
+    except Exception as _exc:  # noqa: BLE001
+        # Upload is best-effort — downstream stages can still use local paths.
+        print(f"[upload_artifacts] S3 upload skipped: {_exc}")
+
     return manifest_uri
 
 
@@ -252,9 +286,12 @@ def run_pretraining(
     epochs: int = 10,
     max_steps: int = 0,
     limit_rows: int = 0,
+    batch_size: int = 32,
+    device: str = "auto",
+    run_name: str = "",
     csv_uri: str = "",
     vocab_uri: str = "",
-    output_prefix: str = "pragma-encoder/checkpoints/",
+    output_prefix: str = "pragma-encoder/runs",
     scratch_dir: str = "/tmp/pragma-run",
 ) -> str:
     """Execute PRAGMA pretraining via the wheel-based training entrypoint.
@@ -304,12 +341,18 @@ def run_pretraining(
         max_steps:      Stop after this many training steps (0 = train all epochs).
         limit_rows:     Cap dataset to this many customers (0 = all rows).
                         Use for smoke/tiny runs that must produce artifacts quickly.
+        batch_size:     Training batch size. Default: 32.
+                        Use batch_size=1..4 for CPU/smoke runs without GPU.
+        device:         Device selection passed to --device. Default: "auto"
+                        (auto-detects CUDA → MPS → CPU). Use "cpu" for smoke runs.
+        run_name:       Optional label recorded in metadata.json and the S3 export
+                        prefix. Useful for comparing runs. Default: "" (not used).
         csv_uri:        Explicit CSV path or S3 key. Defaults to manifest_uri +
                         card_transaction.v1.csv (IBM TabFormer S3 convention).
         vocab_uri:      Explicit vocab path or S3 key. Defaults to manifest_uri +
                         vocab.pkl.
-        output_prefix:  S3 key prefix for checkpoint export.
-                        Default: "pragma-encoder/checkpoints/".
+        output_prefix:  S3 key prefix for all run outputs (checkpoint, metrics,
+                        loss graph, vocab). Default: "pragma-encoder/runs".
         scratch_dir:    Job-local directory for staging downloaded inputs and
                         training outputs. Must be pod-local/ephemeral (not a
                         shared PVC). Default: "/tmp/pragma-run".
@@ -400,17 +443,38 @@ def run_pretraining(
         "--model-variant", _model_variant,
         "--epochs",        str(epochs),
         "--num-workers",   "0",
-        "--batch-size",    "1",
+        "--batch-size",    str(batch_size),
+        "--device",        device,
     ]
     if max_steps > 0:
         _cmd.extend(["--max-steps", str(max_steps)])
     if limit_rows > 0:
         _cmd.extend(["--limit-rows", str(limit_rows)])
-    if _dataset_name:
-        _cmd.extend(["--dataset-name", _dataset_name])
+    # Combine dataset reference and run_name into a single --dataset-name label.
+    # run_name prefix helps distinguish pipeline runs using the same dataset.
+    _parts = [p for p in [run_name, _dataset_name] if p]
+    _label = "/".join(_parts)
+    if _label:
+        _cmd.extend(["--dataset-name", _label])
 
     print(f"[run_pretraining] Running: {' '.join(_cmd)}")
     subprocess.run(_cmd, check=True)
+
+    # ---- Generate loss curve from metrics.jsonl ---------------------------
+    _metrics_path = _output_dir / "metrics.jsonl"
+    _loss_png = _output_dir / "loss.png"
+    if _metrics_path.exists():
+        _plot_cmd = [
+            sys.executable, "-m", "pragma_encoder.evaluation.plot_loss",
+            "--metrics", str(_metrics_path),
+            "--output",  str(_loss_png),
+        ]
+        try:
+            subprocess.run(_plot_cmd, check=True)
+            print(f"[run_pretraining] Loss curve written -> {_loss_png}")
+        except Exception as _exc:  # noqa: BLE001
+            # Non-fatal: loss curve is best-effort (matplotlib may not be installed)
+            print(f"[run_pretraining] Loss curve generation skipped: {_exc}")
 
     # ---- Find final checkpoint and metadata --------------------------------
     _ckpt_files = sorted(_output_dir.glob("checkpoint_epoch*.pt"))
@@ -422,29 +486,54 @@ def run_pretraining(
     _final_ckpt = _ckpt_files[-1]
     _meta_path = _output_dir / "metadata.json"
     print(f"[run_pretraining] Checkpoint produced: {_final_ckpt}")
+    print(f"[run_pretraining] metrics.jsonl present: {_metrics_path.exists()}")
+    print(f"[run_pretraining] loss.png present: {_loss_png.exists()}")
     print(f"[run_pretraining] metadata.json present: {_meta_path.exists()}")
 
-    # ---- Upload checkpoint and metadata to S3 if configured ---------------
+    # ---- Upload all artifacts to S3 if configured -------------------------
     _bucket = _os.environ.get("AWS_S3_BUCKET", "").strip()
     _endpoint = _os.environ.get("AWS_S3_ENDPOINT", "").strip()
     if _bucket and _endpoint and not _is_local(_csv_uri):
         _ep_url = _endpoint if _endpoint.startswith("http") else f"https://{_endpoint}"
-        import boto3 as _boto3  # noqa: PLC0415  # already imported above if S3 used
+        import boto3 as _boto3  # noqa: PLC0415
         _s3 = _boto3.client(
             "s3",
             endpoint_url=_ep_url,
             aws_access_key_id=_os.environ.get("AWS_ACCESS_KEY_ID", "") or None,
             aws_secret_access_key=_os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None,
         )
-        _s3_key = f"{output_prefix.rstrip('/')}/{_model_variant}/{_final_ckpt.name}"
-        _s3.upload_file(str(_final_ckpt), _bucket, _s3_key)
-        print(f"[run_pretraining] Checkpoint uploaded to s3://{_bucket}/{_s3_key}")
-        # Upload metadata.json alongside the checkpoint
+        _run_prefix = output_prefix.rstrip("/") + "/" + _model_variant
+
+        # Upload checkpoint
+        _ckpt_key = f"{_run_prefix}/{_final_ckpt.name}"
+        _s3.upload_file(str(_final_ckpt), _bucket, _ckpt_key)
+        print(f"[run_pretraining] Checkpoint -> s3://{_bucket}/{_ckpt_key}")
+
+        # Upload metrics.jsonl
+        if _metrics_path.exists():
+            _metrics_key = f"{_run_prefix}/metrics.jsonl"
+            _s3.upload_file(str(_metrics_path), _bucket, _metrics_key)
+            print(f"[run_pretraining] metrics.jsonl -> s3://{_bucket}/{_metrics_key}")
+
+        # Upload loss.png
+        if _loss_png.exists():
+            _loss_key = f"{_run_prefix}/loss.png"
+            _s3.upload_file(str(_loss_png), _bucket, _loss_key)
+            print(f"[run_pretraining] loss.png -> s3://{_bucket}/{_loss_key}")
+
+        # Upload vocab.pkl (tokenizer artifact)
+        if local_vocab.exists():
+            _vocab_key = f"{_run_prefix}/vocab.pkl"
+            _s3.upload_file(str(local_vocab), _bucket, _vocab_key)
+            print(f"[run_pretraining] vocab.pkl -> s3://{_bucket}/{_vocab_key}")
+
+        # Upload metadata.json
         if _meta_path.exists():
-            _meta_s3_key = f"{output_prefix.rstrip('/')}/{_model_variant}/metadata.json"
-            _s3.upload_file(str(_meta_path), _bucket, _meta_s3_key)
-            print(f"[run_pretraining] metadata.json uploaded to s3://{_bucket}/{_meta_s3_key}")
-        return _s3_key
+            _meta_key = f"{_run_prefix}/metadata.json"
+            _s3.upload_file(str(_meta_path), _bucket, _meta_key)
+            print(f"[run_pretraining] metadata.json -> s3://{_bucket}/{_meta_key}")
+
+        return _ckpt_key
 
     return str(_final_ckpt)
 
@@ -457,25 +546,115 @@ def run_pretraining(
 def export_checkpoint(
     checkpoint_uri: str,
     model_size: str = "S",
-    export_prefix: str = "pragma-encoder/checkpoints/",
+    export_prefix: str = "pragma-encoder/runs/export",
 ) -> str:
-    """Export model checkpoints and vocabulary to S3.
+    """Copy model artifacts to the canonical S3 export prefix and write export_manifest.json.
 
-    Copies the final checkpoint to the canonical S3 export prefix.
-    S3 path format follows openshift-storage-pattern.md:
-        pragma-encoder/checkpoints/pragma-s/checkpoint_epoch<NNNN>.pt
+    Copies the checkpoint from its run-specific S3 location to the canonical
+    export prefix:
+        <export_prefix>/pragma-{s,m,l}/<filename>
+
+    Also writes export_manifest.json at the export prefix describing all artifact
+    locations.  This is object-storage artifact publication — it is NOT the same
+    as registration with the OpenShift AI model registry API.  Model registry
+    API integration is a follow-up milestone (see docs/tech-debt.md TD-013).
+
+    When checkpoint_uri is a local path (no S3 configured), returns the local
+    checkpoint path unchanged (local-run compatibility).
+
+    S3 credentials come from AWS_* env vars (OpenShift AI Connection).
 
     Args:
-        checkpoint_uri:  S3 URI of the final checkpoint from run_pretraining.
-        model_size:      Model variant ("S", "M", "L").  Sets the S3 key prefix.
-        export_prefix:   Override S3 export prefix.
-                         Default: "pragma-encoder/checkpoints/".
+        checkpoint_uri:  S3 key or local path of the final checkpoint from
+                         run_pretraining.
+        model_size:      Model variant ("S", "M", "L").  Sets the export prefix.
+        export_prefix:   Canonical S3 export prefix.
+                         Default: "pragma-encoder/runs/export".
 
     Returns:
-        export_uri: S3 URI of the exported model directory.
+        export_manifest_uri: S3 key of export_manifest.json, or local checkpoint
+                             path if S3 is not configured.
     """
-    # Smoke stub: return a synthetic export URI.
-    # Real implementation: copy checkpoint_uri to S3 canonical export prefix via boto3.
-    # Format: pragma-encoder/checkpoints/pragma-{s,m,l}/checkpoint_epoch<NNNN>.pt
-    # S3 export is a future milestone — do not implement here.
-    return f"{export_prefix}pragma-{model_size.lower()}/{checkpoint_uri.rsplit('/', 1)[-1]}"
+    import json as _json
+    import os as _os
+
+    _model_variant_map = {"S": "pragma-s", "M": "pragma-m", "L": "pragma-l"}
+    _model_variant = _model_variant_map.get(model_size, f"pragma-{model_size.lower()}")
+
+    _bucket = _os.environ.get("AWS_S3_BUCKET", "").strip()
+    _endpoint = _os.environ.get("AWS_S3_ENDPOINT", "").strip()
+
+    # Local path — no S3 configured or local run.
+    if not _bucket or not _endpoint or checkpoint_uri.startswith("/"):
+        return checkpoint_uri
+
+    _ep_url = _endpoint if _endpoint.startswith("http") else f"https://{_endpoint}"
+    try:
+        import boto3 as _boto3  # noqa: PLC0415
+    except ImportError:
+        print("[export_checkpoint] boto3 not available — skipping S3 export.")
+        return checkpoint_uri
+
+    _s3 = _boto3.client(
+        "s3",
+        endpoint_url=_ep_url,
+        aws_access_key_id=_os.environ.get("AWS_ACCESS_KEY_ID", "") or None,
+        aws_secret_access_key=_os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None,
+    )
+
+    _dest_prefix = f"{export_prefix.rstrip('/')}/{_model_variant}"
+
+    # Copy checkpoint from run prefix to export prefix.
+    _ckpt_filename = checkpoint_uri.rsplit("/", 1)[-1]
+    _dest_ckpt_key = f"{_dest_prefix}/{_ckpt_filename}"
+    try:
+        _s3.copy_object(
+            Bucket=_bucket,
+            CopySource={"Bucket": _bucket, "Key": checkpoint_uri},
+            Key=_dest_ckpt_key,
+        )
+        print(f"[export_checkpoint] Checkpoint -> s3://{_bucket}/{_dest_ckpt_key}")
+    except Exception as _exc:  # noqa: BLE001
+        print(f"[export_checkpoint] copy_object failed (checkpoint may be local): {_exc}")
+        _dest_ckpt_key = checkpoint_uri
+
+    # Derive sibling artifact keys from the run prefix (parent of checkpoint).
+    _run_prefix = "/".join(checkpoint_uri.split("/")[:-1])
+    _artifacts: dict = {
+        "checkpoint": f"s3://{_bucket}/{_dest_ckpt_key}",
+        "model_variant": _model_variant,
+    }
+    for _name, _dest_name in [
+        ("metrics.jsonl", "metrics.jsonl"),
+        ("loss.png", "loss.png"),
+        ("vocab.pkl", "vocab.pkl"),
+        ("metadata.json", "metadata.json"),
+    ]:
+        _src_key = f"{_run_prefix}/{_name}"
+        _dest_key = f"{_dest_prefix}/{_dest_name}"
+        try:
+            _s3.copy_object(
+                Bucket=_bucket,
+                CopySource={"Bucket": _bucket, "Key": _src_key},
+                Key=_dest_key,
+            )
+            _artifacts[_name.replace(".", "_").replace("-", "_")] = f"s3://{_bucket}/{_dest_key}"
+            print(f"[export_checkpoint] {_name} -> s3://{_bucket}/{_dest_key}")
+        except Exception:  # noqa: BLE001
+            pass  # artifact may not exist (e.g. loss.png if matplotlib absent)
+
+    _artifacts["note"] = (
+        "Object-storage artifact publication. "
+        "Full OpenShift AI model registry API registration is a follow-up (TD-013)."
+    )
+
+    # Write export_manifest.json
+    _manifest_key = f"{_dest_prefix}/export_manifest.json"
+    _s3.put_object(
+        Bucket=_bucket,
+        Key=_manifest_key,
+        Body=_json.dumps(_artifacts, indent=2).encode(),
+        ContentType="application/json",
+    )
+    print(f"[export_checkpoint] export_manifest.json -> s3://{_bucket}/{_manifest_key}")
+    return _manifest_key

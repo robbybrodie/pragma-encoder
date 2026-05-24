@@ -96,6 +96,10 @@ def pragma_pretraining_pipeline(
     nodes: int = 1,
     max_steps: int = 0,
     limit_rows: int = 0,
+    batch_size: int = 32,
+    device: str = "auto",
+    output_prefix: str = "pragma-encoder/runs",
+    run_name: str = "",
 ) -> None:
     """Full PRAGMA pretraining pipeline: all five sec.2.4 stages always run.
 
@@ -105,21 +109,32 @@ def pragma_pretraining_pipeline(
     To resume training from an already-prepared DatasetManifest URI (stages
     3-5 only), use pragma_train_from_manifest_pipeline instead.
 
+    Note: training_image is a compile-time parameter, not a runtime pipeline
+    parameter. Set PRAGMA_TRAINING_IMAGE env var before calling compile().
+
     Args:
-        dataset_name: Adapter registry key, e.g. "ibm-tabformer".
-                      Resolved via src/data/adapters/__init__.py::get_adapter.
-        model_size:   Model variant "S", "M", or "L" (case-sensitive).
-                      Maps to PRAGMAConfig.pragma_s/m/l() (Table 1).
-                      Default: "S" (PRAGMA-S, ~10M parameters).
-        epochs:       Number of pretraining epochs.  Default: 10.
-        nodes:        Number of training nodes.
-                      1 = single-node (pytorchjob-pragma-s.yaml),
-                      2 = two-node DDP (pytorchjob-pragma-s-2node.yaml).
-                      Default: 1.
-        max_steps:    Stop after this many training steps (0 = train all epochs).
-                      Use for smoke/tiny runs without changing epochs.
-        limit_rows:   Cap the training dataset to this many customers
-                      (0 = use all). Use for smoke/tiny runs.
+        dataset_name:   Adapter registry key, e.g. "ibm-tabformer".
+                        Resolved via src/data/adapters/__init__.py::get_adapter.
+        model_size:     Model variant "S", "M", or "L" (case-sensitive).
+                        Maps to PRAGMAConfig.pragma_s/m/l() (Table 1).
+                        Default: "S" (PRAGMA-S, ~10M parameters).
+        epochs:         Number of pretraining epochs.  Default: 10.
+        nodes:          Number of training nodes.
+                        1 = single-node (pytorchjob-pragma-s.yaml),
+                        2 = two-node DDP (pytorchjob-pragma-s-2node.yaml).
+                        Default: 1.
+        max_steps:      Stop after this many training steps (0 = train all epochs).
+                        Use for smoke/tiny runs without changing epochs.
+        limit_rows:     Cap the training dataset to this many customers
+                        (0 = use all). Use for smoke/tiny runs.
+        batch_size:     Training batch size per device. Default: 32.
+                        Use 1-4 for CPU or small-GPU smoke runs.
+        device:         Device for training: "auto", "cuda", "cpu", "mps".
+                        Default: "auto" (selects CUDA > MPS > CPU).
+        output_prefix:  S3 key prefix for all run outputs (checkpoint, metrics,
+                        loss graph, vocab). Default: "pragma-encoder/runs".
+        run_name:       Optional label to identify this run in S3 and metadata.
+                        Default: "" (not used).
     """
     # Stage 1: Prepare dataset via DatasetAdapter registry
     prepare_op = prepare_dataset(
@@ -131,9 +146,10 @@ def pragma_pretraining_pipeline(
     # Stage 2: Upload prepared artifacts to S3 (idempotent)
     upload_op = upload_artifacts(
         manifest_uri=prepare_op.output,
+        output_prefix=output_prefix,
     )
 
-    # Stage 3: Configure and submit KFTO PyTorchJob
+    # Stage 3: Configure and submit KFTO PyTorchJob (stub — distributed path)
     submit_pytorchjob(
         manifest_uri=upload_op.output,
         model_size=model_size,
@@ -149,12 +165,17 @@ def pragma_pretraining_pipeline(
         epochs=epochs,
         max_steps=max_steps,
         limit_rows=limit_rows,
+        batch_size=batch_size,
+        device=device,
+        output_prefix=output_prefix,
+        run_name=run_name,
     )
 
     # Stage 5: Export model checkpoints and outputs to S3
     export_checkpoint(
         checkpoint_uri=train_op.output,
         model_size=model_size,
+        export_prefix=output_prefix + "/export",
     )
 
 

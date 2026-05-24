@@ -647,3 +647,72 @@ When all acceptance criteria are met, one of:
 - Level 5 tests: `tests/openshift/test_05_s3_checkpoint_resume.py`
 - Code: `src/pragma_encoder/training/checkpoints.py`
 - Upstream: kubeflow/trainer PR #2389 (Training Operator v1 source removal)
+
+---
+
+## TD-013: Model checkpoint not registered with OpenShift AI Model Registry API
+
+**Date:** 2026-05-25
+**Severity:** Medium (artifact discoverability)
+**Status:** Open — blocked on RHOAI Model Registry GA availability
+
+### Description
+
+`export_checkpoint` (Stage 5 of the §2.4 production pipeline) publishes model
+artifacts to S3 object storage under a canonical export prefix:
+
+```
+pragma-encoder/runs/export/pragma-{s,m,l}/
+    checkpoint_epoch*.pt
+    metrics.jsonl
+    loss.png
+    vocab.pkl
+    metadata.json
+    export_manifest.json
+```
+
+`export_manifest.json` records all S3 URIs and is the current artifact
+publication contract. This is object-storage artifact publication — it is NOT
+registration with the OpenShift AI Model Registry API
+(`modelregistries.modelregistry.opendatahub.io`).
+
+The OpenShift AI Model Registry provides:
+- A versioned catalogue of registered models
+- API-driven artifact lineage (run → model → version)
+- Integration with OpenShift AI Model Serving (KServe)
+- RBAC-governed access to model metadata
+
+### Risk
+- Checkpoints are discoverable only by knowing the S3 prefix convention
+- No programmatic model lineage from pipeline run to deployed model
+- Model Serving requires manual configuration without registry integration
+- `export_manifest.json` is a workaround, not the platform's intended model
+  publication mechanism
+
+### Resolution
+
+When OpenShift AI Model Registry is GA in the deployment environment:
+
+1. Add `register_model()` call at the end of `export_checkpoint` or as a Stage 6
+2. Use the Model Registry REST API (not S3 directly) to register:
+   - `RegisteredModel` — the PRAGMA-{S,M,L} model family
+   - `ModelVersion` — the specific training run (metadata from `metadata.json`)
+   - `ModelArtifact` — the S3 URI of the checkpoint
+3. Update `export_checkpoint` docstring to describe both S3 export and registry registration
+4. Remove the `export_manifest.json` note that flags this as non-registry publication
+5. Add Level 8 integration test: `tests/openshift/test_08_model_registry_registration.py`
+
+### Acceptance Criteria
+
+1. `export_checkpoint` registers the checkpoint with the Model Registry API
+2. `oc get registeredmodels -n pragma-encoder` shows the PRAGMA-S model after a pipeline run
+3. `oc get modelversions -n pragma-encoder` shows the version with correct S3 URI
+4. Level 8 test asserts `SUCCEEDED` KFP Run AND model version queryable from registry API
+5. `export_manifest.json` note updated (or removed) to reflect full registry integration
+
+### References
+
+- Code: `pipeline/components_pragma.py :: export_checkpoint` (current implementation)
+- Current artifact manifest: `export_manifest.json` at the S3 export prefix
+- OpenShift AI Model Registry docs: `docs.redhat.com` — Model Registry section
+- KServe integration: future milestone (fine-tuning and serving pipeline)

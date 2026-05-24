@@ -17,6 +17,15 @@ Distributed behaviour:
   - On startup with --resume, the module downloads the latest checkpoint
     from S3 (if --s3-checkpoint-prefix is set) before training begins
 
+Metrics output:
+  - <output_dir>/metrics.jsonl is written by rank 0 at every training step
+    and at every epoch boundary. Each line is a JSON object with keys:
+      step, epoch, train_loss, learning_rate, timestamp
+    Checkpoint events include a non-null checkpoint_path field.
+  - <output_dir>/metadata.json is written at training completion.
+  - Use ``python -m pragma_encoder.evaluation.plot_loss`` to generate
+    a loss curve PNG from metrics.jsonl.
+
 Single-process usage:
     pragma-encoder-train \\
         --csv-path data/tabformer/card_transaction.v1.csv \\
@@ -80,6 +89,23 @@ logger = logging.getLogger(__name__)
 # Number of events per sample — a 50-event window fits most customers and
 # is well within PRAGMA-S's max_events=6500 capacity.
 _NE_MAX = 50
+
+
+# ---------------------------------------------------------------------------
+# Metrics helpers
+# ---------------------------------------------------------------------------
+
+def _append_metrics(path: "Path | None", record: dict) -> None:
+    """Append one record to metrics.jsonl (rank-0 only; no-op if path is None).
+
+    Each call opens, appends, and closes the file so the JSONL is always
+    flushed to disk — callers do not need to manage a file handle.
+    """
+    if path is None:
+        return
+    with open(path, "a") as _f:
+        _f.write(json.dumps(record) + "\n")
+
 
 _CONFIGS = {
     "pragma-s": PRAGMAConfig.pragma_s,
@@ -324,6 +350,9 @@ def main(argv: list[str] | None = None) -> int:
             sys.exit(1)
         output_dir.mkdir(parents=True, exist_ok=True)
 
+    # metrics.jsonl — rank 0 only; None on worker ranks (no-op in _append_metrics)
+    metrics_file: Optional[Path] = (output_dir / "metrics.jsonl") if is_rank0 else None
+
     # All ranks wait until rank 0 has validated paths
     if distributed:
         dist.barrier()
@@ -534,6 +563,18 @@ def main(argv: list[str] | None = None) -> int:
             epoch_steps += 1
             global_step += 1
 
+            # Write per-step metrics to metrics.jsonl (rank 0 only)
+            if is_rank0:
+                _current_lr = optimizer.param_groups[0]["lr"]
+                _append_metrics(metrics_file, {
+                    "step": global_step,
+                    "epoch": epoch + 1,
+                    "train_loss": round(loss_val, 6),
+                    "learning_rate": _current_lr,
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                    "checkpoint_path": None,
+                })
+
             if args.max_steps > 0 and global_step >= args.max_steps:
                 if is_rank0:
                     logger.info(f"Reached --max-steps {args.max_steps}; stopping early.")
@@ -556,6 +597,14 @@ def main(argv: list[str] | None = None) -> int:
                 f"Epoch {epoch + 1}/{args.epochs} complete — "
                 f"avg_loss={avg_loss:.4f}  steps={epoch_steps}"
             )
+            # Write epoch-end summary to metrics.jsonl
+            _append_metrics(metrics_file, {
+                "step": global_step,
+                "epoch": epoch + 1,
+                "event": "epoch_end",
+                "avg_train_loss": round(avg_loss, 6),
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            })
 
         # ---- Checkpoint (rank 0 only) -------------------------------------
         if is_rank0 and (epoch + 1) % args.checkpoint_every == 0:
@@ -573,6 +622,14 @@ def main(argv: list[str] | None = None) -> int:
                 ckpt_path,
             )
             logger.info(f"Checkpoint saved -> {ckpt_path}")
+            # Record checkpoint event in metrics.jsonl
+            _append_metrics(metrics_file, {
+                "step": global_step,
+                "epoch": epoch + 1,
+                "event": "checkpoint",
+                "checkpoint_path": str(ckpt_path),
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            })
 
             if args.s3_checkpoint_prefix:
                 upload_checkpoint_if_rank0(ckpt_path, args.s3_checkpoint_prefix, is_rank0=True)
@@ -592,6 +649,7 @@ def main(argv: list[str] | None = None) -> int:
         # dataset_name records the original source reference (S3 URI, dataset label)
         # set by the caller via --dataset-name; empty string for direct local runs.
         _dataset_ref = args.dataset_name if args.dataset_name else str(csv_path)
+        _metrics_jsonl = str(output_dir / "metrics.jsonl")
         metadata: dict = {
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
             "model_variant": args.model_variant,
@@ -604,6 +662,7 @@ def main(argv: list[str] | None = None) -> int:
             },
             "output_dir": str(output_dir),
             "final_checkpoint": final_checkpoint,
+            "metrics_jsonl": _metrics_jsonl,
             "args": _safe_args_for_metadata(args),
         }
         metadata_path = output_dir / "metadata.json"
