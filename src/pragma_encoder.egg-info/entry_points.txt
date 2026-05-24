@@ -1,2 +1,0 @@
-[console_scripts]
-pragma-encoder-train = pragma_encoder.training.train:main

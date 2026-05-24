@@ -397,20 +397,14 @@ connection in this deployment.
 
 | Env var | Source | Description |
 |---|---|---|
-| `MODEL_REGISTRY_BUCKET` | Secret / Connection | S3 bucket name |
-| `MODEL_REGISTRY_ENDPOINT` | Secret / Connection | S3 endpoint URL (e.g. `https://s3.example.com`) |
-| `MODEL_REGISTRY_ACCESS_KEY` | Secret / Connection | S3 access key ID |
-| `MODEL_REGISTRY_SECRET_KEY` | Secret / Connection | S3 secret access key |
+| `AWS_S3_BUCKET` | Connection (annotated Secret) / env | S3 bucket name (required) |
+| `AWS_S3_ENDPOINT` | Connection (annotated Secret) / env | S3 endpoint URL including scheme, e.g. `https://s3.example.com` (required) |
+| `AWS_ACCESS_KEY_ID` | Connection (annotated Secret) / env | S3 access key ID (optional) |
+| `AWS_SECRET_ACCESS_KEY` | Connection (annotated Secret) / env | S3 secret access key (optional) |
 
-**Alignment gap:** Standard RHOAI object-storage Connections inject `AWS_*` env vars
-(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET`, `AWS_S3_ENDPOINT`,
-`AWS_DEFAULT_REGION`). The current code uses `MODEL_REGISTRY_*` naming.
-
-When migrating to a formal RHOAI Connection, either:
-- Create the Connection with custom key names (`MODEL_REGISTRY_*`), or
-- Update `checkpoints.py` to read `AWS_S3_BUCKET` / `AWS_S3_ENDPOINT` etc.
-
-This is a future alignment task, not a blocker for current testing.
+**TD-010 resolved (2026-05-22).** The code uses native RHOAI S3 Connection env var
+names (`AWS_*`). The legacy `MODEL_REGISTRY_*` naming has been removed from all code,
+manifests, and secrets. Schema source of truth: `oc get cm s3 -n redhat-ods-applications -o yaml`.
 
 ### Pipeline / DSPA
 
@@ -466,24 +460,26 @@ expected keys. The sealed production Secret is at
 | `CheckpointStore` (Protocol) | Interface: `latest_key()`, `fetch()`, `put()` |
 | `LocalCheckpointStore` | Filesystem operations only — no S3 calls |
 | `S3CheckpointStore` | boto3 S3 operations — no local filesystem assumptions beyond `output_dir` |
-| `build_checkpoint_store()` | Factory: reads `MODEL_REGISTRY_*` env vars, returns correct adapter |
+| `build_checkpoint_store()` | Factory: reads `AWS_S3_BUCKET`/`AWS_S3_ENDPOINT` env vars, returns correct adapter |
 | `resolve_resume_checkpoint()` | Distributed rank coordination — calls storage adapter, does not know transport details |
 | `train.py` | Calls adapter `put()` after each checkpoint save; calls `resolve_resume_checkpoint()` on resume |
 
 ### What the boundary prevents
 
 - Training code does not contain S3-specific logic — it calls the `CheckpointStore` interface
-- The `CheckpointStore` adapters do not know which Kubernetes Secret supplied `MODEL_REGISTRY_*`
+- The `CheckpointStore` adapters do not know which Kubernetes Secret supplied the `AWS_*` env vars
 - `pragma-workbench-env` (the Secret name) does not appear in `src/pragma_encoder` — it is a
   platform fixture (`openshift/secrets/`, `tests/openshift/fixtures/`) only
 - `LocalCheckpointStore.put()` is a deliberate no-op — the training loop saves files locally
   before calling `put()`, so there is nothing to persist again
+- The `MODEL_REGISTRY_*` naming described in earlier drafts of this document has been fully
+  removed (TD-010 resolved). All code now uses native `AWS_*` env var names.
 
 ### Storage adapter selection logic
 
 ```
 build_checkpoint_store(output_dir, s3_prefix)
-  ├── MODEL_REGISTRY_BUCKET set AND MODEL_REGISTRY_ENDPOINT set AND s3_prefix non-empty
+  ├── AWS_S3_BUCKET set AND AWS_S3_ENDPOINT set AND s3_prefix non-empty
   │   └── returns S3CheckpointStore(config, s3_prefix)
   └── otherwise
       └── returns LocalCheckpointStore(output_dir)

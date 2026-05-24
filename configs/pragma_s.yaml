@@ -2,7 +2,9 @@
 # Suitable for research, development, and proof-of-concept training.
 #
 # Reference: Ostroukhov et al. (2026), Section 2.3.1
-# Usage: python scripts/train_pragma.py --config configs/pragma_s.yaml
+# Usage: pragma-encoder-train --config configs/pragma_s.yaml
+#   or:  python -m pragma_encoder.training.train --config configs/pragma_s.yaml
+#   (scripts/train_pragma.py is a compatibility wrapper — use the installed entrypoint)
 
 model_name: pragma-s
 description: "PRAGMA Small — ~10M parameters, for research and development"
