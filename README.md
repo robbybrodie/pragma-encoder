@@ -146,8 +146,9 @@ scripts/        Training and evaluation entrypoints
 # Install
 pip install -e ".[dev]"
 
-# Run tests
-pytest tests/ -v
+# Run tests (Tier 1 + Tier 2 — no cluster, no GPU required)
+pytest tests/ --ignore=tests/openshift/ -q
+# See docs/testing-strategy.md for the full four-tier test model and opt-in runtime tests
 
 # Explore architecture
 python -c "
