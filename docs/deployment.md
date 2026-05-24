@@ -38,7 +38,7 @@ Git (pragma-implementation branch)
 | Sealed file | Decrypts to | Contents |
 |---|---|---|
 | `registry-pull-secret.sealed.yaml` | `pragma-registry` | NGC dockercfg for nvcr.io |
-| `workbench-runtime-secret.sealed.yaml` | `pragma-workbench-env` | NGC key, S3 creds, AI platform URL |
+| `workbench-runtime-secret.sealed.yaml` | `pragma-workbench-env` | AWS_* S3 credentials (OpenShift AI Connection) |
 
 ---
 
