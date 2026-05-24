@@ -275,10 +275,10 @@ PyTorchJob, a batch Job, or locally — it reads standard `torchrun` env vars
 |---|---|
 | What it is | Unified distributed training API replacing per-framework CRDs |
 | API | `TrainJob`, `apiVersion: trainer.kubeflow.org/v1alpha1` |
-| RHOAI 3.3 status | **Technology Preview** (introduced in RHOAI 3.2 TP) |
+| RHOAI 3.3/3.4 status | **Technology Preview** (introduced in RHOAI 3.2; available in RHOAI 3.4 — not GA) |
 | Also introduces | `TrainingRuntime`, `ClusterTrainingRuntime` |
 
-**RHOAI 3.3 status: Tech Preview. Do not use in production.**
+**Technology Preview in RHOAI 3.3/3.4. Do not use in production until GA is confirmed in the target deployment.**
 
 Kubeflow Trainer v2 replaces separate per-framework CRDs (`PyTorchJob`,
 `TFJob`, etc.) with a unified `TrainJob` resource. A Python SDK allows
@@ -286,13 +286,14 @@ programmatic job creation.
 
 **Mapping to pragma-encoder:**
 
-The repo currently uses `PyTorchJob` (`kubeflow.org/v1`) — the GA API.
-`TrainJob` is documented here as the **forward-looking direction to evaluate**
-once it reaches GA in a future RHOAI release.
+The repo currently uses `PyTorchJob` (`kubeflow.org/v1`) — the current proven
+project path. `TrainJob` is available in RHOAI 3.4 as Technology Preview and
+is documented here as the **forward evaluation path**.
 
-Do not introduce `TrainJob` into production manifests or CI tests until it
-is GA in RHOAI. When evaluating TrainJob, place examples under
+Do not introduce `TrainJob` into production manifests or CI tests until GA is
+confirmed in the target deployment. Evaluation fixture:
 `tests/openshift/fixtures/trainjob-example.yaml`.
+See TD-012 in `docs/tech-debt.md` for the full evaluation plan.
 
 See ADR 005 (`docs/decisions/005-training-orchestration.md`) for the
 GA-only API constraint.
@@ -571,14 +572,14 @@ They are not owned by `pragma_encoder`.
 | Approach | API | RHOAI 3.3 status | Repo status |
 |---|---|---|---|
 | **PyTorchJob** | `kubeflow.org/v1` | **GA** | Current — all tests and manifests use this |
-| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Tech Preview** | Not used — see ADR 005 |
+| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Technology Preview** (available in RHOAI 3.4) | evaluation fixture only — see ADR 005 and TD-012 |
 
-Do not remove PyTorchJob tests before there is a GA TrainJob replacement.
+Do not remove PyTorchJob tests before there is a confirmed GA TrainJob replacement.
 
-When TrainJob reaches GA in a future RHOAI release:
+When TrainJob is confirmed GA in the target deployment:
 1. Write a new ADR superseding ADR 005
-2. Add TrainJob examples under `tests/openshift/fixtures/`
-3. Implement Level 4b tests against TrainJob
+2. TrainJob evaluation fixture exists at `tests/openshift/fixtures/trainjob-example.yaml`
+3. Implement Level 4b/5b tests against TrainJob
 4. Keep PyTorchJob tests until TrainJob smoke is green
 
 ---

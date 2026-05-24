@@ -46,8 +46,8 @@ dashboard (GUI), Workbench, `oc`, and tests interact with those same resources.
 | **Pipeline run** | KFP PipelineRun (dynamic) | — | **No** — dynamic runtime object | GA | Created by RHOAI GUI, KFP API, or workbench SDK; not ArgoCD-owned by default |
 | **Workbench image** | `BuildConfig` + `ImageStream` (OpenShift S2I) | `openshift/gitops/notebook-image/` | Yes — wave 2 | GA | Builds custom JupyterLab image from `openshift/notebook-image/Dockerfile` |
 | **Training image** | OCI image (built by `oc start-build`) | `openshift/training/Dockerfile.training` | No — built manually or by CI | GA | Installs `pragma_encoder` wheel; used by all training jobs |
-| **Distributed training (current GA)** | `PyTorchJob` (`kubeflow.org/v1`) | `openshift/training/pytorchjob-pragma-s.yaml`, `pytorchjob-pragma-s-2node.yaml`, `pytorchjob-pragma-m.yaml` | No — one-shot runtime job | GA (RHOAI 3.4) | All manifests use wheel-based entrypoint; no git clone |
-| **Distributed training (future/evaluation)** | `TrainJob` (`trainer.kubeflow.org/v1alpha1`) | `tests/openshift/fixtures/trainjob-example.yaml` | No — example only | **Tech Preview** (RHOAI 3.4) | Not for production use; evaluating for post-GA adoption |
+| **Distributed training (current project path)** | `PyTorchJob` (`kubeflow.org/v1`) | `openshift/training/pytorchjob-pragma-s.yaml`, `pytorchjob-pragma-s-2node.yaml`, `pytorchjob-pragma-m.yaml` | No — one-shot runtime job | current proven project path; verify CRD availability on target cluster | All manifests use wheel-based entrypoint; no git clone; upstream v1 source removed Feb 2025 — verify `oc api-resources \| grep kubeflow` before Level 5 tests |
+| **Distributed training (forward evaluation path)** | `TrainJob` (`trainer.kubeflow.org/v1alpha1`) | `tests/openshift/fixtures/trainjob-example.yaml` | No — example only | **Technology Preview** in RHOAI 3.4 unless GA confirmed | available as Kubeflow Trainer v2; evaluate platform-native checkpointing before replacing current PyTorchJob path |
 | **Model serving** | `InferenceService` (`serving.kserve.io/v1beta1`) + `ServingRuntime` | `openshift/serving/inference-service.yaml`, `openshift/serving/serving-runtime.yaml` | Yes, when serving is standardized | GA (KServe) | Future work; currently embedding extraction is batch-only |
 | **GitOps controller** | ArgoCD `Application` (`argoproj.io/v1alpha1`) | `openshift/argocd/application.yaml` | Bootstrapped manually once; then self-managed | GA | Syncs `openshift/gitops/` to `pragma-encoder` namespace |
 
@@ -155,9 +155,9 @@ HardwareProfile when the profile is applied to the cluster.
 | Approach | API | RHOAI 3.4 status | Repo status |
 |---|---|---|---|
 | **PyTorchJob** | `kubeflow.org/v1` | **GA** (cluster verification required — see below) | Current — all production manifests and tests |
-| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Tech Preview** | Evaluation example — `tests/openshift/fixtures/trainjob-example.yaml` |
+| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Technology Preview** in RHOAI 3.4 | Evaluation example — `tests/openshift/fixtures/trainjob-example.yaml` |
 
-**PyTorchJob is the current, proven production path. Do not use TrainJob until it is GA.**
+**PyTorchJob is the current proven project path. TrainJob is available in RHOAI 3.4 as Technology Preview; do not use in production until GA is confirmed in the target deployment.**
 
 ### PyTorchJob upstream deprecation notice (2026-05-24)
 

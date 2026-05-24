@@ -731,11 +731,11 @@ class TestPyTorchJobPrimitives:
 
 
 class TestTrainJobTechPreview:
-    """TrainJob is clearly marked Tech Preview and must not appear in production manifests.
+    """TrainJob is clearly marked Technology Preview and must not appear in production manifests.
 
-    Kubeflow Trainer v2 / TrainJob is Tech Preview in RHOAI 3.3.
+    Kubeflow Trainer v2 / TrainJob is Technology Preview in RHOAI 3.3/3.4.
     It must not be used in production manifests or CI tests.
-    The fixture exists solely as a documented future/evaluation reference.
+    The fixture exists as a documented evaluation reference.
 
     Reference: docs/openshift-ai-primitives.md §Distributed Training
     Reference: docs/openshift-ai-3.3-alignment.md §Kubeflow Trainer v2 / TrainJob
@@ -769,7 +769,7 @@ class TestTrainJobTechPreview:
         )
         assert has_marker, (
             "trainjob-example.yaml must contain 'TECHNOLOGY PREVIEW' or 'Tech Preview'. "
-            "TrainJob is not GA in RHOAI 3.3 and must not be used in production. "
+            "TrainJob is Technology Preview in RHOAI 3.3/3.4 and must not be used in production. "
             "Reference: docs/openshift-ai-3.3-alignment.md §Kubeflow Trainer v2"
         )
 
@@ -784,8 +784,8 @@ class TestTrainJobTechPreview:
             ]
             assert len(non_comment_lines) == 0, (
                 f"{path.name}: references trainer.kubeflow.org (Kubeflow Trainer v2). "
-                "Production manifests must use kubeflow.org/v1 (PyTorchJob — GA). "
-                "TrainJob is Tech Preview in RHOAI 3.3. "
+                "Production manifests must use kubeflow.org/v1 (PyTorchJob — current path). "
+                "TrainJob is Technology Preview in RHOAI 3.3/3.4. "
                 "Reference: ADR 005, docs/openshift-ai-primitives.md §Distributed Training"
             )
 
