@@ -558,3 +558,92 @@ Gate with `RUN_LOCAL_TRAINING_SMOKE=1` to keep the default suite data-free.
 - Tests: `tests/test_checkpoint_resume.py::TestLocalCheckpointRoundTrip`
 - Docs: `docs/training-guide.md` — Local training section
 - Code: `src/pragma_encoder/training/train.py` — `pragma-encoder-train` entrypoint
+
+---
+
+## TD-012: Evaluate RHOAI 3.4 TrainJob + Kubeflow Trainer v2 checkpointing
+
+**Date:** 2026-05-24
+**Severity:** Medium (affects forward platform path; current PyTorchJob path unaffected)
+**Status:** Open — evaluation pending; PyTorchJob path remains production
+
+### Description
+
+Kubeflow Training Operator v1 source code has been **removed** from the upstream
+`kubeflow/trainer` repository (Feb 2025, PR #2389). Kubeflow docs redirect all
+v1 pages to v2 with deprecation notices. RHOAI 3.4 ships `ClusterTrainingRuntime`
+objects for Kubeflow Trainer v2 (TrainJob), indicating the platform direction.
+
+Whether RHOAI 3.4 still ships `kubeflow.org/v1` CRDs for backward compatibility
+is **unverified on the live cluster**. If v1 CRDs are absent, Level 5 cluster
+tests will fail immediately.
+
+Kubeflow Trainer v2 introduces resilient checkpointing (since RHOAI 3.2):
+- **JIT (Just-In-Time):** saves on SIGTERM/preemption before pod exits
+- **Periodic:** saves at a configured time/step interval
+
+The SDK-native checkpointing (automatic, no custom code) applies only to
+HuggingFace trainers. PRAGMA uses a custom PyTorch loop — the following gaps
+must be closed before TrainJob + platform-managed checkpointing is viable:
+
+| Gap | Description | Effort |
+|---|---|---|
+| JIT checkpoint on SIGTERM | No SIGTERM handler in `train.py` | Medium |
+| Checkpoint dir from env | SDK injects config for HF trainers; custom loops must read manually | Medium |
+| PVC checkpoint backend | ADR 003 says no data PVCs; PVC backend requires new ADR | Architectural |
+| S3 checkpoint backend via TrainJob | Not confirmed from official docs | [VERIFY] |
+| Interval-based checkpointing | Epoch-end only today; step-count hook needed | Low-Medium |
+
+The current Level 5 S3 checkpoint/resume path (`checkpoints.py`) remains valid
+as the production path for:
+- RHOAI 3.3/3.4 PyTorchJob (if still available on cluster)
+- Any future TrainJob + application-managed S3 path
+- Local training (no cluster)
+
+Level 5 is **not** the forward platform path if TrainJob GA + PVC checkpointing
+satisfies requirements and ADR 003 is superseded.
+
+### Acceptance criteria
+
+All of the following must be verified on a live RHOAI 3.4 cluster before
+changing the production training path:
+
+1. `oc api-resources | grep kubeflow` — `pytorchjobs` CRD is present (or absent, which triggers urgent migration)
+2. `oc api-resources | grep trainer` — `trainjobs` CRD is present at `trainer.kubeflow.org/v1alpha1`
+3. TrainJob status confirmed: GA or still Tech Preview in RHOAI 3.4
+4. Submit a minimal TrainJob using `pragma-encoder-training` image — completes successfully
+5. PVC checkpoint backend: checkpoint written to PVC, resumed in second run
+6. S3 checkpoint backend: confirmed or ruled out from RHOAI 3.4 docs/cluster test
+7. JIT checkpoint on SIGTERM: SIGTERM sent to training pod, checkpoint saved before exit
+8. PRAGMA custom loop: define wiring pattern for reading checkpoint config from env
+9. Results documented; decision matrix in `docs/rhoai-3.4-trainjob-checkpointing.md §8` updated
+10. New ADR written (supersedes ADR 005) if TrainJob adoption is recommended
+
+### Resolution
+
+When all acceptance criteria are met, one of:
+
+**Option A — TrainJob + PVC backend adopted:**
+- New ADR superseding ADR 005
+- New Level 4b/5b cluster smoke test for TrainJob + PVC checkpoint
+- `checkpoints.py` S3 path retained as local/fallback path only
+- Production PyTorchJob manifests replaced with TrainJob manifests
+
+**Option B — TrainJob + S3 backend adopted (application-managed retained):**
+- New ADR noting TrainJob replaces PyTorchJob; S3 checkpointing unchanged
+- `checkpoints.py` remains production code
+- TrainJob manifests created in `openshift/training/`
+
+**Option C — PyTorchJob retained (if still GA in RHOAI 3.4+):**
+- Close this TD as "WONTFIX / deferred"
+- Monitor RHOAI release notes for CRD removal timeline
+- Continue Level 5 as-is
+
+### References
+- Evaluation doc: `docs/rhoai-3.4-trainjob-checkpointing.md` (full responsibility table)
+- Fixture: `tests/openshift/fixtures/trainjob-example.yaml` (updated for RHOAI 3.4 eval)
+- ADR 005: `docs/decisions/005-training-orchestration.md`
+- ADR 003: `docs/decisions/003-workbench-training-api.md` (no PVC canonical storage)
+- Level 5 tests: `tests/openshift/test_05_s3_checkpoint_resume.py`
+- Code: `src/pragma_encoder/training/checkpoints.py`
+- Upstream: kubeflow/trainer PR #2389 (Training Operator v1 source removal)

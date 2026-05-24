@@ -1,26 +1,86 @@
-# Kubeflow Trainer v2 / TrainJob — example only, NOT for production use
+# Kubeflow Trainer v2 / TrainJob — RHOAI 3.4 Checkpoint Evaluation Example
 #
-# OpenShift AI 3.3 primitive: TrainJob
+# OpenShift AI primitive: TrainJob
 # API: apiVersion: trainer.kubeflow.org/v1alpha1, kind: TrainJob
-# Status: TECHNOLOGY PREVIEW in RHOAI 3.3
+# Status: TECHNOLOGY PREVIEW in RHOAI 3.4
 #
 # WARNING: Technology Preview features are not supported with Red Hat production
 # SLAs and might not be functionally complete. Do NOT use in production.
 # Do NOT reference this file in CI or production manifests.
 #
-# This file documents the RHOAI 3.3 forward-looking direction for distributed
-# training. Kubeflow Trainer v2 replaces separate per-framework CRDs (PyTorchJob,
-# TFJob, etc.) with a unified TrainJob resource.
+# ── Evaluation Target ───────────────────────────────────────────────────────
 #
-# Current approach (GA): PyTorchJob (kubeflow.org/v1)
+# This file is updated for RHOAI 3.4 checkpointing evaluation (TD-012).
+# It documents the forward-looking TrainJob + ClusterTrainingRuntime path and
+# notes the checkpointing responsibility gaps for the PRAGMA custom training loop.
+#
+# Reference: docs/rhoai-3.4-trainjob-checkpointing.md (full evaluation doc)
+# Reference: docs/tech-debt.md §TD-012 (acceptance criteria + evaluation plan)
+#
+# ── Current approach (GA) ──────────────────────────────────────────────────
+#
+# PyTorchJob (kubeflow.org/v1):
 #   See: openshift/training/pytorchjob-pragma-s.yaml
+#   Status: GA in RHOAI 3.4
+#   *** PyTorchJob is the ONLY production path. Do not use TrainJob yet. ***
 #
-# Future approach (when TrainJob reaches GA):
-#   Replace PyTorchJob with TrainJob + ClusterTrainingRuntime.
-#   Requires a new ADR superseding docs/decisions/005-training-orchestration.md.
+# ── Forward approach (when TrainJob reaches GA) ────────────────────────────
 #
-# Reference:
-#   docs/openshift-ai-3.3-alignment.md §Kubeflow Trainer v2 / TrainJob (Tech Preview)
+# TrainJob replaces PyTorchJob + per-framework CRDs with a unified API backed
+# by ClusterTrainingRuntime / TrainingRuntime blueprints.
+# Requires a new ADR superseding docs/decisions/005-training-orchestration.md.
+# Verify availability first: oc api-resources | grep trainer
+#
+# ── PyTorchJob upstream deprecation (RHOAI 3.4 context) ───────────────────
+#
+# The upstream Kubeflow Training Operator v1 source code has been REMOVED from
+# the kubeflow/trainer repository (Feb 2025, PR #2389). Kubeflow docs redirect
+# all v1 pages to v2 with a deprecation notice.
+#
+# Whether RHOAI 3.4 still ships kubeflow.org/v1 CRDs for backward compatibility
+# is UNVERIFIED on the live cluster. Before running Level 5 cluster tests on
+# a RHOAI 3.4 cluster, verify:
+#   oc api-resources | grep kubeflow    # should list pytorchjobs
+#   oc api-resources | grep trainer     # should list trainjobs (Tech Preview)
+# See: docs/rhoai-3.4-trainjob-checkpointing.md §6 for urgency assessment.
+#
+# ── Checkpoint Evaluation Context ─────────────────────────────────────────
+#
+# Kubeflow Trainer v2 introduces resilient checkpointing (since RHOAI 3.2):
+#   - Periodic: saves at a configured time/step interval
+#   - JIT (Just-In-Time): saves on SIGTERM / pod preemption before pod exits
+#
+# Platform-managed checkpointing (SDK-native) applies to HuggingFace trainers:
+#   Trainer, SFTTrainer, Seq2SeqTrainer, DPOTrainer, PPOTrainer, RewardTrainer
+#
+# PRAGMA uses a custom PyTorch training loop — gaps for the SDK-native path:
+#   [GAP-1] No SIGTERM handler → no JIT checkpoint on pod preemption
+#   [GAP-2] Checkpoint dir/S3 path must be read from env manually (not auto-injected)
+#   [GAP-3] PVC backend conflicts with ADR 003 (no data PVCs in design)
+#   [GAP-4] S3 checkpoint backend for TrainJob is UNVERIFIED from official docs
+#   [GAP-5] Interval-based checkpointing requires step-count hook in train.py
+#
+# Current production S3 checkpointing (checkpoints.py / Level 5) remains valid
+# for both the PyTorchJob path and any future TrainJob + custom loop path.
+#
+# Checkpoint backends:
+#   PVC (PersistentVolumeClaim): confirmed as the primary TrainJob backend
+#   S3-compatible: [VERIFY] not confirmed from official docs; may require custom code
+#
+# The checkpoint backend and interval are configured in ClusterTrainingRuntime /
+# TrainingRuntime, not in the TrainJob spec itself.
+#
+# ── Credentials ───────────────────────────────────────────────────────────
+#
+# S3 credentials are supplied via the same RHOAI Connection mechanism as today:
+#   envFrom.secretRef → pragma-workbench-env (AWS_* env vars injected)
+# This is compatible with the existing checkpoints.py S3 adapter if S3 backend
+# is used for TrainJob checkpointing (pending verification).
+#
+# ── References ────────────────────────────────────────────────────────────
+#
+#   docs/rhoai-3.4-trainjob-checkpointing.md   — full evaluation doc (TD-012)
+#   docs/openshift-ai-3.3-alignment.md          — RHOAI primitive alignment
 #   ADR 005: docs/decisions/005-training-orchestration.md
 
 apiVersion: trainer.kubeflow.org/v1alpha1
@@ -32,13 +92,17 @@ metadata:
     app: pragma-encoder
     variant: pragma-s
     # NOTE: this is a reference example only — do not apply this manifest
+    # Tech Preview: not supported in production; evaluation only (TD-012)
 spec:
   # TrainingRuntime specifies the distributed training configuration.
-  # The ClusterTrainingRuntime is a cluster-wide blueprint; TrainingRuntime
-  # is namespace-scoped.
+  # The ClusterTrainingRuntime is a cluster-wide blueprint configured by
+  # the cluster admin. It defines: launcher, distributed topology,
+  # checkpoint runtime (backend, interval, JIT/SIGTERM handling).
+  #
+  # Checkpoint config lives in ClusterTrainingRuntime, not in TrainJob.
+  # Example: a ClusterTrainingRuntime for PyTorch with PVC checkpoint backend.
   trainingRuntimeRef:
-    # A ClusterTrainingRuntime for PyTorch would be defined by the cluster admin.
-    # Example only — actual name depends on cluster configuration.
+    # Actual name depends on what the cluster admin has configured.
     name: torch-distributed
     # apiGroup: trainer.kubeflow.org
     # kind: ClusterTrainingRuntime
@@ -56,6 +120,9 @@ spec:
       - /data/tabformer/vocab.pkl
       - --output-dir
       - /tmp/pragma-output
+      # Checkpoint note: --output-dir would be the PVC-mounted checkpoint dir
+      # when using the PVC checkpoint backend. When using S3, --s3-checkpoint-prefix
+      # continues to be the mechanism (same as PyTorchJob path).
       - --model-variant
       - pragma-s
       - --epochs
@@ -74,5 +141,7 @@ spec:
         nvidia.com/gpu: "1"
     envFrom:
       - secretRef:
+          # pragma-workbench-env supplies AWS_* env vars (RHOAI Connection).
+          # Same injection mechanism as today's PyTorchJob path.
           name: pragma-workbench-env
           optional: true

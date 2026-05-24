@@ -88,7 +88,7 @@ pytest tests/ --ignore=tests/openshift/ -x -q \
 | `test_image_contract.py` | 24 | Two-image model: workbench image vs training image; kfp boundary |
 | `test_stale_contract_references.py` | 7 | `MODEL_REGISTRY_*` absent from code (TD-010); `train_pragma.py` stays thin |
 | `test_gitops_secret_guard.py` | 10 | No plaintext creds in gitops/; only SealedSecrets; templates use `REPLACE_ME` |
-| `test_openshift_ai_primitive_contract.py` | 66 | RHOAI 3.3 primitive YAML contract (no cluster) |
+| `test_openshift_ai_primitive_contract.py` | 72 | RHOAI 3.3/3.4 primitive YAML contract + TD-012 evaluation guards (no cluster) |
 | `test_openshift_ai_fixtures.py` | 32 | Fixture YAML conforms to native AWS_* S3 Connection schema |
 | `test_pipeline_components.py` | 70 | KFP v2 pipeline component static structure: signatures, stage names, no PVC |
 | `test_smoke_pipeline.py` | 21 | Smoke pipeline static: no cluster needed, compiles cleanly |
@@ -333,9 +333,9 @@ ruff check src/ tests/ pipeline/
 | Category | Files | Tests |
 |---|---|---|
 | Core unit tests (model, tokenizer, training math) | 21 | ~345 |
-| Static platform contract (boundary, YAML, package) | 16 | ~534 |
+| Static platform contract (boundary, YAML, package) | 16 | ~540 |
 | Security guards | 1 | 10 |
 | Opt-in runtime (openshift/) | 11 | ~76 |
-| **Total** | **~50** | **~964** |
+| **Total** | **~50** | **~970** |
 
 Reference: `docs/development-process.md`, `CLAUDE.md §Development Process`
