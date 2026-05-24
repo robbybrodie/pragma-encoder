@@ -154,16 +154,42 @@ HardwareProfile when the profile is applied to the cluster.
 
 | Approach | API | RHOAI 3.4 status | Repo status |
 |---|---|---|---|
-| **PyTorchJob** | `kubeflow.org/v1` | **GA** | Current — all production manifests and tests |
-| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Tech Preview** | Example only — `tests/openshift/fixtures/trainjob-example.yaml` |
+| **PyTorchJob** | `kubeflow.org/v1` | **GA** (cluster verification required — see below) | Current — all production manifests and tests |
+| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Tech Preview** | Evaluation example — `tests/openshift/fixtures/trainjob-example.yaml` |
 
-**PyTorchJob is the current, proven RHOAI 3.4 runtime path.**
+**PyTorchJob is the current, proven production path. Do not use TrainJob until it is GA.**
 
-TrainJob is documented as the forward-looking direction. It must not appear in
-production manifests or CI tests until it is GA in a future RHOAI release.
+### PyTorchJob upstream deprecation notice (2026-05-24)
 
-When TrainJob reaches GA: write a new ADR superseding ADR 005, add Level 4b
-tests, and keep PyTorchJob tests until TrainJob smoke is green.
+The upstream Kubeflow Training Operator v1 source code has been **removed** from
+the `kubeflow/trainer` repository (Feb 2025, PR #2389). Kubeflow docs redirect
+all v1 documentation pages to v2 with deprecation warnings.
+
+**RHOAI 3.4 cluster verification required before running Level 5 cluster tests:**
+
+```bash
+oc api-resources | grep kubeflow    # must show pytorchjobs
+oc api-resources | grep trainer     # should show trainjobs (Tech Preview)
+```
+
+If `kubeflow.org/v1` CRDs are absent from the cluster, Level 5 cluster tests
+will fail and urgent migration to TrainJob is required. See TD-012 in
+`docs/tech-debt.md` for the full evaluation plan.
+
+**Do not assume either conclusion — verify on the cluster first.**
+
+### TrainJob evaluation (TD-012)
+
+TrainJob is being evaluated as the forward platform path for RHOAI 3.4+.
+Key findings from the initial evaluation (`docs/rhoai-3.4-trainjob-checkpointing.md`):
+
+- **Resilient checkpointing** (JIT + periodic) requires HuggingFace trainers for SDK-native support
+- **PRAGMA custom loop gaps:** no SIGTERM handler, no checkpoint-dir env reading, PVC backend conflicts ADR 003
+- **S3 checkpoint backend** for TrainJob is unconfirmed from official docs — [VERIFY]
+- **Level 5** (S3 checkpoint/resume) remains valid for PyTorchJob and custom loop paths
+
+When TrainJob reaches GA: write a new ADR superseding ADR 005, add Level 4b/5b
+cluster smoke tests, and keep PyTorchJob tests until TrainJob smoke is green.
 
 ---
 

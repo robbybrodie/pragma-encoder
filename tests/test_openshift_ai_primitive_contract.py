@@ -805,6 +805,132 @@ class TestTrainJobTechPreview:
 
 
 # ===========================================================================
+# 8b. TrainJob evaluation context — TD-012 static guards
+# ===========================================================================
+
+
+class TestTrainJobEvaluationContext:
+    """Static guards for the RHOAI 3.4 TrainJob checkpoint evaluation artefacts.
+
+    These tests verify that the TD-012 evaluation context is present in the
+    relevant fixture and docs files. They guard against silent regression if
+    someone removes the evaluation commentary without closing TD-012 properly.
+
+    Category: structural
+    Reference: docs/rhoai-3.4-trainjob-checkpointing.md
+    Reference: docs/tech-debt.md §TD-012
+    Reference: tests/openshift/fixtures/trainjob-example.yaml
+    Reference: docs/openshift-ai-primitives.md §Distributed Training
+    """
+
+    _TRAINJOB = _FIXTURES / "trainjob-example.yaml"
+    _PRIMITIVES = _REPO_ROOT / "docs" / "openshift-ai-primitives.md"
+    _EVAL_DOC = _REPO_ROOT / "docs" / "rhoai-3.4-trainjob-checkpointing.md"
+    _TECH_DEBT = _REPO_ROOT / "docs" / "tech-debt.md"
+
+    def test_rhoai_34_evaluation_doc_exists(self) -> None:
+        """TD-012: docs/rhoai-3.4-trainjob-checkpointing.md must exist.
+
+        This is the authoritative evaluation doc for the RHOAI 3.4 TrainJob +
+        Kubeflow Trainer v2 checkpointing assessment. It contains the full
+        responsibility comparison table, gap analysis, and decision matrix.
+        """
+        assert self._EVAL_DOC.exists(), (
+            "docs/rhoai-3.4-trainjob-checkpointing.md must exist. "
+            "This is the TD-012 evaluation document for RHOAI 3.4 TrainJob "
+            "checkpointing. It must not be deleted until TD-012 is resolved. "
+            "Reference: docs/tech-debt.md §TD-012"
+        )
+
+    def test_td012_registered_in_tech_debt(self) -> None:
+        """TD-012 must be registered in docs/tech-debt.md.
+
+        The evaluation of RHOAI 3.4 TrainJob checkpointing is an open tech debt
+        item. It must remain registered until the evaluation is complete and one
+        of the resolution options (A/B/C) is implemented.
+        """
+        content = self._TECH_DEBT.read_text()
+        assert "TD-012" in content, (
+            "docs/tech-debt.md must contain TD-012. "
+            "TD-012 tracks the RHOAI 3.4 TrainJob + Kubeflow Trainer v2 "
+            "checkpointing evaluation. Do not remove until evaluation is resolved. "
+            "Reference: docs/rhoai-3.4-trainjob-checkpointing.md"
+        )
+
+    def test_trainjob_fixture_references_evaluation_doc(self) -> None:
+        """TrainJob fixture must reference the TD-012 evaluation doc.
+
+        The fixture header must point to docs/rhoai-3.4-trainjob-checkpointing.md
+        so readers understand this is an evaluation artefact, not a production
+        template. Removing this reference while TD-012 is open is a regression.
+        """
+        content = self._TRAINJOB.read_text()
+        assert "rhoai-3.4-trainjob-checkpointing.md" in content, (
+            "tests/openshift/fixtures/trainjob-example.yaml must reference "
+            "docs/rhoai-3.4-trainjob-checkpointing.md in its header. "
+            "This ties the fixture to the TD-012 evaluation context. "
+            "Reference: docs/tech-debt.md §TD-012"
+        )
+
+    def test_trainjob_fixture_notes_checkpoint_gaps(self) -> None:
+        """TrainJob fixture must document the checkpoint evaluation gaps.
+
+        The fixture must note that PRAGMA's custom PyTorch loop has gaps
+        relative to the SDK-native checkpointing path. This prevents readers
+        from assuming the RHOAI 3.4 checkpoint SDK works automatically with
+        the PRAGMA training loop.
+        """
+        content = self._TRAINJOB.read_text()
+        has_gap_notation = "GAP-" in content or "checkpoint" in content.lower()
+        assert has_gap_notation, (
+            "tests/openshift/fixtures/trainjob-example.yaml must document "
+            "the checkpoint evaluation gaps (GAP-1 through GAP-5) for the "
+            "PRAGMA custom training loop. "
+            "Reference: docs/rhoai-3.4-trainjob-checkpointing.md §4 Gap Analysis"
+        )
+
+    def test_primitives_doc_notes_pytorchjob_upstream_deprecation(self) -> None:
+        """openshift-ai-primitives.md must note the PyTorchJob upstream deprecation.
+
+        Kubeflow Training Operator v1 source code was removed from the upstream
+        kubeflow/trainer repo (Feb 2025). The primitives doc must carry this
+        notice so developers know to verify CRD availability before running
+        Level 5 cluster tests on a RHOAI 3.4 cluster.
+
+        This is a critical operational guard: missing CRDs cause Level 5 failures.
+        """
+        content = self._PRIMITIVES.read_text()
+        has_deprecation_notice = (
+            "deprecated" in content.lower()
+            or "deprecation" in content.lower()
+            or "removed" in content.lower()
+        ) and "kubeflow" in content.lower()
+        assert has_deprecation_notice, (
+            "docs/openshift-ai-primitives.md must note that PyTorchJob "
+            "(kubeflow.org/v1) is deprecated upstream. "
+            "The upstream Kubeflow Training Operator v1 source was removed "
+            "from kubeflow/trainer in Feb 2025. Without this notice, developers "
+            "may run Level 5 cluster tests without first verifying CRD availability. "
+            "Reference: docs/rhoai-3.4-trainjob-checkpointing.md §6"
+        )
+
+    def test_primitives_doc_has_cluster_verification_command(self) -> None:
+        """openshift-ai-primitives.md must document the oc api-resources verification step.
+
+        Before running Level 5 tests on a RHOAI 3.4 cluster, developers must
+        verify that kubeflow.org/v1 CRDs are present. The verification command
+        must appear in the primitives doc so it is not overlooked.
+        """
+        content = self._PRIMITIVES.read_text()
+        assert "oc api-resources" in content, (
+            "docs/openshift-ai-primitives.md must include the 'oc api-resources' "
+            "command for verifying PyTorchJob CRD availability on a RHOAI 3.4 cluster. "
+            "Without this, Level 5 cluster tests may fail with confusing errors. "
+            "Reference: docs/rhoai-3.4-trainjob-checkpointing.md §6"
+        )
+
+
+# ===========================================================================
 # 9. Serving primitives
 # ===========================================================================
 
