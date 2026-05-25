@@ -220,7 +220,7 @@ NeMo AutoModel is not currently used. See ADR 005 (`docs/decisions/005-training-
 
 Same rules as the adjacent repo:
 
-1. **GA APIs only** — use `kubeflow.org/v1` PyTorchJob, NOT TrainJob (Tech Preview).
+1. **Current project path** — use `kubeflow.org/v1` PyTorchJob manifests. Verify availability/support on target RHOAI 3.4 cluster. TrainJob is Technology Preview unless GA is confirmed.
 2. **Never commit populated secrets** — only `.template.*` files are committed.
 3. **Sealed Secrets** for production secret management.
 4. **ArgoCD** for GitOps — manifests live in `openshift/gitops/`.
