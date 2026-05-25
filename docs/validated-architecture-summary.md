@@ -28,6 +28,7 @@ into the wheel.
 | PyTorchJob runtime | Passed (42 s) | `test_04_pytorchjob_smoke.py` — job submitted, ran, completed on `kubeflow.org/v1` CRD |
 | Level 5 S3 checkpoint/resume | Passed (69 s) | `test_05_s3_checkpoint_resume.py` — Run 1 uploaded checkpoint; Run 2 discovered latest key and resumed |
 | GPU runtime | Passed (18 s) | `test_06_gpu_training_smoke.py` — single-node GPU PyTorchJob; CUDA visible; compute capability 8.9 |
+| Level 8 loss curve smoke (static) | 11/11 passed | `test_08_tabformer_loss_smoke.py::TestLossSmokeStaticPrereqs` — bounds, coherence (`max_steps // log_every >= min_loss_points`), naming, CRD, image env var |
 | Static preflight | 225 passed, 8 skipped | ruff clean; `test_packaging`, `test_platform_neutral_wheel`, `test_openshift_ai_primitive_contract`, `test_openshift_ai_fixtures`, `test_pipeline_components`, `test_smoke_pipeline` |
 | OpenShift AI primitive mapping | Documented and tested | `docs/openshift-ai-3.3-alignment.md`; `test_openshift_ai_primitive_contract.py` (72 tests) |
 | ArgoCD declared-state boundary | Documented and tested | `docs/openshift-gitops-argocd.md`; ArgoCD owns `openshift/gitops/`; does not own PyTorchJob runs, pipeline runs, or checkpoints |

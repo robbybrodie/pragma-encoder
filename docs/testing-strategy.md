@@ -132,13 +132,16 @@ PRAGMA_TEST_NAMESPACE=pragma-encoder \
 PRAGMA_TRAINING_IMAGE=<image> \
 pytest tests/openshift/ -v
 
-# Level 8 — TabFormer loss smoke (static checks only; no cluster resources created)
+# Level 8 — TabFormer loss curve smoke (static checks only; no cluster resources created)
+# Asserts: 11 static pre-flight checks including min_loss_points coherence
 RUN_OPENSHIFT_TESTS=1 RUN_TABFORMER_LOSS_SMOKE=1 \
 PRAGMA_TEST_NAMESPACE=pragma-encoder \
 PRAGMA_TRAINING_IMAGE=<image> \
-pytest tests/openshift/test_08_tabformer_loss_smoke.py -v
+pytest tests/openshift/test_08_tabformer_loss_smoke.py::TestLossSmokeStaticPrereqs -v
 
-# Level 8 — TabFormer loss smoke with runtime GPU PyTorchJob
+# Level 8 — TabFormer loss curve smoke with runtime GPU PyTorchJob
+# Asserts: >=10 finite loss records, all finite, non-decreasing steps, >=2 distinct steps
+# Writes: test-artifacts/level8-tabformer-loss/<job_name>/{loss.jsonl,metadata.json,loss.png}
 RUN_OPENSHIFT_TESTS=1 RUN_TABFORMER_LOSS_SMOKE=1 RUN_TABFORMER_LOSS_SMOKE_RUN=1 \
 PRAGMA_TEST_NAMESPACE=pragma-encoder \
 PRAGMA_TRAINING_IMAGE=<image> \
@@ -158,7 +161,7 @@ pytest tests/openshift/test_08_tabformer_loss_smoke.py -v
 | `test_04_pytorchjob_smoke.py` | L4 | PyTorchJob single-node smoke (real GPU) |
 | `test_05_s3_checkpoint_resume.py` | L5 | S3 checkpoint write + resume across two training runs |
 | `test_06_gpu_training_smoke.py` | L6 | Multi-epoch GPU training smoke with checkpoint upload |
-| `test_08_tabformer_loss_smoke.py` | L8 | Single-node GPU loss smoke on real IBM TabFormer data — bounded for L4-class GPU |
+| `test_08_tabformer_loss_smoke.py` | L8 | Single-node GPU loss curve smoke on real IBM TabFormer data — bounded for L4-class GPU; asserts ≥10 finite loss records, non-decreasing steps, ≥2 distinct steps |
 
 All tests in `tests/openshift/` skip automatically unless `RUN_OPENSHIFT_TESTS=1`
 is set. See `tests/openshift/conftest.py` for the skip guard implementation.
@@ -354,7 +357,7 @@ ruff check src/ tests/ pipeline/
 | Core unit tests (model, tokenizer, training math) | 21 | ~345 |
 | Static platform contract (boundary, YAML, package) | 16 | ~540 |
 | Security guards | 1 | 10 |
-| Opt-in runtime (openshift/) | 12 | ~83 |
-| **Total** | **~51** | **~977** |
+| Opt-in runtime (openshift/) | 12 | ~95 |
+| **Total** | **~51** | **~989** |
 
 Reference: `docs/development-process.md`, `CLAUDE.md §Development Process`
