@@ -131,6 +131,18 @@ RUN_OPENSHIFT_PIPELINE_SMOKE=1 \
 PRAGMA_TEST_NAMESPACE=pragma-encoder \
 PRAGMA_TRAINING_IMAGE=<image> \
 pytest tests/openshift/ -v
+
+# Level 8 — TabFormer loss smoke (static checks only; no cluster resources created)
+RUN_OPENSHIFT_TESTS=1 RUN_TABFORMER_LOSS_SMOKE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<image> \
+pytest tests/openshift/test_08_tabformer_loss_smoke.py -v
+
+# Level 8 — TabFormer loss smoke with runtime GPU PyTorchJob
+RUN_OPENSHIFT_TESTS=1 RUN_TABFORMER_LOSS_SMOKE=1 RUN_TABFORMER_LOSS_SMOKE_RUN=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<image> \
+pytest tests/openshift/test_08_tabformer_loss_smoke.py -v
 ```
 
 | Test file | Level | What it tests |
@@ -146,6 +158,7 @@ pytest tests/openshift/ -v
 | `test_04_pytorchjob_smoke.py` | L4 | PyTorchJob single-node smoke (real GPU) |
 | `test_05_s3_checkpoint_resume.py` | L5 | S3 checkpoint write + resume across two training runs |
 | `test_06_gpu_training_smoke.py` | L6 | Multi-epoch GPU training smoke with checkpoint upload |
+| `test_08_tabformer_loss_smoke.py` | L8 | Single-node GPU loss smoke on real IBM TabFormer data — bounded for L4-class GPU |
 
 All tests in `tests/openshift/` skip automatically unless `RUN_OPENSHIFT_TESTS=1`
 is set. See `tests/openshift/conftest.py` for the skip guard implementation.
@@ -341,7 +354,7 @@ ruff check src/ tests/ pipeline/
 | Core unit tests (model, tokenizer, training math) | 21 | ~345 |
 | Static platform contract (boundary, YAML, package) | 16 | ~540 |
 | Security guards | 1 | 10 |
-| Opt-in runtime (openshift/) | 11 | ~76 |
-| **Total** | **~50** | **~970** |
+| Opt-in runtime (openshift/) | 12 | ~83 |
+| **Total** | **~51** | **~977** |
 
 Reference: `docs/development-process.md`, `CLAUDE.md §Development Process`
