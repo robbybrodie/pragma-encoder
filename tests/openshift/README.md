@@ -91,6 +91,7 @@ See `docs/openshift-ai-3.3-alignment.md` for the full primitive map and responsi
 | 5 | S3-backed checkpoint/resume | Implemented | `test_05_s3_checkpoint_resume.py` |
 | 6 | GPU training smoke (single-node opt-in) | Scaffold implemented | `test_06_gpu_training_smoke.py` |
 | 7 | Production pipeline runtime — IBM TabFormer | Implemented | `test_07_tabformer_pipeline_runtime.py` |
+| 8 | Single-node GPU loss curve smoke — IBM TabFormer | Implemented | `test_08_tabformer_loss_smoke.py` |
 
 ---
 
@@ -129,6 +130,14 @@ See `docs/openshift-ai-3.3-alignment.md` for the full primitive map and responsi
 | `PRAGMA_S3_RESUME_PREFIX` | `pragma-encoder/test-checkpoints/<test_id>` | S3 key prefix for Level 5 test checkpoint storage. |
 | `RUN_TEKTON_TESTS=1` | (unset) | Opt-in for Tekton PipelineRun/TaskRun CRD checks. Not required for OpenShift AI KFP v2. |
 | `PRAGMA_TEST_TIMEOUT_SECONDS` | `300` | Timeout for cluster wait loops (minimum 30s). |
+| `RUN_TABFORMER_LOSS_SMOKE=1` | (unset) | Opt-in for Level 8 static pre-flight checks (no cluster resources created). Also requires `RUN_OPENSHIFT_TESTS=1` and `PRAGMA_TEST_NAMESPACE`. |
+| `RUN_TABFORMER_LOSS_SMOKE_RUN=1` | (unset) | Opt-in for the Level 8 runtime GPU PyTorchJob. Also requires `RUN_TABFORMER_LOSS_SMOKE=1`, `PRAGMA_TRAINING_IMAGE`, and `PRAGMA_TEST_NAMESPACE`. |
+| `PRAGMA_TABFORMER_SAMPLE_FRACTION` | `0.10` | Fraction of IBM TabFormer customers to use (Level 8). Safe threshold ≤0.20; override with `PRAGMA_ALLOW_LARGE_TABFORMER_SMOKE=1`. |
+| `PRAGMA_TABFORMER_MAX_STEPS` | `100` | Max gradient steps for Level 8 training (safe threshold ≤500). |
+| `PRAGMA_TABFORMER_BATCH_SIZE` | `4` | Batch size for Level 8 GPU training (L4-safe default). |
+| `PRAGMA_LOSS_LOG_EVERY` | `5` | Loss logging frequency (steps) for Level 8. Must satisfy `max_steps // log_every >= min_loss_points`. |
+| `PRAGMA_MIN_LOSS_POINTS` | `10` | Minimum number of finite loss records required to pass Level 8. Default: 100 // 5 = 20 ≥ 10 ✓. |
+| `PRAGMA_ALLOW_LARGE_TABFORMER_SMOKE=1` | (unset) | Override Level 8 safety gates when `PRAGMA_TABFORMER_SAMPLE_FRACTION > 0.20` or `PRAGMA_TABFORMER_MAX_STEPS > 500`. |
 
 ---
 
@@ -329,6 +338,35 @@ pytest tests/openshift/test_05_s3_checkpoint_resume.py -q
 
 Expected: 4 passed (3 local prereqs + 1 two-run S3 checkpoint/resume runtime smoke). Runtime is typically around 70s on the reference test cluster.
 
+### Level 8 — TabFormer GPU loss curve smoke (static checks + runtime)
+
+Static pre-flight checks only (no cluster resources created):
+
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_TABFORMER_LOSS_SMOKE=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder-training:latest \
+pytest tests/openshift/test_08_tabformer_loss_smoke.py::TestLossSmokeStaticPrereqs -v
+```
+
+Expected: 11 passed (bounds, coherence, naming, CRD, image env var, limit_rows — no GPU used).
+
+Runtime smoke (creates a single-node GPU PyTorchJob, downloads IBM TabFormer CSV from S3):
+
+```bash
+RUN_OPENSHIFT_TESTS=1 \
+RUN_TABFORMER_LOSS_SMOKE=1 \
+RUN_TABFORMER_LOSS_SMOKE_RUN=1 \
+PRAGMA_TEST_NAMESPACE=pragma-encoder \
+PRAGMA_TRAINING_IMAGE=<registry>/<repo>/pragma-encoder-training:latest \
+pytest tests/openshift/test_08_tabformer_loss_smoke.py -v
+```
+
+Expected: 11 static passed + 1 runtime passed. Runtime asserts: ≥10 finite loss records,
+all finite (no NaN/inf), step values non-decreasing, ≥2 distinct steps.
+Artifacts written to `test-artifacts/level8-tabformer-loss/<job_name>/`.
+
 ---
 
 ## Verifying Normal Test Suite Is Unaffected
@@ -474,6 +512,44 @@ Gated by both `RUN_OPENSHIFT_TESTS=1` AND `RUN_OPENSHIFT_AI_PIPELINE_SMOKE=1`.
 Exercises all five §2.4 stages: prepare → upload → submit → train → export.
 
 See `docs/tabformer-workbench-pipeline.md` for the end-to-end workflow description.
+
+---
+
+### Level 8 — Single-node GPU loss curve smoke — IBM TabFormer
+
+**12 tests total.** 11 are static pre-flight checks (no cluster resources created). 1 is the opt-in runtime GPU test.
+
+Gated by `RUN_OPENSHIFT_TESTS=1` AND `RUN_TABFORMER_LOSS_SMOKE=1` for static checks.
+Runtime additionally requires `RUN_TABFORMER_LOSS_SMOKE_RUN=1`.
+
+- `TestLossSmokeStaticPrereqs` (11 static tests, no cluster resources created):
+  - `test_sample_fraction_within_bounds` — `PRAGMA_TABFORMER_SAMPLE_FRACTION` ≤ 0.20 (or override gate)
+  - `test_max_steps_within_bounds` — `PRAGMA_TABFORMER_MAX_STEPS` ≤ 500 (or override gate)
+  - `test_combined_bounds_consistent` — both fraction and max_steps pass safety gate together
+  - `test_min_loss_points_is_positive` — `PRAGMA_MIN_LOSS_POINTS` ≥ 1
+  - `test_default_min_loss_points_is_ten` — `_DEFAULT_MIN_LOSS_POINTS == 10` (hardcoded default)
+  - `test_default_config_produces_enough_loss_points` — `100 // 5 = 20 ≥ 10` (default coherence)
+  - `test_configured_values_produce_enough_loss_points` — `max_steps // log_every >= min_loss_points` (resolved values)
+  - `test_job_name_fits_dns_label_limit` — master pod name ≤ 63 chars (RFC 1035 §2.3.4)
+  - `test_pytorchjob_crd_present` — `pytorchjobs.kubeflow.org` CRD exists (cluster read)
+  - `test_training_image_env_var_set` — `PRAGMA_TRAINING_IMAGE` is non-empty
+  - `test_limit_rows_calculation_is_positive` — computed `limit_rows ≥ 10` customers
+- `TestTabFormerLossSmokeRuntime` (1 opt-in GPU test, requires `RUN_TABFORMER_LOSS_SMOKE_RUN=1`):
+  - `test_tabformer_gpu_loss_smoke` — submits a single-node Master-only GPU PyTorchJob that:
+    1. Downloads IBM TabFormer CSV from S3 (`pragma-encoder/data/tabformer/card_transaction.v1.csv`)
+    2. Fits vocab via `python -m pragma_encoder.data.fit_tokenizer`
+    3. Runs `pragma-encoder-train` (PRAGMA-S, `--device cuda`) for `max_steps=100` steps
+    4. Emits `metrics.jsonl` between `PRAGMA_LOSS_JSONL_BEGIN/END` markers in stdout
+    5. Asserts: PyTorchJob `Succeeded`, ≥10 finite loss records, all finite, non-decreasing steps, ≥2 distinct steps
+    6. Writes `test-artifacts/level8-tabformer-loss/<job_name>/loss.jsonl`, `metadata.json`, optional `loss.png`
+
+**Purpose**: Proves the full training loop runs on GPU with real financial data and produces
+a bounded, finite loss curve. No convergence or quality assertions.
+
+**Coherence constraint** (checked statically): `max_steps // log_every >= min_loss_points`.
+Default: `100 // 5 = 20 ≥ 10`. If you change defaults, the static tests will catch it.
+
+See `tests/openshift/test_08_tabformer_loss_smoke.py` module docstring for full parameter reference.
 
 ---
 
