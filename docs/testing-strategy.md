@@ -150,6 +150,12 @@ pytest tests/openshift/ -v
 All tests in `tests/openshift/` skip automatically unless `RUN_OPENSHIFT_TESTS=1`
 is set. See `tests/openshift/conftest.py` for the skip guard implementation.
 
+**KFP/OpenShift AI pipeline smoke (`test_03_pipeline_smoke_run.py`) is optional
+demonstration work.** The architecture conclusion is not blocked by it — the
+wheel/image/PyTorchJob/S3/GPU path is fully validated independently. The pipeline
+smoke requires `kfp` installed locally or execution from inside the Workbench pod,
+because `kfp` is a workbench-only dependency absent from the default dev venv.
+
 ---
 
 ## Tier 4 — Manual / demo
