@@ -224,7 +224,7 @@ smoke test for the RHOAI 3.3 PyTorchJob path (Tier 3, opt-in).
 | Upstream Training Operator v1 source code removed from kubeflow/trainer | GitHub — Remove Training Operator V1 Source Code (#2389) | High |
 | Kubeflow docs redirect all v1 pages to v2 with deprecation notice | kubeflow.org (Feb 2025) | High |
 | RHOAI 3.4 ships ClusterTrainingRuntimes for Trainer v2 | Web search aggregation of RHOAI docs | Medium |
-| PyTorchJob still listed as "GA (RHOAI 3.4)" in our repo | Existing repo docs (openshift-ai-primitives.md) | Medium — may be stale |
+| PyTorchJob listed as "current proven project path; verify availability on target cluster" in our repo | Existing repo docs (openshift-ai-primitives.md) | Updated — no longer overstates GA status |
 | Web search says "removed from RHOAI (effective 2025, confirmed in RHOAI 3.4+)" | AI-aggregated search summary | Low — not a direct quote |
 
 **Assessment:** The upstream deprecation is definitive. Whether RHOAI 3.4 still

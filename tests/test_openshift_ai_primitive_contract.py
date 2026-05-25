@@ -623,13 +623,19 @@ class TestPyTorchJobPrimitives:
     """PyTorchJob manifests use wheel-based entrypoints — no git clone, no src/ PYTHONPATH.
 
     All production PyTorchJob manifests must:
-    - Use kubeflow.org/v1 (the GA API — not trainer.kubeflow.org/v1alpha1)
+    - Use kubeflow.org/v1 (the current project API — not trainer.kubeflow.org/v1alpha1)
     - Reference pragma-encoder-training image (wheel installed)
     - Not contain git clone steps
     - Not use scripts/train_pragma.py as a non-comment execution command
     - Not set PYTHONPATH pointing at a source tree (PYTHONPATH=$PRAGMA_ROOT/src etc.)
 
+    PyTorchJob is the current proven project path. Verify availability and support
+    status on the target RHOAI 3.4 cluster before running Level 4/5 cluster tests.
+    Upstream Kubeflow Training Operator v1 source was removed Feb 2025; CRD presence
+    does not equal production support.
+
     Reference: docs/openshift-image-contract.md
+    Reference: docs/openshift-ai-primitives.md §Distributed Training
     """
 
     def _pytorchjob_files(self) -> list[pathlib.Path]:
@@ -639,15 +645,17 @@ class TestPyTorchJobPrimitives:
         files = self._pytorchjob_files()
         assert len(files) >= 1, (
             f"Expected at least one pytorchjob-*.yaml in {_TRAINING}. "
-            "PyTorchJob is the current GA distributed training primitive."
+            "PyTorchJob (kubeflow.org/v1) is the current proven project path "
+            "for distributed training."
         )
 
     def test_pytorchjob_api_version_is_ga(self) -> None:
-        """All PyTorchJob manifests must use the GA kubeflow.org/v1 API."""
+        """All PyTorchJob manifests must use the kubeflow.org/v1 API (current project path)."""
         for path in self._pytorchjob_files():
             doc = _load_yaml(path)
             assert doc.get("apiVersion") == "kubeflow.org/v1", (
-                f"{path.name}: PyTorchJob must use apiVersion: kubeflow.org/v1 (GA). "
+                f"{path.name}: PyTorchJob must use apiVersion: kubeflow.org/v1 "
+                "(the current project API). "
                 "trainer.kubeflow.org/v1alpha1 (TrainJob) is Tech Preview — see ADR 005. "
                 f"Found: {doc.get('apiVersion')!r}"
             )
@@ -784,8 +792,8 @@ class TestTrainJobTechPreview:
             ]
             assert len(non_comment_lines) == 0, (
                 f"{path.name}: references trainer.kubeflow.org (Kubeflow Trainer v2). "
-                "Production manifests must use kubeflow.org/v1 (PyTorchJob — current path). "
-                "TrainJob is Technology Preview in RHOAI 3.3/3.4. "
+                "Production manifests must use kubeflow.org/v1 (PyTorchJob — current proven path). "
+                "TrainJob is Technology Preview in RHOAI 3.4 unless GA is confirmed. "
                 "Reference: ADR 005, docs/openshift-ai-primitives.md §Distributed Training"
             )
 

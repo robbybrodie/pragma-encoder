@@ -240,16 +240,17 @@ The image contract is verified by `tests/openshift/test_02b_image_contract_runti
 
 ---
 
-### 8. Distributed Workloads — PyTorchJob (GA)
+### 8. Distributed Workloads — PyTorchJob (current proven project path)
 
 | Field | Value |
 |---|---|
 | What it is | N-node distributed PyTorch training on Kubernetes |
 | API | `PyTorchJob`, `apiVersion: kubeflow.org/v1` (Kubeflow Training Operator v1) |
 | RHOAI 3.3 status | **GA** |
+| RHOAI 3.4 status | Current proven project path — verify availability and support status on the target RHOAI 3.4 cluster. Upstream Kubeflow Training Operator v1 source removed Feb 2025; CRD presence does not equal production support. |
 | Operator | KFTO (Kubeflow Training Operator), managed by RHOAI |
 
-This is the **current GA primitive for distributed training in RHOAI 3.3**.
+This is the **current proven project path for distributed training**. It was the GA primitive in RHOAI 3.3; verify availability and support status on RHOAI 3.4 before relying on it.
 
 **Mapping to pragma-encoder:**
 
@@ -569,12 +570,12 @@ They are not owned by `pragma_encoder`.
 
 ## Distributed Training — PyTorchJob vs TrainJob Direction
 
-| Approach | API | RHOAI 3.3 status | Repo status |
-|---|---|---|---|
-| **PyTorchJob** | `kubeflow.org/v1` | **GA** | Current — all tests and manifests use this |
-| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Technology Preview** (available in RHOAI 3.4) | evaluation fixture only — see ADR 005 and TD-012 |
+| Approach | API | RHOAI 3.3 status | RHOAI 3.4 status | Repo status |
+|---|---|---|---|---|
+| **PyTorchJob** | `kubeflow.org/v1` | **GA** | Current proven project path — verify availability and support status on target cluster | Current — all tests and manifests use this |
+| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Technology Preview** | **Technology Preview** unless GA is confirmed for the target deployment | evaluation fixture only — see ADR 005 and TD-012 |
 
-Do not remove PyTorchJob tests before there is a confirmed GA TrainJob replacement.
+Do not remove PyTorchJob tests before there is a confirmed GA TrainJob replacement for the target deployment.
 
 When TrainJob is confirmed GA in the target deployment:
 1. Write a new ADR superseding ADR 005

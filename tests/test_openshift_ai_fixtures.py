@@ -368,14 +368,17 @@ class TestGPUHardwareProfileFixture:
 class TestTrainJobExampleFixture:
     """Contract tests for the Kubeflow Trainer v2 TrainJob example.
 
-    RHOAI 3.3 primitive: TrainJob (Kubeflow Trainer v2)
+    RHOAI 3.3/3.4 primitive: TrainJob (Kubeflow Trainer v2)
     API: trainer.kubeflow.org/v1alpha1
-    Status: TECHNOLOGY PREVIEW in RHOAI 3.3
+    Status: TECHNOLOGY PREVIEW in RHOAI 3.4 unless GA is confirmed for the target deployment.
 
     This fixture is a reference example only. It must not be used in
     production or referenced by runtime tests. Its presence documents the
     forward-looking TrainJob direction without replacing the current
-    PyTorchJob (kubeflow.org/v1) GA tests.
+    PyTorchJob (kubeflow.org/v1) project path.
+
+    PyTorchJob is the current proven project path. Verify availability and
+    support status on the target RHOAI 3.4 cluster before relying on it.
     """
 
     def test_fixture_file_exists(self) -> None:
@@ -433,14 +436,14 @@ class TestTrainJobExampleFixture:
         assert has_prod_warning, (
             "TrainJob fixture must warn it is not for production use. "
             "Add a comment: '# Do NOT use in production.' "
-            "TrainJob is Tech Preview; GA primitive is PyTorchJob (kubeflow.org/v1)."
+            "TrainJob is Tech Preview; current proven project path is PyTorchJob (kubeflow.org/v1)."
         )
 
     def test_trainjob_does_not_replace_pytorchjob_tests(self) -> None:
         """TrainJob fixture must not be referenced by any runtime test file.
 
-        Runtime tests must use PyTorchJob (kubeflow.org/v1) — the current GA API.
-        TrainJob is documented here as the forward-looking direction only.
+        Runtime tests must use PyTorchJob (kubeflow.org/v1) — the current proven project path.
+        TrainJob is documented here as the forward-looking evaluation direction only.
         """
         tests_dir = pathlib.Path(__file__).parent
         runtime_test_files = [
@@ -455,12 +458,13 @@ class TestTrainJobExampleFixture:
             # If the test file loads the TrainJob fixture, that is a violation
             assert "trainjob-example" not in text, (
                 f"{test_file.name} must not reference the TrainJob fixture. "
-                "Runtime tests must use PyTorchJob (kubeflow.org/v1), the GA API. "
-                "TrainJob fixture is for documentation purposes only."
+                "Runtime tests must use the current project path: PyTorchJob (kubeflow.org/v1). "
+                "TrainJob fixture is for documentation/evaluation purposes only."
             )
             assert "trainer.kubeflow.org/v1alpha1" not in text, (
                 f"{test_file.name} must not use trainer.kubeflow.org/v1alpha1. "
-                "This is a Tech Preview API. Use kubeflow.org/v1 PyTorchJob instead."
+                "TrainJob is a Tech Preview API. "
+                "Runtime tests must use the current project path: kubeflow.org/v1 PyTorchJob."
             )
 
 

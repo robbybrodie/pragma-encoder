@@ -154,8 +154,8 @@ HardwareProfile when the profile is applied to the cluster.
 
 | Approach | API | RHOAI 3.4 status | Repo status |
 |---|---|---|---|
-| **PyTorchJob** | `kubeflow.org/v1` | **GA** (cluster verification required — see below) | Current — all production manifests and tests |
-| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Technology Preview** in RHOAI 3.4 | Evaluation example — `tests/openshift/fixtures/trainjob-example.yaml` |
+| **PyTorchJob** | `kubeflow.org/v1` | Current proven project path — verify availability and support status on the target RHOAI 3.4 cluster before relying on it | Current — all production manifests and tests |
+| **TrainJob** (Kubeflow Trainer v2) | `trainer.kubeflow.org/v1alpha1` | **Technology Preview** in RHOAI 3.4 unless GA is confirmed for the target deployment | Evaluation example — `tests/openshift/fixtures/trainjob-example.yaml` |
 
 **PyTorchJob is the current proven project path. TrainJob is available in RHOAI 3.4 as Technology Preview; do not use in production until GA is confirmed in the target deployment.**
 

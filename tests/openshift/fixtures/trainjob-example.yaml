@@ -17,12 +17,13 @@
 # Reference: docs/rhoai-3.4-trainjob-checkpointing.md (full evaluation doc)
 # Reference: docs/tech-debt.md §TD-012 (acceptance criteria + evaluation plan)
 #
-# ── Current approach (GA) ──────────────────────────────────────────────────
+# ── Current approach (proven project path) ────────────────────────────────
 #
 # PyTorchJob (kubeflow.org/v1):
 #   See: openshift/training/pytorchjob-pragma-s.yaml
-#   Status: GA in RHOAI 3.4
-#   *** PyTorchJob is the ONLY production path. Do not use TrainJob yet. ***
+#   Status: current proven project path. Verify PyTorchJob availability and
+#           support status on the target RHOAI 3.4 cluster before relying on it.
+#   *** PyTorchJob is the current production path. Do not use TrainJob yet. ***
 #
 # ── Forward approach (when TrainJob is confirmed GA in the target deployment) ─
 #

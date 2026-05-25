@@ -329,12 +329,13 @@ RHOAI 3.4 primitives mapped to this repo:
 | Connection (object storage) | GA | Supplies native `AWS_*` env vars (`AWS_S3_BUCKET`, `AWS_S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) |
 | HardwareProfile | GA | `infrastructure.opendatahub.io` API group in 3.4 (was `dashboard.opendatahub.io`) |
 | Data Science Pipeline (DSPA) | GA | KFP v2; `openshift/gitops/pipeline/dspa.yaml` |
-| PyTorchJob (`kubeflow.org/v1`) | GA | Current production training runtime |
-| TrainJob / Kubeflow Trainer v2 | Tech Preview in 3.4 | Forward path — evaluate separately before adopting |
+| PyTorchJob (`kubeflow.org/v1`) | Current proven project path — verify availability/support on target RHOAI 3.4 cluster | Current production training runtime; upstream Kubeflow Training Operator v1 source removed Feb 2025 |
+| TrainJob / Kubeflow Trainer v2 | Tech Preview in RHOAI 3.4 unless GA confirmed | Forward path — evaluate separately before adopting |
 | Model serving | GA | KServe `InferenceService`; not yet wired for PRAGMA |
 
-**GA APIs only** — the production training path uses `kubeflow.org/v1` PyTorchJob.
-TrainJob is Tech Preview in RHOAI 3.4 and must not be the current production path.
+**Current project path:** `kubeflow.org/v1` PyTorchJob is the current proven runtime.
+Verify availability and support status on the target RHOAI 3.4 cluster before relying on it.
+TrainJob is Technology Preview in RHOAI 3.4 and must not replace PyTorchJob until GA is confirmed for the target deployment.
 
 Full primitive map: `docs/openshift-ai-3.3-alignment.md`
 (Note: document describes 3.3 primitives; 3.4 is the installed version — primitives are compatible)
