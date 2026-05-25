@@ -412,6 +412,11 @@ and rules for adding new tests: **[docs/testing-strategy.md](testing-strategy.md
 
 ## Current status
 
+> The current validated milestone is summarized in
+> [docs/validated-architecture-summary.md](validated-architecture-summary.md).
+> Wheel build, training image, image contract, PyTorchJob, Level 5 S3
+> checkpoint/resume, and GPU smoke all passed on `fca41d7` against RHOAI 3.4.0.
+
 | Item | Status |
 |---|---|
 | `pragma_encoder` wheel | Built and installed by training image |

@@ -116,6 +116,8 @@ OpenShift AI 3.3 primitive alignment and platform responsibility split: `docs/op
 
 ArgoCD ownership, pipeline authoring lifecycle, and GitOps promotion path: `docs/openshift-gitops-argocd.md`
 
+Validated architecture summary (wheel → image → PyTorchJob → S3 → GPU): `docs/validated-architecture-summary.md`
+
 ---
 
 ## Repository Structure
