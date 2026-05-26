@@ -25,3 +25,5 @@ Workbench / OpenShift AI tooling is NOT part of this package.
 It lives in tools/workbench/ in the repository root
 (importable as tools.workbench when PYTHONPATH=. is set).
 """
+
+__version__ = "0.1.0"

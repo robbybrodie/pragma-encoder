@@ -52,7 +52,7 @@ print()
 #   Worker  — rank 1 — runs torchrun, participates in gradient averaging
 #
 # WORLD_SIZE is set to 2 by torchrun (nnodes=2, nproc_per_node=1).
-# The training script (scripts/train_pragma.py) detects WORLD_SIZE > 1 and:
+# The training entrypoint (python -m pragma_encoder.training.train) detects WORLD_SIZE > 1 and:
 #   - Initialises an NCCL process group across the two pods
 #   - Uses DistributedSampler so each pod processes a disjoint data shard
 #   - Wraps model and assembler in DistributedDataParallel (DDP)

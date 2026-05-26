@@ -34,7 +34,7 @@ Expose a `train_pragma()` Python function as the primary workbench
 entry point for launching PRAGMA pretraining:
 
 ```python
-from src.workbench import train_pragma
+from tools.workbench import train_pragma
 
 run = train_pragma(
     dataset="ibm-tabformer",
@@ -137,7 +137,7 @@ Enables:
 - Two-node DDP demonstration without RWO PVC scheduling conflicts
 
 Constrains:
-- `src/workbench/` depends on `src/data/` and `src/model/config.py`
+- `tools/workbench/` depends on `src/data/` and `src/model/config.py`
   only — no circular imports introduced
 - KFP remains an optional dependency (`pip install pragma[workbench]`)
   — `train_pragma()` works without KFP (local mode fallback)
@@ -160,10 +160,10 @@ src/model/config.py          → (no deps)
 src/data/dataset_manifest.py → config
 src/data/adapters/base.py    → dataset_manifest
 src/data/adapters/ibm_tabformer.py → adapters/base, dataset_manifest
-src/workbench/_run.py        → dataset_manifest
-src/workbench/_api.py        → _run, adapters, config
+tools/workbench/_run.py      → dataset_manifest
+tools/workbench/_api.py      → _run, adapters, config
 pipeline/                    → src/ only (kfp optional import guard)
-examples/workbench/          → src/workbench
+examples/workbench/          → tools/workbench
 ```
 
 ---
@@ -176,8 +176,8 @@ Section 2.4 block to add:
 |---|---|
 | Two-level data storage (LMDB + Parquet) | `src/data/dataset_manifest.py::DatasetManifest` (S3-backed; LMDB/Parquet are adapter-internal) |
 | Dataset preparation pipeline | `src/data/adapters/ibm_tabformer.py::IBMTabFormerAdapter` |
-| Training pipeline stages (§2.4) | `src/workbench/_api.py::train_pragma` |
-| Pipeline visibility | `src/workbench/_run.py::PragmaRun` |
+| Training pipeline stages (§2.4) | `tools/workbench/_api.py::train_pragma` |
+| Pipeline visibility | `tools/workbench/_run.py::PragmaRun` |
 
 ---
 
