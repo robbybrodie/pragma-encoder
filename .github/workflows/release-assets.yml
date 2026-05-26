@@ -1,0 +1,125 @@
+name: Release Assets
+
+# Triggered by a version tag (e.g. v0.1.0) or manually via the Actions UI.
+#
+# Three jobs run in sequence:
+#
+#   1. lint         — ruff check (must pass before anything is built)
+#   2. build        — wheel + workbench zip + SHA256SUMS
+#   3. upload       — attaches all three files to the GitHub Release
+#
+# The upload job only runs when triggered by a tag push.
+# The build job runs on both tag pushes and workflow_dispatch so developers
+# can verify the build script locally without creating a real release.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — build but do not upload to a Release"
+        type: boolean
+        default: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Job 1: Lint
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install "ruff>=0.1.0"
+
+      - name: ruff check src/ tests/ scripts/ tools/
+        run: ruff check src/ tests/ scripts/ tools/
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Build wheel + workbench zip + SHA256SUMS
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build release assets
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tool
+        run: pip install "build>=0.10.0"
+
+      - name: Install pytest (needed by test_release_assets.py)
+        run: pip install "pytest>=7.0.0"
+
+      # Build wheel first so test_release_assets.py can find it in dist/
+      - name: Build wheel
+        run: python -m build --wheel
+
+      # Run offline release-assets tests (skip cluster/GPU tests)
+      - name: Run release-assets tests
+        run: |
+          pytest tests/test_packaging.py tests/test_platform_neutral_wheel.py \
+            tests/test_release_assets.py -v --tb=short
+
+      # Build the full asset bundle (wheel already in dist/, use --no-wheel)
+      - name: Build workbench zip and SHA256SUMS
+        run: python scripts/build_release_assets.py --no-wheel
+
+      - name: List release assets
+        run: ls -lh dist/release-assets/
+
+      - name: Upload artifacts (for inspection in Actions UI)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/release-assets/
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Upload to GitHub Release (tag pushes only)
+  # ---------------------------------------------------------------------------
+  upload:
+    name: Upload to GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    # Only upload when triggered by a tag push, not workflow_dispatch dry runs
+    if: >
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write   # required to upload release assets
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist/release-assets/
+
+      - name: List downloaded assets
+        run: ls -lh dist/release-assets/
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Uploading assets for tag: $TAG"
+          gh release upload "$TAG" dist/release-assets/* --clobber

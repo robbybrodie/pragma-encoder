@@ -109,7 +109,7 @@ Kubeflow Training Operator (KFTO) PyTorchJobs — a Kubernetes resource
 that manages one or more PyTorch training processes.
 
 For a single-node run (nodes=1):
-  One pod is created. It runs scripts/train_pragma.py directly.
+  One pod is created. It runs python -m pragma_encoder.training.train directly.
 
 For a two-node run (nodes=2):
   Two pods are created: Master (rank 0) and Worker (rank 1).
@@ -146,7 +146,7 @@ after each epoch, so training can resume from a checkpoint if the pod
 is interrupted.
 
 All data loading, masking, and checkpointing is handled by
-scripts/train_pragma.py. The submit stage is what launches it.
+python -m pragma_encoder.training.train. The submit stage is what launches it.
 """)
 
 print("""

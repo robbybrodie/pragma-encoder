@@ -78,7 +78,7 @@ Multi-stage training workflows (prepare → upload → submit → train → expo
 are expressed as KFP v2 pipeline components and compiled to pipeline YAML.
 
 The five-stage pipeline is defined in `pipeline/pragma_pipeline.py` and the
-workbench authoring surface in `src/workbench/` (ADR 003, ADR 004).
+workbench authoring surface in `tools/workbench/` (ADR 003, ADR 004).
 
 KFP remains an optional dependency for local development and unit tests.
 

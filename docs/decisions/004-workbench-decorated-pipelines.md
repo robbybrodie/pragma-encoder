@@ -37,7 +37,7 @@ execution modes and the `pipeline/ → src/` dependency direction.
 Data scientists express training intent using a Python decorator DSL:
 
 ```python
-from src.workbench import pragma_pipeline, dataset, train
+from tools.workbench import pragma_pipeline, dataset, train
 
 @pragma_pipeline(name="pragma-s-ibm-tabformer")
 def run():
@@ -124,8 +124,8 @@ Data scientist (workbench notebook)
     |
     | @pragma_pipeline / dataset() / train()
     v
-src/workbench/_decorators.py   -- intent capture; no side effects
-src/workbench/_intent.py       -- DatasetIntent, TrainIntent dataclasses
+tools/workbench/_decorators.py -- intent capture; no side effects
+tools/workbench/_intent.py     -- DatasetIntent, TrainIntent dataclasses
     |
     | compile() only — lazy importlib.import_module("pipeline.pragma_pipeline")
     v
@@ -144,8 +144,8 @@ OpenShift Pipelines / KFP server -- five stages visible as a graph
 ### Dependency direction (preserved)
 
 ```
-src/workbench/_intent.py        -- no pipeline/ dependency
-src/workbench/_decorators.py    -- no static pipeline/ import
+tools/workbench/_intent.py      -- no pipeline/ dependency
+tools/workbench/_decorators.py  -- no static pipeline/ import
                                    compile() uses importlib.import_module()
                                    to avoid "from pipeline" / "import pipeline"
                                    in source, preserving the test_pipeline_components
@@ -178,11 +178,11 @@ calls are intercepted during pipeline graph construction.
 
 ---
 
-## New public API additions to src/workbench/__init__.py
+## New public API additions to tools/workbench/__init__.py
 
 ```python
-from src.workbench._decorators import pragma_pipeline
-from src.workbench._intent    import dataset, train
+from tools.workbench._decorators import pragma_pipeline
+from tools.workbench._intent    import dataset, train
 ```
 
 Existing exports (`train_pragma`, `PragmaRun`, `PIPELINE_STEP_NAMES`, etc.)
@@ -194,8 +194,8 @@ are unchanged.
 
 | File | Purpose |
 |------|---------|
-| `src/workbench/_intent.py` | `DatasetIntent`, `TrainIntent` dataclasses; `dataset()`, `train()` intent-capture functions |
-| `src/workbench/_decorators.py` | `PragmaPipeline` class; `pragma_pipeline` decorator factory |
+| `tools/workbench/_intent.py` | `DatasetIntent`, `TrainIntent` dataclasses; `dataset()`, `train()` intent-capture functions |
+| `tools/workbench/_decorators.py` | `PragmaPipeline` class; `pragma_pipeline` decorator factory |
 | `tests/test_workbench_decorators.py` | Full test coverage for the decorator API |
 | `examples/workbench/05_decorated_pipeline.py` | Demo: authoring → compile |
 | `pipeline/generated/` | Output directory for compiled YAML (git-ignored) |
@@ -242,11 +242,11 @@ order ever changes. Both are programming errors and must be caught early.
 
 `pipeline/` modules may be loaded inside `compile()` only, at call time,
 via `importlib.import_module()`. They must **never** be loaded as a side
-effect of importing any `src/workbench/` module.
+effect of importing any `tools/workbench/` module.
 
 ```
 Allowed:   compile() → importlib.import_module("pipeline.pragma_pipeline")
-Forbidden: src/workbench/_decorators.py (module level) → import pipeline.*
+Forbidden: tools/workbench/_decorators.py (module level) → import pipeline.*
 ```
 
 ### Rationale
@@ -259,14 +259,14 @@ The `src/ → pipeline/` dependency direction is forbidden by ADR 003 because:
 `compile()` is the only method that genuinely needs `pipeline/`. Placing the
 `importlib.import_module` inside `compile()` ensures:
 - The module is loaded only when `compile()` is called (lazy)
-- Importing `src.workbench._decorators` never loads any `pipeline/` module
+- Importing `tools.workbench._decorators` never loads any `pipeline/` module
 - KFP absence raises a clear `RuntimeError` from `compile()`, not an obscure
   `ImportError` at import time
 
 ### Enforcement
 
 `tests/test_pipeline_components.py::TestNoCircularDependency::test_decorators_do_not_load_pipeline_at_import_time`
-verifies this at runtime: it imports `src.workbench._decorators` and asserts
+verifies this at runtime: it imports `tools.workbench._decorators` and asserts
 that no module whose name starts with `"pipeline"` appears in `sys.modules`
 as a result.
 

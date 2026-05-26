@@ -1,16 +1,16 @@
 """Example 04 — Local training smoke test for PRAGMA workbench.
 
-Runs PRAGMA-S pretraining locally using scripts/train_pragma.py as a
-subprocess with a tiny fixture CSV (3 customers, 9 transactions).
+Runs PRAGMA-S pretraining locally using python -m pragma_encoder.training.train
+as a subprocess with a tiny fixture CSV (3 customers, 9 transactions).
 
 This is real local execution — not a dry_run preview, not a cluster job.
-The training script runs in a single process (--num-workers 0) for one
+The training entrypoint runs in a single process (--num-workers 0) for one
 step (--max-steps 1) so the smoke test completes quickly.
 
 Use this to verify:
   - The local workbench path end-to-end
   - IBMTabFormerAdapter.prepare() works with a small CSV
-  - scripts/train_pragma.py starts and exits cleanly
+  - python -m pragma_encoder.training.train starts and exits cleanly
   - PragmaRun.show_pipeline() correctly labels local execution
 
 Run from the repo root:

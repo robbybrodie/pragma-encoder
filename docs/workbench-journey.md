@@ -35,7 +35,10 @@ python examples/workbench/01_train_ibm_tabformer.py
 Or paste the key lines into a notebook cell:
 
 ```python
-from pragma_encoder.workbench import train_pragma
+# Developer mode (full repo clone, PYTHONPATH=.):
+from tools.workbench import train_pragma
+# Release-asset mode (workbench zip unpacked, PYTHONPATH=~/pragma-workbench):
+# from tools.workbench import train_pragma
 
 run = train_pragma(
     dataset="ibm-tabformer",
@@ -399,11 +402,11 @@ You are the scientist who runs experiments inside it.
 
 ## Step 9 — What the workbench API does
 
-The workbench API (`pragma_encoder.workbench`) is the thin layer that data scientists
+The workbench API (`tools.workbench`) is the thin layer that data scientists
 interact with. Its public surface is small:
 
 ```python
-from pragma_encoder.workbench import train_pragma, PragmaRun, PIPELINE_STEP_NAMES
+from tools.workbench import train_pragma, PragmaRun, PIPELINE_STEP_NAMES
 ```
 
 `train_pragma()` takes four key arguments a data scientist cares about:
