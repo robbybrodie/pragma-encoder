@@ -8,6 +8,10 @@
 # the Kubeflow Notebook Controller injects these from the namespace SCC
 # and platform defaults.
 #
+# DO NOT add the oauth-proxy sidecar, oauth secrets, or TLS volumes —
+# the notebook controller injects the full oauth stack on first creation
+# when notebooks.opendatahub.io/inject-oauth: 'true' is set.
+#
 # The nodeSelector pins the workbench to a GPU node. Combined with the
 # pipeline's nodeSelector (same label), this guarantees the workbench and
 # all pipeline steps land on the same node — required because the shared
@@ -32,12 +36,6 @@ metadata:
 spec:
   template:
     spec:
-      # Clones the repo and pulls Git LFS model files on first boot.
-      # Idempotent: skips clone if .git already exists (PVC survives pod restarts).
-      # Uses the same workbench image so no external pull is needed (image is
-      # in the cluster-internal registry after the BuildConfig completes).
-      # Has git and git-lfs pre-installed. Runs non-root (SCC-assigned UID),
-      # same UID as the main container so file ownership is consistent.
       initContainers:
         - name: git-clone
           image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
@@ -70,8 +68,6 @@ spec:
           volumeMounts:
             - name: workbench-data
               mountPath: /opt/app-root/src
-      # Deployment requirement: GPU node must have ≥ 2 GPUs so the workbench
-      # (1 GPU) and sequential pipeline GPU steps (1 GPU each) can coexist.
       nodeSelector:
         nvidia.com/gpu.present: "true"
       containers:
@@ -79,25 +75,10 @@ spec:
           image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
           imagePullPolicy: Always
           env:
-            # NOTEBOOK_BASE_URL is read by start-notebook.sh (the S2I entrypoint)
-            # to set --ServerApp.base_url. The Notebook Controller injects NB_PREFIX
-            # but start-notebook.sh only reads NOTEBOOK_BASE_URL — they are different
-            # env vars. Without this, JupyterLab serves at / and the OAuth proxy
-            # returns 404 for all requests under /notebook/pragma-encoder/...
             - name: NOTEBOOK_BASE_URL
               value: /notebook/pragma-encoder/pragma-encoder-workbench
-            # Disable JupyterLab token/password auth. The OAuth proxy sidecar
-            # (injected by inject-oauth: 'true') handles authentication via
-            # OpenShift OAuth. JupyterLab must run without its own auth or it
-            # will present a token page even after the OAuth proxy authenticates.
             - name: NOTEBOOK_ARGS
               value: "--ServerApp.token= --ServerApp.password="
-            # KFP pipeline API endpoint — namespace-local service, port 8888 HTTPS
-            # (direct path, no OAuth proxy hop). The RHOAI notebook-controller cannot
-            # inject KFP_API_HOST via ds-pipeline-config when the secret is declared
-            # outside the workbench controller's ownership chain. Explicit env vars
-            # make the GitOps deployment self-contained and survive pod restarts.
-            # See docs/tech-debt.md TD-004.
             - name: KFP_API_HOST
               value: "https://ds-pipeline-pipelines-definition.pragma-encoder.svc.cluster.local:8888"
             - name: KF_PIPELINES_ENDPOINT
