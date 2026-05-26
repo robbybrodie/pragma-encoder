@@ -99,6 +99,7 @@ def pragma_pretraining_pipeline(
     batch_size: int = 32,
     device: str = "auto",
     output_prefix: str = "pragma-encoder/runs",
+    export_prefix: str = "pragma-encoder/runs/export",
     run_name: str = "",
 ) -> None:
     """Full PRAGMA pretraining pipeline: all five sec.2.4 stages always run.
@@ -133,6 +134,8 @@ def pragma_pretraining_pipeline(
                         Default: "auto" (selects CUDA > MPS > CPU).
         output_prefix:  S3 key prefix for all run outputs (checkpoint, metrics,
                         loss graph, vocab). Default: "pragma-encoder/runs".
+        export_prefix:  S3 key prefix for the canonical export location written
+                        by export_checkpoint. Default: "pragma-encoder/runs/export".
         run_name:       Optional label to identify this run in S3 and metadata.
                         Default: "" (not used).
     """
@@ -175,7 +178,7 @@ def pragma_pretraining_pipeline(
     export_checkpoint(
         checkpoint_uri=train_op.output,
         model_size=model_size,
-        export_prefix=output_prefix + "/export",
+        export_prefix=export_prefix,
     )
 
 
