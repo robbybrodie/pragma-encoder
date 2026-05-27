@@ -1,21 +1,36 @@
-# RHOAI Workbench — Notebook CR
+# RHOAI 3.4 Workbench — Notebook CR
 # Wave 4: applied after the DSPA (wave 3). The workbench image must exist
 # (built in wave 2) before the workbench pod can start, but the ArgoCD sync
 # won't block on build completion — the Notebook controller will retry until
 # the ImageStreamTag is available.
 #
-# DO NOT add securityContext, serviceAccountName, or port definitions —
-# the Kubeflow Notebook Controller injects these from the namespace SCC
-# and platform defaults.
+# RHOAI 3.4 auth model (gateway-based, not oauth-proxy):
+#   - annotations.notebooks.opendatahub.io/inject-auth: 'true'
+#     tells the controller to inject the kube-rbac-proxy sidecar.
+#     This is the 3.4 replacement for the old inject-oauth annotation.
+#   - The controller creates: blah-kube-rbac-proxy-config ConfigMap,
+#     blah-kube-rbac-proxy-tls Secret, and injects the kube-rbac-proxy
+#     sidecar container + its volumes into the pod template.
+#   - Authentication is via the data-science-gateway (HTTPRoute) +
+#     kube-rbac-proxy sidecar. No OAuthClient. No oauth-proxy.
 #
-# DO NOT add the oauth-proxy sidecar, oauth secrets, or TLS volumes —
-# the notebook controller injects the full oauth stack on first creation
-# when notebooks.opendatahub.io/inject-oauth: 'true' is set.
+# Labels opendatahub.io/dashboard=true and opendatahub.io/odh-managed=true
+# are required — the dashboard only shows Open button for notebooks with these.
+#
+# Hardware profile annotations are required for the dashboard to show the
+# workbench without "migration required" warning.
+#
+# liveness/readinessProbe on the workbench container is required — the
+# dashboard tracks workbench start completion via the probe becoming ready.
 #
 # The nodeSelector pins the workbench to a GPU node. Combined with the
 # pipeline's nodeSelector (same label), this guarantees the workbench and
 # all pipeline steps land on the same node — required because the shared
 # PVC (pragma-encoder-workbench-data) is EBS ReadWriteOnce (one node only).
+#
+# DO NOT add: kube-rbac-proxy sidecar, kube-rbac-proxy-config ConfigMap,
+# kube-rbac-proxy-tls Secret, serviceAccountName — the controller injects
+# all of these on first creation when inject-auth: 'true' is set.
 apiVersion: kubeflow.org/v1
 kind: Notebook
 metadata:
@@ -23,19 +38,25 @@ metadata:
   namespace: pragma-encoder
   labels:
     app: pragma-encoder-workbench
+    # Required: dashboard only shows Open button for notebooks with these labels
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/odh-managed: "true"
   annotations:
     argocd.argoproj.io/sync-wave: "4"
-    # Required: triggers oauth-proxy sidecar injection for SSO
-    notebooks.opendatahub.io/inject-oauth: 'true'
+    # RHOAI 3.4: triggers kube-rbac-proxy sidecar injection (replaces inject-oauth)
+    notebooks.opendatahub.io/inject-auth: "true"
     opendatahub.io/image-display-name: "PRAGMA Encoder"
+    opendatahub.io/username: kube:admin
     openshift.io/display-name: "PRAGMA Encoder Workbench"
     openshift.io/description: "Workbench for training and evaluating the PRAGMA transaction foundation model"
     notebooks.opendatahub.io/last-image-selection: "pragma-encoder-workbench:latest"
-    opendatahub.io/username: kube:admin
-    notebooks.opendatahub.io/oauth-logout-url: 'https://rhods-dashboard-redhat-ods-applications.apps.ocpai-demo.sandbox3438.opentlc.com/projects/pragma-encoder?notebookLogout=pragma-encoder-workbench'
+    # Hardware profile: required to suppress "migration required" / "no matching profile" warnings
+    opendatahub.io/hardware-profile-name: default-profile
+    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
 spec:
   template:
     spec:
+      enableServiceLinks: false
       initContainers:
         - name: git-clone
           image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
@@ -74,11 +95,20 @@ spec:
         - name: pragma-encoder-workbench
           image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
           imagePullPolicy: Always
+          ports:
+            - containerPort: 8888
+              name: notebook-port
+              protocol: TCP
           env:
-            - name: NOTEBOOK_BASE_URL
-              value: /notebook/pragma-encoder/pragma-encoder-workbench
             - name: NOTEBOOK_ARGS
-              value: "--ServerApp.token= --ServerApp.password="
+              value: |
+                --ServerApp.port=8888
+                                  --ServerApp.token=''
+                                  --ServerApp.password=''
+                                  --ServerApp.base_url=/notebook/pragma-encoder/pragma-encoder-workbench
+                                  --ServerApp.quit_button=False
+            - name: JUPYTER_IMAGE
+              value: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
             - name: KFP_API_HOST
               value: "https://ds-pipeline-pipelines-definition.pragma-encoder.svc.cluster.local:8888"
             - name: KF_PIPELINES_ENDPOINT
@@ -86,6 +116,26 @@ spec:
           envFrom:
             - secretRef:
                 name: pragma-workbench-env
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /notebook/pragma-encoder/pragma-encoder-workbench/api
+              port: notebook-port
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /notebook/pragma-encoder/pragma-encoder-workbench/api
+              port: notebook-port
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
           resources:
             requests:
               cpu: "4"
@@ -98,10 +148,24 @@ spec:
           volumeMounts:
             - name: workbench-data
               mountPath: /opt/app-root/src
+            - name: trusted-ca
+              mountPath: /etc/pki/tls/custom-certs
+              readOnly: true
+            - name: runtime-images
+              mountPath: /opt/app-root/pipeline-runtimes/
+          workingDir: /opt/app-root/src
       volumes:
         - name: workbench-data
           persistentVolumeClaim:
             claimName: pragma-encoder-workbench-data
+        - name: trusted-ca
+          configMap:
+            name: workbench-trusted-ca-bundle
+            optional: true
+        - name: runtime-images
+          configMap:
+            name: pipeline-runtime-images
+            optional: true
 ---
 # PersistentVolumeClaim for workbench home directory
 apiVersion: v1
