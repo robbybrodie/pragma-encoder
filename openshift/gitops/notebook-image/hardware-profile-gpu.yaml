@@ -9,6 +9,10 @@
 # and the Notebook CR references it via:
 #   opendatahub.io/hardware-profile-name: pragma-encoder-gpu
 #   opendatahub.io/hardware-profile-namespace: redhat-ods-applications
+#
+# spec.scheduling.type=Node pins workloads to GPU nodes via nodeSelector.
+# spec.nodeSelector is NOT a valid field — nodeSelector lives under
+# spec.scheduling.node.nodeSelector (infrastructure.opendatahub.io/v1 schema).
 apiVersion: infrastructure.opendatahub.io/v1
 kind: HardwareProfile
 metadata:
@@ -44,5 +48,8 @@ spec:
       defaultCount: 1
       minCount: 0
       maxCount: 1
-  nodeSelector:
-    nvidia.com/gpu.present: "true"
+  scheduling:
+    type: Node
+    node:
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
