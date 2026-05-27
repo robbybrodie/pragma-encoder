@@ -1,13 +1,19 @@
 # ImageStream — registers the custom PRAGMA workbench image with the RHOAI dashboard.
 # Wave 1: created before the BuildConfig so the output tag exists when the build fires.
 #
-# The opendatahub.io/notebook-image: "true" label causes the RHOAI dashboard to list
-# this image in the workbench launcher under "Custom notebook images".
+# MUST be in redhat-ods-applications namespace — the RHOAI dashboard only discovers
+# notebook images from ImageStreams in that namespace (label: opendatahub.io/notebook-image=true).
+# An ImageStream in pragma-encoder with the same label is invisible to the dashboard.
+#
+# The BuildConfig in pragma-encoder outputs to this ImageStream via the fully-qualified
+# ImageStreamTag reference: redhat-ods-applications/pragma-encoder-workbench:latest.
+# The pragma-encoder/builder SA is granted image-pusher role in redhat-ods-applications
+# (see rbac/image-pusher.yaml).
 apiVersion: image.openshift.io/v1
 kind: ImageStream
 metadata:
   name: pragma-encoder-workbench
-  namespace: pragma-encoder
+  namespace: redhat-ods-applications
   labels:
     opendatahub.io/notebook-image: "true"
   annotations:
@@ -16,6 +22,7 @@ metadata:
     opendatahub.io/notebook-image-desc: "RHOAI S2I base with PRAGMA transaction encoder dependencies"
     opendatahub.io/notebook-image-url: "https://github.com/robbybrodie/pragma-encoder"
     opendatahub.io/notebook-image-order: "1"
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
 spec:
   lookupPolicy:
     local: true
