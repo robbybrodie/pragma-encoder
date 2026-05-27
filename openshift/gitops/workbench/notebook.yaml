@@ -50,8 +50,8 @@ metadata:
     openshift.io/display-name: "PRAGMA Encoder Workbench"
     openshift.io/description: "Workbench for training and evaluating the PRAGMA transaction foundation model"
     notebooks.opendatahub.io/last-image-selection: "pragma-encoder-workbench:latest"
-    # Hardware profile: required to suppress "migration required" / "no matching profile" warnings
-    opendatahub.io/hardware-profile-name: default-profile
+    # Hardware profile: GPU profile in redhat-ods-applications (see notebook-image/hardware-profile-gpu.yaml)
+    opendatahub.io/hardware-profile-name: pragma-encoder-gpu
     opendatahub.io/hardware-profile-namespace: redhat-ods-applications
 spec:
   template:
@@ -59,7 +59,7 @@ spec:
       enableServiceLinks: false
       initContainers:
         - name: git-clone
-          image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+          image: image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/pragma-encoder-workbench:latest
           command:
             - /bin/sh
             - -c
@@ -93,7 +93,7 @@ spec:
         nvidia.com/gpu.present: "true"
       containers:
         - name: pragma-encoder-workbench
-          image: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+          image: image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/pragma-encoder-workbench:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8888
@@ -108,7 +108,7 @@ spec:
                                   --ServerApp.base_url=/notebook/pragma-encoder/pragma-encoder-workbench
                                   --ServerApp.quit_button=False
             - name: JUPYTER_IMAGE
-              value: image-registry.openshift-image-registry.svc:5000/pragma-encoder/pragma-encoder-workbench:latest
+              value: image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/pragma-encoder-workbench:latest
             - name: KFP_API_HOST
               value: "https://ds-pipeline-pipelines-definition.pragma-encoder.svc.cluster.local:8888"
             - name: KF_PIPELINES_ENDPOINT

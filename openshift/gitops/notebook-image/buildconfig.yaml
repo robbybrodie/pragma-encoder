@@ -38,7 +38,11 @@ spec:
   output:
     to:
       kind: ImageStreamTag
+      # Fully-qualified: namespace/name:tag — pushes to redhat-ods-applications
+      # so the RHOAI dashboard discovers the image. The builder SA in pragma-encoder
+      # is granted image-pusher in redhat-ods-applications (rbac/image-pusher.yaml).
       name: pragma-encoder-workbench:latest
+      namespace: redhat-ods-applications
 
   triggers:
     # ConfigChange fires a build when ArgoCD applies this BuildConfig —
