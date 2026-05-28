@@ -1,0 +1,188 @@
+# ArgoCD PostSync hook — patch opendatahub.io/hardware-profile-resource-version
+#
+# The RHOAI dashboard always writes THREE hardware-profile annotations when a
+# workbench is saved via the UI:
+#   - opendatahub.io/hardware-profile-name
+#   - opendatahub.io/hardware-profile-namespace
+#   - opendatahub.io/hardware-profile-resource-version   ← live Kubernetes resourceVersion
+#
+# The third annotation is a live Kubernetes metadata.resourceVersion from the
+# HardwareProfile CR.  GitOps YAML cannot hardcode it — resourceVersion changes
+# every time the resource is modified on the cluster.
+#
+# Without it, the dashboard's useHardwareProfileBindingState hook cannot establish
+# that the profile is properly bound, so the hardware selector shows only
+# "default-profile" instead of "pragma-encoder-gpu".
+#
+# This PostSync hook Job:
+#   1. Reads the live resourceVersion of pragma-encoder-gpu in redhat-ods-applications
+#   2. Patches that value onto the Notebook CR annotation in pragma-encoder
+#
+# Hook lifecycle:
+#   - argocd.argoproj.io/hook: PostSync      — runs after all sync waves complete
+#   - argocd.argoproj.io/hook-delete-policy: HookSucceeded  — cleaned up on success
+#   - argocd.argoproj.io/sync-wave: "5"      — after all app resources (waves 0-4)
+#
+# RBAC:
+#   SA pragma-hwp-patcher in pragma-encoder
+#   Role hwp-patcher-notebook-patcher in pragma-encoder  → get/patch notebooks
+#   Role hwp-patcher-hwp-reader in redhat-ods-applications → get hardwareprofiles
+#
+# These four resources (SA, 2 Roles, 2 RoleBindings) are NOT hooks — they are
+# regular sync resources so they persist between syncs and the hook Job can use them.
+# They carry argocd.argoproj.io/sync-wave: "0" so they exist before the hook runs.
+---
+# ServiceAccount for the hook Job
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pragma-hwp-patcher
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+
+---
+# Role: read/patch Notebook CR in pragma-encoder
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hwp-patcher-notebook-patcher
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+rules:
+  - apiGroups: ["kubeflow.org"]
+    resources: ["notebooks"]
+    resourceNames: ["pragma-encoder-workbench"]
+    verbs: ["get", "patch"]
+
+---
+# RoleBinding: grant pragma-hwp-patcher the notebook patcher role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hwp-patcher-notebook-patcher
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hwp-patcher-notebook-patcher
+subjects:
+  - kind: ServiceAccount
+    name: pragma-hwp-patcher
+    namespace: pragma-encoder
+
+---
+# Role: read HardwareProfile in redhat-ods-applications
+# This Role lives in redhat-ods-applications (cross-namespace).
+# ArgoCD's SA has cluster-admin and will create it there.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hwp-patcher-hwp-reader
+  namespace: redhat-ods-applications
+  labels:
+    app: pragma-encoder
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+rules:
+  - apiGroups: ["infrastructure.opendatahub.io"]
+    resources: ["hardwareprofiles"]
+    resourceNames: ["pragma-encoder-gpu"]
+    verbs: ["get"]
+
+---
+# RoleBinding: grant pragma-hwp-patcher the HardwareProfile reader role (cross-namespace)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hwp-patcher-hwp-reader
+  namespace: redhat-ods-applications
+  labels:
+    app: pragma-encoder
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hwp-patcher-hwp-reader
+subjects:
+  - kind: ServiceAccount
+    name: pragma-hwp-patcher
+    namespace: pragma-encoder
+
+---
+# PostSync hook Job — patches hardware-profile-resource-version onto Notebook CR
+# ArgoCD creates this Job after every sync.  HookSucceeded deletes it on success.
+# On failure the Job is left for inspection (default hook-delete-policy).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: patch-hwp-resource-version
+  namespace: pragma-encoder
+  labels:
+    app: pragma-encoder
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: pragma-encoder
+        app.kubernetes.io/component: hook
+    spec:
+      serviceAccountName: pragma-hwp-patcher
+      restartPolicy: OnFailure
+      containers:
+        - name: patcher
+          # Use the cluster-internal OpenShift CLI image — no external pull required.
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              HWP_NAMESPACE="redhat-ods-applications"
+              HWP_NAME="pragma-encoder-gpu"
+              NB_NAMESPACE="pragma-encoder"
+              NB_NAME="pragma-encoder-workbench"
+
+              echo "Reading resourceVersion of HardwareProfile ${HWP_NAMESPACE}/${HWP_NAME}..."
+              RV=$(oc get hardwareprofile.infrastructure.opendatahub.io \
+                "${HWP_NAME}" \
+                -n "${HWP_NAMESPACE}" \
+                -o jsonpath='{.metadata.resourceVersion}')
+
+              if [ -z "${RV}" ]; then
+                echo "ERROR: resourceVersion is empty — HardwareProfile not found or unreadable" >&2
+                exit 1
+              fi
+              echo "Got resourceVersion: ${RV}"
+
+              echo "Patching Notebook ${NB_NAMESPACE}/${NB_NAME}..."
+              oc patch notebook "${NB_NAME}" \
+                -n "${NB_NAMESPACE}" \
+                --type=merge \
+                -p "{\"metadata\":{\"annotations\":{\"opendatahub.io/hardware-profile-resource-version\":\"${RV}\"}}}"
+
+              echo "Done — annotation set to ${RV}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true

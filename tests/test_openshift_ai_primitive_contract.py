@@ -572,16 +572,29 @@ class TestWorkbenchPrimitive:
             "The Notebook CR is the RHOAI primitive for workbench environments."
         )
 
-    def test_notebook_has_oauth_inject_annotation(self) -> None:
-        """Notebook must have OAuth injection annotation for SSO via oauth-proxy sidecar."""
+    def test_notebook_has_inject_auth_annotation(self) -> None:
+        """Notebook must use inject-auth (RHOAI 3.4), not inject-oauth (RHOAI 3.3).
+
+        RHOAI 3.4 replaced the oauth-proxy sidecar with kube-rbac-proxy.
+        The controller injects kube-rbac-proxy only when
+        notebooks.opendatahub.io/inject-auth='true' is set.
+        inject-oauth='true' on a 3.4 cluster does not inject any auth sidecar,
+        which permanently disables the dashboard Open button.
+        """
         docs = _load_yaml_all(self._NOTEBOOK)
         notebook_docs = [d for d in docs if d and d.get("kind") == "Notebook"]
         assert notebook_docs, "No Notebook document found in notebook.yaml"
         annotations = notebook_docs[0].get("metadata", {}).get("annotations", {})
-        assert annotations.get("notebooks.opendatahub.io/inject-oauth") == "true", (
+        assert annotations.get("notebooks.opendatahub.io/inject-auth") == "true", (
             "Workbench Notebook must have annotation "
-            "notebooks.opendatahub.io/inject-oauth: 'true'. "
-            "This annotation triggers oauth-proxy sidecar injection for OpenShift SSO. "
+            "notebooks.opendatahub.io/inject-auth: 'true'. "
+            "RHOAI 3.4 requires inject-auth=true to inject the kube-rbac-proxy sidecar. "
+            "The old inject-oauth annotation is a 3.3 pattern and disables the Open button on 3.4. "
+            f"Current annotations: {list(annotations.keys())}"
+        )
+        assert "notebooks.opendatahub.io/inject-oauth" not in annotations, (
+            "Workbench Notebook must not have the deprecated inject-oauth annotation. "
+            "Remove it — it must not coexist with inject-auth on RHOAI 3.4. "
             f"Current annotations: {list(annotations.keys())}"
         )
 
