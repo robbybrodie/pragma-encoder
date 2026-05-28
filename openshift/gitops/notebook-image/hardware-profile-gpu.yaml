@@ -45,7 +45,7 @@ spec:
       identifier: nvidia.com/gpu
       resourceType: Accelerator
       defaultCount: 1
-      minCount: 0
+      minCount: 1
       maxCount: 1
   scheduling:
     type: Node

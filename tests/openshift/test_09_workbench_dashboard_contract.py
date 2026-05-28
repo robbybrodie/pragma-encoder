@@ -29,6 +29,7 @@ Resources verified:
       - ``opendatahub.io/disabled != "true"``
       - ``opendatahub.io/dashboard-feature-visibility`` annotation is absent
       - ``spec.identifiers`` contains an Accelerator entry for ``nvidia.com/gpu``
+      - every identifier has ``minCount >= 1`` (dashboard Zod schema rejects 0)
       - ``spec.scheduling.type == "Node"``
   - Notebook CR ``pragma-encoder-workbench`` in PRAGMA_TEST_NAMESPACE
       - annotation ``opendatahub.io/hardware-profile-name: pragma-encoder-gpu``
@@ -49,6 +50,44 @@ from __future__ import annotations
 import pytest
 
 from tests.openshift.oc import oc_json, resource_exists
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_count(value: object) -> float:
+    """Parse an identifier count value to a float for comparison.
+
+    HardwareProfile identifier counts may be plain integers (GPU, CPU) or
+    Kubernetes quantity strings such as '8Gi', '32Gi'.  This helper converts
+    both forms to a comparable float, returning 0.0 on parse failure so that
+    an unparseable value is treated as invalid (< 1).
+    """
+    s = str(value).strip()
+    # Plain numeric
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    # Kubernetes binary suffixes: Ki, Mi, Gi, Ti
+    _suffixes = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40}
+    for suffix, multiplier in _suffixes.items():
+        if s.endswith(suffix):
+            try:
+                return float(s[: -len(suffix)]) * multiplier
+            except ValueError:
+                return 0.0
+    # Kubernetes decimal suffixes: k, M, G, T
+    _dec_suffixes = {"k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}
+    for suffix, multiplier in _dec_suffixes.items():
+        if s.endswith(suffix):
+            try:
+                return float(s[: -len(suffix)]) * multiplier
+            except ValueError:
+                return 0.0
+    return 0.0
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -302,6 +341,38 @@ class TestHardwareProfileDashboardContract:
             f"Found identifiers: {[i.get('identifier') for i in identifiers]}.  "
             "Add an identifier entry with resourceType=Accelerator and "
             "identifier=nvidia.com/gpu."
+        )
+
+    def test_hardware_profile_identifiers_min_count_positive(self) -> None:
+        """Every HardwareProfile identifier must have minCount >= 1.
+
+        The RHOAI dashboard validates HardwareProfiles with a Zod schema before
+        including them in the hardware selector.  The schema requires that minCount
+        is a positive integer (> 0) for every identifier.
+
+        If any identifier has minCount == 0, isHardwareProfileValid() returns false,
+        the profile is filtered out of the list before the name/namespace lookup, and
+        the Notebook appears with state 'Deleted' in the dashboard — even when the
+        HardwareProfile CR exists on the cluster.
+
+        This was the actual root cause of 'hardware profile deleted' in production:
+          nvidia.com/gpu identifier had minCount: 0 which failed Zod validation.
+        """
+        hp = oc_json(
+            ["get", "hardwareprofile.infrastructure.opendatahub.io", _HP_NAME],
+            namespace=_RHOAI_NAMESPACE,
+        )
+        identifiers = hp.get("spec", {}).get("identifiers", [])
+        bad = [
+            i for i in identifiers
+            if _parse_count(i.get("minCount", 0)) < 1
+        ]
+        assert not bad, (
+            f"HardwareProfile {_HP_NAME!r} has identifiers with minCount < 1: "
+            f"{[i.get('identifier') for i in bad]}.  "
+            "The RHOAI dashboard Zod schema requires minCount to be a positive integer (>= 1). "
+            "A profile with minCount=0 on any identifier fails isHardwareProfileValid() and is "
+            "silently filtered out, causing the Notebook to show 'hardware profile deleted'."
         )
 
     def test_hardware_profile_scheduling_type_node(self) -> None:
