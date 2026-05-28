@@ -33,6 +33,8 @@ Resources verified:
   - Notebook CR ``pragma-encoder-workbench`` in PRAGMA_TEST_NAMESPACE
       - annotation ``opendatahub.io/hardware-profile-name: pragma-encoder-gpu``
       - annotation ``opendatahub.io/hardware-profile-namespace: redhat-ods-applications``
+      - annotation ``opendatahub.io/hardware-profile-resource-version`` present and numeric
+        (patched by the ArgoCD PostSync hook in openshift/gitops/hooks/)
       - annotation ``notebooks.opendatahub.io/last-image-selection`` references the IS tag
       - labels ``opendatahub.io/dashboard: "true"`` and ``opendatahub.io/odh-managed: "true"``
 
@@ -43,8 +45,6 @@ Prerequisites:
 """
 
 from __future__ import annotations
-
-import os
 
 import pytest
 
@@ -450,4 +450,48 @@ class TestNotebookCRDashboardContract:
             f"Notebook last-image-selection references tag {selected_tag!r} but "
             f"ImageStream {_IS_NAME!r} spec.tags only contains: {spec_tag_names}.  "
             "Dashboard shows 'image deleted' when the referenced tag is absent from spec.tags."
+        )
+
+    def test_notebook_cr_has_hardware_profile_resource_version(
+        self, test_namespace: str
+    ) -> None:
+        """Notebook CR must have opendatahub.io/hardware-profile-resource-version annotation.
+
+        The RHOAI dashboard always writes THREE hardware-profile annotations when a
+        workbench is saved: hardware-profile-name, hardware-profile-namespace, and
+        hardware-profile-resource-version (the live Kubernetes resourceVersion of the
+        HardwareProfile CR).
+
+        The dashboard's useHardwareProfileBindingState hook uses resource-version to
+        determine whether the bound profile still exists and is unchanged.  Without it
+        the binding state is indeterminate and the hardware selector shows only
+        'default-profile' even when pragma-encoder-gpu exists and is enabled.
+
+        This annotation cannot be hardcoded in GitOps YAML — it is a live value that
+        changes whenever the HardwareProfile is modified.  It is patched onto the
+        Notebook CR by the ArgoCD PostSync hook Job defined in
+        openshift/gitops/hooks/patch-hwp-resource-version.yaml.
+        """
+        nb = oc_json(
+            ["get", "notebook", _NB_NAME],
+            namespace=test_namespace,
+        )
+        ann = nb["metadata"].get("annotations", {})
+        rv = ann.get("opendatahub.io/hardware-profile-resource-version", "")
+        assert rv, (
+            f"Notebook {_NB_NAME!r} is missing annotation "
+            "'opendatahub.io/hardware-profile-resource-version' (or it is empty).  "
+            "Without this annotation the RHOAI dashboard hardware selector shows only "
+            "'default-profile' instead of 'pragma-encoder-gpu'.  "
+            "Check that the ArgoCD PostSync hook Job "
+            "'patch-hwp-resource-version' completed successfully: "
+            "oc get jobs -n pragma-encoder"
+        )
+
+        # The annotation must be a valid integer string (Kubernetes resourceVersion format)
+        assert rv.isdigit(), (
+            f"Notebook annotation 'opendatahub.io/hardware-profile-resource-version' "
+            f"has value {rv!r} which is not a valid Kubernetes resourceVersion "
+            "(expected a decimal integer string).  "
+            "The PostSync hook may have written an unexpected value."
         )
