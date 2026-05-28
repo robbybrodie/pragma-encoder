@@ -26,3 +26,16 @@ metadata:
 spec:
   lookupPolicy:
     local: true
+  tags:
+    - name: latest
+      annotations:
+        opendatahub.io/notebook-software: |
+          [{"name":"Python","version":"v3.11"},{"name":"PyTorch","version":"2.x"},{"name":"JupyterLab","version":"4.x"}]
+        opendatahub.io/notebook-python-dependencies: |
+          [{"name":"pragma-encoder","version":"0.1.0"},{"name":"kfp","version":"2.x"},{"name":"torch","version":"2.x"}]
+        opendatahub.io/workbench-image-recommended: "true"
+      from:
+        kind: DockerImage
+        name: image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/pragma-encoder-workbench:latest
+      referencePolicy:
+        type: Local
