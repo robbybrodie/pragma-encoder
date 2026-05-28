@@ -27,7 +27,6 @@ metadata:
     opendatahub.io/description: "4-8 CPUs, 32-64 GiB memory, 1 NVIDIA GPU — for PRAGMA encoder training and evaluation"
     opendatahub.io/disabled: "false"
     opendatahub.io/managed: "false"
-    opendatahub.io/dashboard-feature-visibility: '[]'
 spec:
   identifiers:
     - displayName: CPU
