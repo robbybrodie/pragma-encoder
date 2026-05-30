@@ -67,12 +67,17 @@ class TokenizerPipeline:
     """
 
     # Special token IDs (reserved at start of global vocabulary)
+    # Layout: PAD=0, MASK=1, USR=2, EVT=3, UNK=4
+    # USR (ID=2) — profile sentinel, placed at xa[:, 0] by PragmaDataset.
+    # EVT (ID=3) — event sentinel, placed at xe[:, :, 0] by PragmaDataset.
+    # UNK (ID=4) — unknown / out-of-vocabulary token.
     PAD_ID = 0
     MASK_ID = 1
-    CLS_ID = 2  # [EVT] in event sequences
-    SEP_ID = 3
+    USR_ID = 2   # [USR] profile sentinel — formerly CLS_ID
+    EVT_ID = 3   # [EVT] event sentinel
+    UNK_ID = 4   # [UNK] unknown token
 
-    N_SPECIAL_TOKENS = 4
+    N_SPECIAL_TOKENS = 5
 
     def __init__(
         self,
@@ -91,7 +96,7 @@ class TokenizerPipeline:
         """Assign non-overlapping vocabulary ranges to each field tokeniser.
 
         Layout:
-            [0, N_SPECIAL_TOKENS)              — special tokens
+            [0, N_SPECIAL_TOKENS)              — special tokens (PAD, MASK, USR, EVT, UNK)
             [N_SPECIAL_TOKENS, ...)            — key tokens (one per field name)
             [N_SPECIAL_TOKENS + n_keys, ...)   — value tokens per field
         """
@@ -201,7 +206,7 @@ class TokenizerPipeline:
         but NOT on TokenizerPipeline.
 
         Layout (mirrors _build_vocabulary_layout):
-            [0, N_SPECIAL_TOKENS)            — special tokens
+            [0, N_SPECIAL_TOKENS)            — special tokens (PAD, MASK, USR, EVT, UNK)
             [key_start, key_start+key_size)  — key tokens (sorted alphabetically)
             [value_start, value_start+value_size) — value tokens (per field)
 
@@ -229,8 +234,9 @@ class TokenizerPipeline:
             special_tokens={
                 "PAD":  self.PAD_ID,
                 "MASK": self.MASK_ID,
-                "CLS":  self.CLS_ID,
-                "SEP":  self.SEP_ID,
+                "USR":  self.USR_ID,
+                "EVT":  self.EVT_ID,
+                "UNK":  self.UNK_ID,
             },
             key_start=key_start,
             key_size=key_size,

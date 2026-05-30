@@ -11,7 +11,7 @@ Test types:
   Spec tests:       verify exact values from key-numbers.md
 
 Vocabulary layout (TokenizerPipeline._build_vocabulary_layout):
-  [0, N_SPECIAL_TOKENS)            — special tokens (PAD, MASK, CLS, SEP)
+  [0, N_SPECIAL_TOKENS)            — special tokens (PAD, MASK, USR, EVT, UNK)
   [N_SPECIAL_TOKENS, key_end)      — key tokens (one per field, sorted alphabetically)
   [key_end, key_end + value_size)  — value tokens (contiguous per field)
 
@@ -20,12 +20,12 @@ Concrete test fixture (used throughout):
   amount:   NumericalTokenizer(n_buckets=10)  → vocab_size = 12
   currency: CategoricalTokenizer fit(3 values) → vocab_size = 5
 
-  N_SPECIAL_TOKENS = 4
-  key_start  = 4,  key_size   = 2
-  key_ids:   {"amount": 4, "currency": 5}
-  value_start = 6, value_size = 17  (12 + 5)
-  value_ranges: {"amount": (6, 18), "currency": (18, 23)}
-  total_embedding_vocab_size = 23
+  N_SPECIAL_TOKENS = 5
+  key_start  = 5,  key_size   = 2
+  key_ids:   {"amount": 5, "currency": 6}
+  value_start = 7, value_size = 17  (12 + 5)
+  value_ranges: {"amount": (7, 19), "currency": (19, 24)}
+  total_embedding_vocab_size = 24
 
 Every value asserted here appears in docs/paper/key-numbers.md
 with its paper source section, or is derived from it.
@@ -62,14 +62,14 @@ def _make_pipeline() -> TokenizerPipeline:
 
 
 # Expected constants derived from the concrete fixture above
-_N_SPECIAL = 4    # PAD=0, MASK=1, CLS=2, SEP=3
-_KEY_START  = 4
+_N_SPECIAL = 5    # PAD=0, MASK=1, USR=2, EVT=3, UNK=4
+_KEY_START  = 5
 _KEY_SIZE   = 2   # "amount", "currency"
-_VAL_START  = 6   # key_start + key_size
+_VAL_START  = 7   # key_start + key_size
 _AMOUNT_VSIZ  = 12  # n_buckets=10 + ZERO + MISSING
 _CURRENCY_VSIZ = 5  # UNK + MISSING + GBP + EUR + USD
 _VAL_SIZE   = _AMOUNT_VSIZ + _CURRENCY_VSIZ   # 17
-_TOTAL      = _N_SPECIAL + _KEY_SIZE + _VAL_SIZE  # 23
+_TOTAL      = _N_SPECIAL + _KEY_SIZE + _VAL_SIZE  # 24
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ class TestVocabularySpec:
         )
 
     def test_key_start_is_n_special_tokens(self) -> None:
-        """key_start == N_SPECIAL_TOKENS (4) — keys come immediately after specials."""
+        """key_start == N_SPECIAL_TOKENS (5) — keys come immediately after specials."""
         spec = _make_pipeline().vocabulary_spec()
         assert spec.key_start == _N_SPECIAL, (
             f"key_start must be {_N_SPECIAL} (N_SPECIAL_TOKENS), got {spec.key_start}"
@@ -142,7 +142,7 @@ class TestVocabularySpec:
             )
 
     def test_field_key_ids_sorted_alphabetically(self) -> None:
-        """Fields are sorted alphabetically — 'amount' (4) < 'currency' (5).
+        """Fields are sorted alphabetically — 'amount' (5) < 'currency' (6).
 
         TokenizerPipeline._build_vocabulary_layout uses sorted() for determinism.
         """
@@ -185,12 +185,15 @@ class TestVocabularySpec:
         with pytest.raises((AttributeError, TypeError)):
             spec.key_start = 999  # type: ignore[misc]
 
-    def test_spec_contains_all_four_special_tokens(self) -> None:
-        """special_tokens must contain PAD, MASK, CLS (EVT), SEP with correct IDs."""
+    def test_spec_contains_all_five_special_tokens(self) -> None:
+        """special_tokens must contain PAD, MASK, USR, EVT, UNK with correct IDs."""
         spec = _make_pipeline().vocabulary_spec()
-        # TokenizerPipeline: PAD=0, MASK=1, CLS=2, SEP=3
+        # TokenizerPipeline: PAD=0, MASK=1, USR=2, EVT=3, UNK=4
         assert 0 in spec.special_tokens.values(), "PAD (ID=0) must be in special_tokens"
         assert 1 in spec.special_tokens.values(), "MASK (ID=1) must be in special_tokens"
+        assert 2 in spec.special_tokens.values(), "USR (ID=2) must be in special_tokens"
+        assert 3 in spec.special_tokens.values(), "EVT (ID=3) must be in special_tokens"
+        assert 4 in spec.special_tokens.values(), "UNK (ID=4) must be in special_tokens"
 
     def test_value_size_matches_sum_of_field_vocab_sizes(self) -> None:
         """value_size == sum of all field tokenizer vocab_sizes."""
@@ -277,10 +280,10 @@ class TestVocabularyMap:
         pytest.importorskip("torch")
         import torch
         spec, vmap = self._make_spec_and_map()
-        special_ids = torch.tensor([0, 1, 2, 3])
+        special_ids = torch.tensor([0, 1, 2, 3, 4])  # PAD, MASK, USR, EVT, UNK
         result = vmap.is_key_id(special_ids)
         assert not result.any(), (
-            "is_key_id must be False for special IDs [0,1,2,3]"
+            "is_key_id must be False for special IDs [0,1,2,3,4]"
         )
 
     def test_is_key_id_false_for_value_ids(self) -> None:
@@ -301,9 +304,9 @@ class TestVocabularyMap:
         pytest.importorskip("torch")
         import torch
         spec, vmap = self._make_spec_and_map()
-        special_ids = torch.tensor([0, 1, 2, 3])
+        special_ids = torch.tensor([0, 1, 2, 3, 4])  # PAD, MASK, USR, EVT, UNK
         result = vmap.is_special_id(special_ids)
-        assert result.all(), "is_special_id must be True for IDs 0–3"
+        assert result.all(), "is_special_id must be True for IDs 0–4"
 
     def test_is_special_id_false_for_key_ids(self) -> None:
         """is_special_id returns False for IDs >= key_start."""
@@ -357,7 +360,7 @@ class TestVocabularyMap:
         pytest.importorskip("torch")
         import torch
         spec, vmap = self._make_spec_and_map()
-        special_ids = torch.tensor([0, 1, 2, 3])
+        special_ids = torch.tensor([0, 1, 2, 3, 4])  # PAD, MASK, USR, EVT, UNK
         result = vmap.is_global_value_id(special_ids)
         assert not result.any(), "is_global_value_id must be False for special IDs"
 

@@ -7,27 +7,47 @@ tokenised sequences as tensor dicts ready for EmbeddingAssembler.
 Each sample covers one customer's full transaction history up to ne_max
 events. Shorter histories are padded; longer ones are truncated.
 
+Special-token contract (§2.3.2 – §2.3.4):
+    Profile sequence (xa_*):
+        Position 0: [USR] token (key_id = val_id = USR_ID).
+        The [USR] token is always valid (xa length is always 1 real token).
+        TD-003: only the single [USR] sentinel; full profile tokens are future work.
+
+    Event sequence (xe_*), per event slot i:
+        Position 0: [EVT] token (key_id = val_id = EVT_ID).
+            xe_valid[i, 0] = True  for real events; False for padding events.
+        Positions 1 .. n_tok: real payload tokens from encode_event().
+            xe_valid[i, 1:1+n_tok] = True.
+        Positions 1+n_tok .. ni_max-1: padding (xe_valid = False).
+
+    ni_max semantics:
+        Total slots per event = ni_max.
+        Slot 0 is reserved for [EVT]; payload capacity = ni_max - 1.
+        encode_event() output is truncated to min(len(key_ids), ni_max - 1).
+
 Tensor shapes per sample (no batch dimension — DataLoader adds it):
-    xe_key_ids  : (ne_max, ni_max)  int64  — event key token IDs
-    xe_val_ids  : (ne_max, ni_max)  int64  — event value token IDs (pre-mask)
-    xe_pos_ids  : (ne_max, ni_max)  int64  — within-field position IDs
-    xe_valid    : (ne_max, ni_max)  bool   — True = real token, False = padding
+    xe_key_ids  : (ne_max, ni_max)  int64  — event key token IDs; pos 0 = EVT_ID
+    xe_val_ids  : (ne_max, ni_max)  int64  — event value token IDs; pos 0 = EVT_ID
+    xe_pos_ids  : (ne_max, ni_max)  int64  — within-field position IDs; pos 0 = 0
+    xe_valid    : (ne_max, ni_max)  bool   — True = real token (incl [EVT])
     xt          : (ne_max, 3)       float32 — [hour, day_of_week, day_of_month]
     te          : (1 + ne_max,)     float32 — [USR]=0.0, then log-sec coords
-    xa_key_ids  : (1,)              int64  — TD-003: single placeholder profile token
-    xa_val_ids  : (1,)              int64
-    xa_pos_ids  : (1,)              int64
+    xa_key_ids  : (1,)              int64  — [USR] sentinel (USR_ID)
+    xa_val_ids  : (1,)              int64  — [USR] sentinel (USR_ID)
+    xa_pos_ids  : (1,)              int64  — position 0
     ta          : (1,)              float32
     n_events    : ()                int64  — number of real (non-padded) events
 
 Training loop contract:
     After calling MaskingStrategy.forward(xe_val_ids, xe_key_ids):
         mlm_mask &= batch["xe_valid"]   # zero out padding token positions
-    This ensures padded positions never contribute to the MLM loss.
+    This ensures padded positions (and padding events) never contribute to MLM loss.
+    [EVT] tokens at position 0 are marked valid (xe_valid=True) but the masking
+    strategy should not mask special tokens — they are not payload to predict.
 
 TD-003 (docs/tech-debt.md):
-    The profile path (xa_*) uses a single placeholder token (key_start /
-    value_start) until ProfileTokenizerPipeline is implemented.
+    The profile path (xa_*) uses only the [USR] sentinel token until
+    ProfileTokenizerPipeline is implemented.
 """
 
 from __future__ import annotations
@@ -88,6 +108,8 @@ class PragmaDataset(Dataset[Dict[str, Any]]):
         vocab_spec = self.pipeline.vocabulary_spec()
         self._key_pad = vocab_spec.key_start
         self._val_pad = vocab_spec.value_start
+        self._usr_id = self.pipeline.USR_ID   # [USR] sentinel for profile position 0
+        self._evt_id = self.pipeline.EVT_ID   # [EVT] sentinel for event position 0
 
         # Load all customers and apply train/val split
         adapter = TabFormerAdapter(csv_path)
@@ -116,9 +138,10 @@ class PragmaDataset(Dataset[Dict[str, Any]]):
         xt         = torch.zeros((ne_max, 3), dtype=torch.float32)
         te_events  = torch.zeros(ne_max, dtype=torch.float32)
 
-        # Profile path — TD-003: single placeholder token
-        xa_key_ids = torch.tensor([self._key_pad], dtype=torch.int64)
-        xa_val_ids = torch.tensor([self._val_pad], dtype=torch.int64)
+        # Profile path — [USR] sentinel at position 0 (TD-003: single token only).
+        # USR_ID serves as both key and value for the profile sentinel token.
+        xa_key_ids = torch.tensor([self._usr_id], dtype=torch.int64)
+        xa_val_ids = torch.tensor([self._usr_id], dtype=torch.int64)
         xa_pos_ids = torch.zeros(1, dtype=torch.int64)
         ta         = torch.zeros(1, dtype=torch.float32)
 
@@ -148,13 +171,19 @@ class PragmaDataset(Dataset[Dict[str, Any]]):
 
             enc = self.pipeline.encode_event(fields, t_seconds=t_seconds)
 
-            # Pack key/value/pos token IDs, truncating to ni_max
-            n_tok = min(len(enc.key_ids), ni_max)
+            # Special-token contract: [EVT] sentinel at position 0.
+            # Payload tokens shift to positions 1 .. n_tok (payload capacity = ni_max - 1).
+            xe_key_ids[i, 0] = self._evt_id
+            xe_val_ids[i, 0] = self._evt_id
+            xe_pos_ids[i, 0] = 0
+            xe_valid[i, 0]   = True  # [EVT] is always a real token for real events
+
+            n_tok = min(len(enc.key_ids), ni_max - 1)  # payload capacity = ni_max - 1
             if n_tok > 0:
-                xe_key_ids[i, :n_tok] = torch.tensor(enc.key_ids[:n_tok], dtype=torch.int64)
-                xe_val_ids[i, :n_tok] = torch.tensor(enc.value_ids[:n_tok], dtype=torch.int64)
-                xe_pos_ids[i, :n_tok] = torch.tensor(enc.position_ids[:n_tok], dtype=torch.int64)
-                xe_valid[i, :n_tok]   = True
+                xe_key_ids[i, 1:1 + n_tok] = torch.tensor(enc.key_ids[:n_tok], dtype=torch.int64)
+                xe_val_ids[i, 1:1 + n_tok] = torch.tensor(enc.value_ids[:n_tok], dtype=torch.int64)
+                xe_pos_ids[i, 1:1 + n_tok] = torch.tensor(enc.position_ids[:n_tok], dtype=torch.int64)
+                xe_valid[i, 1:1 + n_tok]   = True
 
             # Calendar features [hour, day_of_week, day_of_month]
             if len(enc.calendar_features) == 3:
