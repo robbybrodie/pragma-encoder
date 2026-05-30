@@ -77,12 +77,12 @@ def _tiny_config() -> PRAGMAConfig:
 def _make_vocab_spec(config: PRAGMAConfig) -> VocabularySpec:
     """Build a minimal VocabularySpec consistent with config vocab sizes."""
     return VocabularySpec(
-        special_tokens={"PAD": 0, "MASK": 1, "EVT": 2, "SEP": 3},
-        key_start=4,
+        special_tokens={"PAD": 0, "MASK": 1, "USR": 2, "EVT": 3, "UNK": 4},
+        key_start=5,
         key_size=config.key_vocab_size,
-        value_start=4 + config.key_vocab_size,
+        value_start=5 + config.key_vocab_size,
         value_size=config.value_vocab_size,
-        total_embedding_vocab_size=4 + config.key_vocab_size + config.value_vocab_size,
+        total_embedding_vocab_size=5 + config.key_vocab_size + config.value_vocab_size,
         field_key_ids={},
         field_value_ranges={},
     )

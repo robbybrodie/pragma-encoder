@@ -510,6 +510,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             # Zero masking at padding positions
             mlm_mask = mlm_mask & xe_valid
+            # Zero masking at [EVT] position 0 — special tokens are not MLM targets.
+            # The [EVT] token at xe[:, :, 0] is a sentinel, not payload to predict.
+            mlm_mask[:, :, 0] = False
 
             if not mlm_mask.any():
                 if _first_batch and is_rank0:
@@ -542,6 +545,7 @@ def main(argv: list[str] | None = None) -> int:
                 xt=assembled.xt,
                 te=assembled.te,
                 mask=assembled.mlm_mask,
+                xe_valid=xe_valid,
                 event_valid=xe_valid.any(dim=-1),
             )
 

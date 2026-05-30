@@ -22,7 +22,7 @@ ADR 002 key invariant:
 
 Test fixture vocabulary (matches test_vocabulary.py):
   Fields: "amount" (NumericalTokenizer, n_buckets=10) and "currency" (CategoricalTokenizer)
-  key_start=4, key_size=2, value_start=6, value_size=17, total=23
+  key_start=5, key_size=2, value_start=7, value_size=17, total=24
 
 Every value asserted here appears in docs/paper/key-numbers.md
 or is derived from it.
@@ -54,11 +54,11 @@ _NI    = 5   # tokens per event
 _D     = _CONFIG.d_model  # 192
 
 # Vocabulary constants (derived from the two-field fixture)
-_KEY_START  = 4
+_KEY_START  = 5
 _KEY_SIZE   = 2
-_VAL_START  = 6
+_VAL_START  = 7
 _VAL_SIZE   = 17
-_TOTAL_VOCAB = 23
+_TOTAL_VOCAB = 24
 
 _MASK_ID = 1  # TokenizerPipeline.MASK_ID — [MASK] token for corruption
 
@@ -278,7 +278,7 @@ class TestMathProperties:
     def test_targets_are_local_ids_at_masked_positions(self) -> None:
         """ADR 002: targets[mask] must be value-vocab-local IDs in [0, value_vocab_size).
 
-        local_id = global_id - value_start. For our fixture, value_start=6
+        local_id = global_id - value_start. For our fixture, value_start=7
         and value_size=17, so local IDs are in [0, 17) ⊂ [0, value_vocab_size=28000).
         """
         spec, asm = _make_assembler()
@@ -481,7 +481,7 @@ class TestPaperSpecifications:
     def test_embedding_table_size_matches_vocab_spec(self) -> None:
         """§2.2 / ADR 002: E.weight must have shape (total_embedding_vocab_size, d_model).
 
-        total_embedding_vocab_size = N_SPECIAL + key_size + value_size = 23 (test fixture).
+        total_embedding_vocab_size = N_SPECIAL + key_size + value_size = 24 (test fixture).
         d_model = 192 (PRAGMA-S, Table 1).
         """
         spec, asm = _make_assembler()
@@ -538,15 +538,15 @@ class TestPaperSpecifications:
     def test_target_localisation_is_global_minus_value_start(self) -> None:
         """ADR 002: local_id = global_id - value_start (VocabularyMap arithmetic).
 
-        For our fixture: value_start = 6. If a global value ID is 8, the local
-        target ID must be 8 - 6 = 2.
+        For our fixture: value_start = 7. If a global value ID is 10, the local
+        target ID must be 10 - 7 = 3.
         """
         spec, asm = _make_assembler()
         asm.eval()
 
         inputs = _make_inputs(spec, with_mask=False)
         # Manually set one xe_val_id to a known value, then mask it
-        known_global = spec.value_start + 3   # = 9 for our fixture
+        known_global = spec.value_start + 3   # = 10 for our fixture
         inputs["xe_val_ids"] = torch.full((_BATCH, _NE, _NI), known_global, dtype=torch.long)
         inputs["target_ids"] = inputs["xe_val_ids"].clone()
         inputs["mask"] = torch.ones(_BATCH, _NE, _NI, dtype=torch.bool)
